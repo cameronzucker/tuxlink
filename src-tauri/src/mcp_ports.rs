@@ -47,6 +47,8 @@ use tuxlink_mcp_core::ports::{
     OutboxReadPort, OutputSpecDto, PacketConfigDto, PacketWriteDto, ParamSpecDto, ParsedMessageDto, PathPredictionDto,
     PeerChannelDto, PeerDto, PeerListDto, PlatformInfoDto, PortError, PositionStatusDto,
     PredictRequestDto, PredictionPort, PrinterDto, ProvisionPort, QsyCandidateDto, RigConfigDto,
+    EditResultDto, RenameResultDto, RoutineEditOpDto, RoutineEditRequestDto, RoutineGetDto,
+    SaveRoutineRequestDto, ScrubbedRefDto,
     RigStatusDto, RoutineSummaryDto, RoutinesPort, RoutinesRunError, RunStateDto, RunStatusDto,
     RunningModemDto, SaveResultDto, SearchPort, SearchQueryDto, SearchResultsDto,
     SelectedConnectionDto, SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto,
@@ -4171,6 +4173,121 @@ fn routines_port_err(e: crate::ui_commands::UiError) -> PortError {
     }
 }
 
+/// Build an [`edit::Placement`](tuxlink_routines::edit::Placement) from the
+/// flat tool fields. Exactly one placement family: `track` (append) OR
+/// `after_step_id` OR `branch_step_id`+`branch_arm` (+ optional
+/// `branch_after_step_id`).
+fn build_placement(
+    verb: &str,
+    track: Option<String>,
+    after_step_id: Option<String>,
+    branch_step_id: Option<String>,
+    branch_arm: Option<String>,
+    branch_after_step_id: Option<String>,
+) -> Result<tuxlink_routines::edit::Placement, PortError> {
+    use tuxlink_routines::edit::{BranchArm, Placement};
+    use tuxlink_routines::types::StepId;
+
+    let families = [
+        track.is_some(),
+        after_step_id.is_some(),
+        branch_step_id.is_some(),
+    ]
+    .iter()
+    .filter(|b| **b)
+    .count();
+    if families > 1 {
+        return Err(PortError::InvalidInput(format!(
+            "{verb}: give ONE placement — track (append to that track), after_step_id \
+             (splice after that step), or branch_step_id + branch_arm (into a branch arm)"
+        )));
+    }
+    if let Some(branch) = branch_step_id {
+        let arm = match branch_arm.as_deref() {
+            Some("then") => BranchArm::Then,
+            Some("else") => BranchArm::Else,
+            _ => {
+                return Err(PortError::InvalidInput(format!(
+                    "{verb}: branch_arm must be \"then\" or \"else\" when branch_step_id is given"
+                )))
+            }
+        };
+        return Ok(Placement::Branch {
+            branch: StepId(branch),
+            arm,
+            after: branch_after_step_id.map(StepId),
+        });
+    }
+    if branch_arm.is_some() || branch_after_step_id.is_some() {
+        return Err(PortError::InvalidInput(format!(
+            "{verb}: branch_arm/branch_after_step_id need branch_step_id"
+        )));
+    }
+    if let Some(after) = after_step_id {
+        return Ok(Placement::After {
+            after: StepId(after),
+        });
+    }
+    if let Some(track) = track {
+        return Ok(Placement::Append { track });
+    }
+    Err(PortError::InvalidInput(format!(
+        "{verb}: a placement is required — track (append to that track), after_step_id, or \
+         branch_step_id + branch_arm"
+    )))
+}
+
+/// Curate the wire op DTO into the command layer's typed [`EditOp`].
+fn map_edit_op(
+    op: RoutineEditOpDto,
+) -> Result<crate::routines::commands::EditOp, PortError> {
+    use crate::routines::commands::EditOp;
+    Ok(match op {
+        RoutineEditOpDto::StepAdd {
+            step,
+            track,
+            after_step_id,
+            branch_step_id,
+            branch_arm,
+            branch_after_step_id,
+        } => EditOp::StepAdd {
+            step,
+            placement: build_placement(
+                "routines_step_add",
+                track,
+                after_step_id,
+                branch_step_id,
+                branch_arm,
+                branch_after_step_id,
+            )?,
+        },
+        RoutineEditOpDto::StepUpdate { step_id, patch } => EditOp::StepUpdate { step_id, patch },
+        RoutineEditOpDto::StepRemove { step_id } => EditOp::StepRemove { step_id },
+        RoutineEditOpDto::StepMove {
+            step_id,
+            track,
+            after_step_id,
+            branch_step_id,
+            branch_arm,
+            branch_after_step_id,
+        } => EditOp::StepMove {
+            step_id,
+            placement: build_placement(
+                "routines_step_move",
+                track,
+                after_step_id,
+                branch_step_id,
+                branch_arm,
+                branch_after_step_id,
+            )?,
+        },
+        RoutineEditOpDto::TrackAdd { track } => EditOp::TrackAdd { track },
+        RoutineEditOpDto::TrackRemove { track } => EditOp::TrackRemove { track },
+        RoutineEditOpDto::TriggerSet { triggers } => EditOp::TriggerSet { triggers },
+        RoutineEditOpDto::MetaSet { patch } => EditOp::MetaSet { patch },
+    })
+}
+
 /// Map a [`UiError`](crate::ui_commands::UiError) from
 /// [`run_routine`](crate::routines::commands::run_routine) onto a
 /// [`RoutinesRunError`]. `Rejected` is EITHER a blocking validation error OR
@@ -4392,12 +4509,13 @@ impl RoutinesPort for MonolithRoutinesPort {
         })
     }
 
-    async fn get(&self, name: &str) -> Result<serde_json::Value, PortError> {
+    async fn get(&self, name: &str) -> Result<RoutineGetDto, PortError> {
         let state = self.state();
-        let def =
-            crate::routines::commands::get_routine(&state, name).map_err(routines_port_err)?;
-        serde_json::to_value(&def)
-            .map_err(|e| PortError::Internal(format!("serialize routine: {e}")))
+        let (def, revision) = crate::routines::commands::get_routine_with_revision(&state, name)
+            .map_err(routines_port_err)?;
+        let def = serde_json::to_value(&def)
+            .map_err(|e| PortError::Internal(format!("serialize routine: {e}")))?;
+        Ok(RoutineGetDto { revision, def })
     }
 
     async fn validate(&self, name: &str) -> Result<Vec<FindingDto>, PortError> {
@@ -4407,14 +4525,92 @@ impl RoutinesPort for MonolithRoutinesPort {
         Ok(findings.into_iter().map(map_finding).collect())
     }
 
-    async fn save(&self, def_json: String) -> Result<SaveResultDto, PortError> {
+    async fn save(&self, req: SaveRoutineRequestDto) -> Result<SaveResultDto, PortError> {
         let state = self.state();
-        let result = crate::routines::commands::save_routine(&state, &def_json)
-            .map_err(|e| save_err_with_catalog_pointer(routines_port_err(e)))?;
+        // Exactly-one rule (adrev A7): both/neither is invalid input, and a
+        // string inside `def` is invalid input — never parsed as JSON.
+        let def_json = match (req.def, req.def_json) {
+            (Some(_), Some(_)) => {
+                return Err(PortError::InvalidInput(
+                    "give exactly one of def (object) or def_json (deprecated string), not both"
+                        .into(),
+                ))
+            }
+            (None, None) => {
+                return Err(PortError::InvalidInput(
+                    "give def: the routine definition as a JSON OBJECT (def_json, its \
+                     deprecated string form, is also still accepted)"
+                        .into(),
+                ))
+            }
+            (Some(serde_json::Value::String(_)), None) => {
+                return Err(PortError::InvalidInput(
+                    "def must be a JSON OBJECT, not a string of JSON — pass the definition \
+                     directly, do not stringify it"
+                        .into(),
+                ))
+            }
+            (Some(obj), None) => serde_json::to_string(&obj)
+                .map_err(|e| PortError::Internal(format!("serialize def: {e}")))?,
+            (None, Some(s)) => s,
+        };
+        let result = crate::routines::commands::save_routine_checked(
+            &state,
+            &def_json,
+            req.expected_revision.as_deref(),
+        )
+        .map_err(|e| save_err_with_catalog_pointer(routines_port_err(e)))?;
         Ok(SaveResultDto {
             routine: result.routine,
+            revision: result.revision,
             findings: result.findings.into_iter().map(map_finding).collect(),
             blocked: result.blocked,
+        })
+    }
+
+    async fn edit(&self, req: RoutineEditRequestDto) -> Result<EditResultDto, PortError> {
+        let state = self.state();
+        let op = map_edit_op(req.op)?;
+        let result = crate::routines::commands::edit_routine(
+            &state,
+            &req.routine,
+            req.expected_revision.as_deref(),
+            op,
+        )
+        .map_err(routines_port_err)?;
+        Ok(EditResultDto {
+            routine: result.routine,
+            revision: result.revision,
+            applied: result.applied,
+            step_id: result.step_id,
+            scrubbed: result
+                .scrubbed
+                .into_iter()
+                .map(|s| ScrubbedRefDto {
+                    branch: s.branch,
+                    arm: s.arm,
+                    step: s.step,
+                })
+                .collect(),
+            step_findings: result.step_findings.into_iter().map(map_finding).collect(),
+            routine_findings: result
+                .routine_findings
+                .into_iter()
+                .map(map_finding)
+                .collect(),
+            blocked: result.blocked,
+        })
+    }
+
+    async fn rename(&self, routine: &str, new_name: &str) -> Result<RenameResultDto, PortError> {
+        let state = self.state();
+        let result = crate::routines::commands::rename_routine(&state, routine, new_name)
+            .map_err(routines_port_err)?;
+        Ok(RenameResultDto {
+            routine: result.routine,
+            revision: result.revision,
+            enabled: result.enabled,
+            callers_updated: result.callers_updated,
         })
     }
 

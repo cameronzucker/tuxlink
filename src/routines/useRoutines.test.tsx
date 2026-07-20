@@ -62,11 +62,14 @@ beforeEach(() => {
         return Promise.resolve([]);
       case 'routines_get':
         return Promise.resolve({
-          routine: 'morning-ics',
-          schema_version: 1,
-          transmit_mode: 'attended',
-          triggers: [],
-          tracks: [{ name: 't1', steps: [] }],
+          revision: 'rev-1',
+          def: {
+            routine: 'morning-ics',
+            schema_version: 1,
+            transmit_mode: 'attended',
+            triggers: [],
+            tracks: [{ name: 't1', steps: [] }],
+          },
         });
       case 'routines_actions_list':
         return Promise.resolve([

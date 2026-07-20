@@ -1882,19 +1882,37 @@ pub trait RoutinesPort: Send + Sync {
     /// `UNKNOWN_ACTION` at a time). Read-only.
     async fn actions_catalog(&self) -> Result<ActionsCatalogDto, PortError>;
     /// Read one routine's full definition, exactly as stored (spec §14 JSON
-    /// shape — the same shape [`RoutinesPort::save`] accepts). `Err`
+    /// shape — the same shape [`RoutinesPort::save`]'s `def` accepts), plus
+    /// its revision token for the D7 lost-update check. `Err`
     /// ([`PortError::NotFound`]) when the name is unknown. Read-only.
-    async fn get(&self, name: &str) -> Result<serde_json::Value, PortError>;
+    async fn get(&self, name: &str) -> Result<RoutineGetDto, PortError>;
     /// Validate one routine by name against the live station, WITHOUT saving
     /// or running anything — the SAME validator [`RoutinesPort::save`] /
     /// [`RoutinesPort::run`] use (spec §10: one validator, no privileged
     /// path). Read-only.
     async fn validate(&self, name: &str) -> Result<Vec<FindingDto>, PortError>;
-    /// Parse + save `def_json` (spec §14 shape). NEVER refused by validation
-    /// findings — a half-written draft still saves; `findings`/`blocked` in
-    /// the result say what is wrong. Refused only on a parse failure or a
-    /// routine name that would escape the routine store.
-    async fn save(&self, def_json: String) -> Result<SaveResultDto, PortError>;
+    /// Save a routine definition (spec §14 shape) from EXACTLY ONE of
+    /// `req.def` (object, preferred) or `req.def_json` (deprecated string).
+    /// NEVER refused by validation findings — a half-written draft still
+    /// saves; `findings`/`blocked` in the result say what is wrong. Refused
+    /// on a parse failure, a routine name that would escape the routine
+    /// store, a violated exactly-one rule, or a stale `expected_revision`
+    /// (`REVISION_CONFLICT` — the D7 lost-update check).
+    async fn save(&self, req: SaveRoutineRequestDto) -> Result<SaveResultDto, PortError>;
+    /// Apply ONE fragment edit (spec D1/D6) to a SAVED, currently-DISABLED
+    /// routine: the nine `routines_step_*`/`routines_track_*`/
+    /// `routines_trigger_set`/`routines_meta_set` tools all funnel here. An
+    /// enabled routine is refused (`ROUTINE_ENABLED`, the D5 guard); a stale
+    /// `expected_revision` is refused (`REVISION_CONFLICT`); malformed
+    /// payloads are refused with a `[CODE]`-prefixed teaching message. All
+    /// refusals mutate NOTHING. An applied edit is saved even with error
+    /// findings (errors block enable/run, never save).
+    async fn edit(&self, req: RoutineEditRequestDto) -> Result<EditResultDto, PortError>;
+    /// Transactional rename (spec D1, adrev A5): definition file, body name,
+    /// enabled state, and `call` references in other routines migrate in one
+    /// operation. Works on an enabled routine (content unchanged — no
+    /// re-gate); refused when the new name is taken or invalid.
+    async fn rename(&self, routine: &str, new_name: &str) -> Result<RenameResultDto, PortError>;
     /// Enable a routine so its triggers can fire it. See the module note for
     /// the Ok-with-`blocked`-flag contract; `Err` only for an unknown name.
     async fn enable(&self, name: &str) -> Result<EnableResultDto, PortError>;

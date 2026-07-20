@@ -91,9 +91,9 @@ function installInvokeMock(overrides: InvokeOverrides = {}) {
       case 'routines_station_sets_list':
         return Promise.resolve(STATION_SETS);
       case 'routines_get':
-        return Promise.resolve(BASE_DEF);
+        return Promise.resolve({ revision: 'rev-1', def: BASE_DEF });
       case 'routines_save':
-        return Promise.resolve({ routine: 'morning-sweep', findings: [], blocked: false } satisfies SaveResult);
+        return Promise.resolve({ routine: 'morning-sweep', revision: 'rev-2', findings: [], blocked: false } satisfies SaveResult);
       default:
         return Promise.resolve(undefined);
     }
@@ -327,7 +327,7 @@ describe('SettingsTab — write ack row + mode gating + both-classes', () => {
         writeSteps: [step({ step: 's2', action: 'config.set_ardop', params: { drive_level: 80 } })],
         callEdges: [],
       } satisfies ConsentClosureView),
-      routines_get: () => ({ ...BASE_DEF, write_ack: { by: 'N0CALL', at: '2026-07-09T00:00:00Z' } }),
+      routines_get: () => ({ revision: 'rev-ack-1', def: { ...BASE_DEF, write_ack: { by: 'N0CALL', at: '2026-07-09T00:00:00Z' } } }),
     });
     renderTab({ draft: { ...BASE_DEF, write_ack: null }, onChange });
     await screen.findByTestId('settings-write-ack-button');
@@ -358,8 +358,11 @@ describe('SettingsTab — ack panel (a)', () => {
     const onChange = vi.fn();
     installInvokeMock({
       routines_get: () => ({
-        ...BASE_DEF,
-        transmit_ack: { by: 'N0CALL', at: '2026-07-08T19:41:22Z' },
+        revision: 'rev-ack-1',
+        def: {
+          ...BASE_DEF,
+          transmit_ack: { by: 'N0CALL', at: '2026-07-08T19:41:22Z' },
+        },
       }),
     });
     renderTab({ draft: { ...BASE_DEF, transmit_ack: null }, onChange });

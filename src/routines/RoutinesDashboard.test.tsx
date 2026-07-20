@@ -241,7 +241,7 @@ function installInvokeMock(overrides: InvokeOverrides = {}) {
       }
       case 'routines_get': {
         const name = (args as { name: string }).name;
-        return Promise.resolve(DEFS[name]);
+        return Promise.resolve({ revision: 'rev-1', def: DEFS[name] });
       }
       case 'routines_runs_list':
         return Promise.resolve(RUNS);
@@ -258,7 +258,7 @@ function installInvokeMock(overrides: InvokeOverrides = {}) {
       case 'routines_delete':
         return Promise.resolve(undefined);
       case 'routines_save':
-        return Promise.resolve({ routine: 'x', findings: [], blocked: false });
+        return Promise.resolve({ routine: 'x', revision: 'rev-2', findings: [], blocked: false });
       default:
         return Promise.resolve([]);
     }

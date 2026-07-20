@@ -40,11 +40,11 @@ function installInvokeMock(overrides: InvokeOverrides = {}) {
     if (cmd in overrides) return Promise.resolve(overrides[cmd]!(args));
     switch (cmd) {
       case 'routines_get':
-        return Promise.resolve(EXISTING_DEF);
+        return Promise.resolve({ revision: 'rev-1', def: EXISTING_DEF });
       case 'routines_validate_draft':
         return Promise.resolve([]);
       case 'routines_save':
-        return Promise.resolve({ routine: 'deployment-poll', findings: [], blocked: false });
+        return Promise.resolve({ routine: 'deployment-poll', revision: 'rev-2', findings: [], blocked: false });
       case 'routines_dry_run':
         return Promise.resolve({ runId: 'run-dry-1', findings: [] });
       case 'routines_actions_list':
@@ -157,8 +157,11 @@ describe('RoutineDesigner — load + header (a)', () => {
   it('renders the schedule fact-chip with a compact cadence summary, or "manual" without a schedule', async () => {
     installInvokeMock({
       routines_get: () => ({
-        ...EXISTING_DEF,
-        triggers: [{ type: 'schedule', every: '30m', window: '07:00-09:00', if_missed: 'skip' }],
+        revision: 'rev-1',
+        def: {
+          ...EXISTING_DEF,
+          triggers: [{ type: 'schedule', every: '30m', window: '07:00-09:00', if_missed: 'skip' }],
+        },
       }),
     });
     renderDesigner({ routine: 'deployment-poll' });
@@ -413,6 +416,8 @@ describe('RoutineDesigner — flow-2 authoring trace through the real seam (Task
     installInvokeMock({
       routines_get: () =>
         ({
+          revision: 'rev-1',
+          def: {
           routine: 'deployment-poll',
           schema_version: 1,
           transmit_mode: 'attended',
@@ -428,7 +433,8 @@ describe('RoutineDesigner — flow-2 authoring trace through the real seam (Task
               ],
             },
           ],
-        }) satisfies RoutineDef,
+          } satisfies RoutineDef,
+        }),
       routines_actions_list: () => [
         { name: 'radio.connect', needsRadio: true, needsInternet: false, transmits: true },
       ],
@@ -470,6 +476,8 @@ describe('RoutineDesigner — flow-2 authoring trace through the real seam (Task
     installInvokeMock({
       routines_get: () =>
         ({
+          revision: 'rev-1',
+          def: {
           routine: 'deployment-poll',
           schema_version: 1,
           transmit_mode: 'attended',
@@ -484,7 +492,8 @@ describe('RoutineDesigner — flow-2 authoring trace through the real seam (Task
               ],
             },
           ],
-        }) satisfies RoutineDef,
+          } satisfies RoutineDef,
+        }),
       routines_actions_list: () => [
         { name: 'radio.connect', needsRadio: true, needsInternet: false, transmits: true },
       ],

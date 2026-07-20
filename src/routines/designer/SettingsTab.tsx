@@ -67,7 +67,7 @@ import {
   consentClosure,
   deletePreset,
   deleteStationSet,
-  getRoutine,
+  getRoutineWithRevision,
   listPresets,
   listRoutines,
   listStationSets,
@@ -105,6 +105,10 @@ export interface SettingsTabProps {
    *  round 2) tracks the same value this section displays. Optional: the
    *  section's own fetch/toggle behavior is unchanged without it. */
   onEnabledChange?: (enabled: boolean) => void;
+  /** Reports the stored def's fresh revision token after an acknowledge
+   *  writes the def a second time (spec D7) — without this the designer's
+   *  loaded revision goes stale and its next save would false-conflict. */
+  onRevisionRefresh?: (revision: string) => void;
 }
 
 type ScheduleTrigger = Extract<Trigger, { type: 'schedule' }>;
@@ -147,7 +151,7 @@ interface StationSetFormState {
 
 const EMPTY_STATION_SET_FORM: StationSetFormState = { name: '', callsigns: '' };
 
-export function SettingsTab({ draft, findings, onChange, onSaved, onEnabledChange }: SettingsTabProps) {
+export function SettingsTab({ draft, findings, onChange, onSaved, onEnabledChange, onRevisionRefresh }: SettingsTabProps) {
   // ------------------------------------------------------------------------
   // Consent-section visibility is CLOSURE-based (E2 / R5 pin), NOT a direct
   // step scan: `routines_consent_closure` walks the call graph, so a transmit
@@ -231,7 +235,8 @@ export function SettingsTab({ draft, findings, onChange, onSaved, onEnabledChang
       const saved = await onSaved();
       if (!saved) return; // save itself failed — already surfaced via the valbar
       await acknowledgeAutomatic(draft.routine);
-      const fresh = await getRoutine(draft.routine);
+      const { def: fresh, revision } = await getRoutineWithRevision(draft.routine);
+      onRevisionRefresh?.(revision);
       onChange({ transmit_ack: fresh.transmit_ack ?? null });
     } catch (e) {
       setAckError(formatUiError(e));
@@ -250,7 +255,8 @@ export function SettingsTab({ draft, findings, onChange, onSaved, onEnabledChang
       const saved = await onSaved();
       if (!saved) return; // save itself failed — already surfaced via the valbar
       await acknowledgeWrite(draft.routine);
-      const fresh = await getRoutine(draft.routine);
+      const { def: fresh, revision } = await getRoutineWithRevision(draft.routine);
+      onRevisionRefresh?.(revision);
       onChange({ write_ack: fresh.write_ack ?? null });
     } catch (e) {
       setWriteAckError(formatUiError(e));

@@ -48,7 +48,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  getRoutine,
+  getRoutineWithRevision,
   saveRoutine,
   validateDraft,
   dryRunRoutine,
@@ -294,6 +294,10 @@ export function RoutineDesigner({
   // change (there is none per current navigation) can't re-trigger a fetch.
   const [seededFromToken] = useState(() => initialDraft != null);
   const [draft, setDraft] = useState<RoutineDef | null>(() => initialDraft ?? null);
+  // The revision token the current draft was loaded from (spec D7) — sent
+  // back on save so a concurrent writer's change refuses instead of being
+  // clobbered. Null for a brand-new or token-seeded draft (no load).
+  const loadedRevisionRef = useRef<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [findings, setFindings] = useState<Finding[]>([]);
@@ -412,10 +416,11 @@ export function RoutineDesigner({
       setLoadError(null);
       return;
     }
-    getRoutine(routine)
-      .then((def) => {
+    getRoutineWithRevision(routine)
+      .then(({ def, revision }) => {
         if (!cancelled) {
           setDraft(def);
+          loadedRevisionRef.current = revision;
           setLoadError(null);
         }
       })
@@ -536,16 +541,25 @@ export function RoutineDesigner({
     if (!draft) return null;
     setSaving(true);
     try {
-      const result = await saveRoutine(draft);
+      // The revision loaded with this draft rides along (spec D7): if an
+      // agent's edit verb (or another surface) saved in between, the backend
+      // refuses with REVISION_CONFLICT instead of silently deleting that
+      // change — the whole-document save is exactly the clobber-prone writer
+      // the check exists for. A brand-new draft has no revision and skips
+      // the check.
+      const result = await saveRoutine(draft, loadedRevisionRef.current ?? undefined);
       // Save NEVER blocks (Global Constraint 7): dirty clears and the
       // findings replace the valbar's content regardless of `blocked`.
       setFindings(result.findings);
       setParseFailure(null);
       setDirty(false);
+      loadedRevisionRef.current = result.revision;
       return result;
     } catch (e) {
       // A thrown value here is a genuine backend/parse error — saveRoutine
-      // itself never rejects on validation findings.
+      // itself never rejects on validation findings. A REVISION_CONFLICT
+      // lands here too and renders verbatim: the message says to re-open the
+      // routine and re-apply the edit.
       setParseFailure(formatUiError(e));
       return null;
     } finally {
@@ -732,6 +746,9 @@ export function RoutineDesigner({
                   onChange={(patch) => updateDraft((d) => updateSettings(d, patch))}
                   onSaved={handleSave}
                   onEnabledChange={setEnabledChip}
+                  onRevisionRefresh={(rev) => {
+                    loadedRevisionRef.current = rev;
+                  }}
                 />
               </div>
             </div>
