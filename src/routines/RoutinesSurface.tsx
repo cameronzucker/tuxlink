@@ -51,6 +51,11 @@ export interface RoutinesSurfaceProps {
    *  / dock-back time (tuxlink-dmwte task 8). Only fires from the designer
    *  view. */
   onDraftChange?: (draft: RoutineDef) => void;
+  /** Continuity-token revision riding with `initialDraft` (spec D7). */
+  initialRevision?: string;
+  /** Reports the designer's loaded/saved revision upward for token
+   *  collection, the counterpart of `onDraftChange`. */
+  onRevisionChange?: (revision: string | null) => void;
   /** Close the surface back to the mailbox (tuxlink-9se1x). Provided by the
    *  inline AppShell host only — absent in the popped window, where there is
    *  no mailbox pane to return to. Drives the dashboard's "← Mailbox" button
@@ -58,7 +63,7 @@ export interface RoutinesSurfaceProps {
   onClose?: () => void;
 }
 
-export function RoutinesSurface({ view, onNavigate, onPopOut, initialDraft, onDraftChange, onClose }: RoutinesSurfaceProps) {
+export function RoutinesSurface({ view, onNavigate, onPopOut, initialDraft, onDraftChange, initialRevision, onRevisionChange, onClose }: RoutinesSurfaceProps) {
   // tuxlink-9se1x: Escape returns to the mailbox — from the DASHBOARD only.
   // In the designer a stray Escape would silently discard an unsaved draft,
   // so it stays inert there (the "← Routines" button is the deliberate path).
@@ -110,6 +115,8 @@ export function RoutinesSurface({ view, onNavigate, onPopOut, initialDraft, onDr
       onTabChange={(tab) => onNavigate({ view: 'designer', routine: view.routine, tab })}
       initialDraft={initialDraft}
       onDraftChange={onDraftChange}
+      initialRevision={initialRevision}
+      onRevisionChange={onRevisionChange}
       onPopOut={onPopOut}
     />
   );

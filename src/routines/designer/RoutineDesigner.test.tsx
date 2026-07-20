@@ -69,6 +69,7 @@ function renderDesigner(props: Partial<Parameters<typeof RoutineDesigner>[0]> = 
   const onTabChange = props.onTabChange ?? vi.fn();
   const utils = render(
     <RoutineDesigner
+      {...props}
       routine={props.routine ?? 'deployment-poll'}
       tab={props.tab ?? 'design'}
       onBack={onBack}
@@ -291,6 +292,39 @@ describe('RoutineDesigner — always-on validation bar (b, flow 2)', () => {
       await vi.advanceTimersByTimeAsync(400); // flush the 400ms validate debounce
     });
     expect(screen.getByText('invalid def: missing tracks')).toBeInTheDocument();
+  });
+});
+
+describe('RoutineDesigner — revision CAS (spec D7, adrev round 2)', () => {
+  it('a loaded routine saves with the expectedRevision from routines_get, and updates it from the save result', async () => {
+    installInvokeMock();
+    renderDesigner();
+    await screen.findByText('deployment-poll');
+    fireEvent.click(screen.getByTestId('add-track-btn'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => {
+      expect(callsFor('routines_save')).toHaveLength(1);
+    });
+    expect(callsFor('routines_save')[0]?.[1]).toMatchObject({ expectedRevision: 'rev-1' });
+  });
+
+  it('a token-seeded designer saves with the revision the continuity token carried', async () => {
+    installInvokeMock();
+    renderDesigner({
+      initialDraft: EXISTING_DEF,
+      initialRevision: 'rev-token-7',
+    });
+    await screen.findByText('deployment-poll');
+    // Token-seeded: no fetch happened, so the ONLY possible source of the
+    // revision is the token (adrev round 2 P1 — pop-out/dock-back must not
+    // shed the CAS protection).
+    expect(callsFor('routines_get')).toHaveLength(0);
+    fireEvent.click(screen.getByTestId('add-track-btn'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => {
+      expect(callsFor('routines_save')).toHaveLength(1);
+    });
+    expect(callsFor('routines_save')[0]?.[1]).toMatchObject({ expectedRevision: 'rev-token-7' });
   });
 });
 

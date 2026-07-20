@@ -279,6 +279,32 @@ impl DefinitionStore {
         self.read_enabled_set().contains(name)
     }
 
+    fn rename_intent_path(&self) -> PathBuf {
+        self.dir.join(".rename-intent.json")
+    }
+
+    /// The rename-in-progress marker (tuxlink-aqy63): a rename is a SEQUENCE
+    /// of atomic file writes, and this marker is what lets a crashed rename
+    /// resume instead of dead-ending on NAME_TAKEN. Written before the new
+    /// definition file, cleared after the old one is deleted. Content
+    /// equality alone is NOT a resume test — two template-created routines
+    /// are legitimately byte-identical, and "resuming" across them would
+    /// delete a distinct routine.
+    pub fn rename_intent(&self) -> Option<(String, String)> {
+        let raw = std::fs::read_to_string(self.rename_intent_path()).ok()?;
+        serde_json::from_str(&raw).ok()
+    }
+
+    pub fn rename_intent_write(&self, old: &str, new: &str) -> Result<(), StoreError> {
+        let json = serde_json::to_vec(&(old, new))?;
+        atomic_write(&self.rename_intent_path(), &json)?;
+        Ok(())
+    }
+
+    pub fn rename_intent_clear(&self) {
+        let _ = std::fs::remove_file(self.rename_intent_path());
+    }
+
     /// `EngineConfig.lookup` seam: a cheap `Fn` closure resolving a routine
     /// name to its definition, reading disk fresh on every call (same
     /// semantics as [`Self::get`], just decoupled from the store's lifetime).

@@ -4602,10 +4602,20 @@ impl RoutinesPort for MonolithRoutinesPort {
         })
     }
 
-    async fn rename(&self, routine: &str, new_name: &str) -> Result<RenameResultDto, PortError> {
+    async fn rename(
+        &self,
+        routine: &str,
+        new_name: &str,
+        expected_revision: Option<String>,
+    ) -> Result<RenameResultDto, PortError> {
         let state = self.state();
-        let result = crate::routines::commands::rename_routine(&state, routine, new_name)
-            .map_err(routines_port_err)?;
+        let result = crate::routines::commands::rename_routine(
+            &state,
+            routine,
+            new_name,
+            expected_revision.as_deref(),
+        )
+        .map_err(routines_port_err)?;
         Ok(RenameResultDto {
             routine: result.routine,
             revision: result.revision,

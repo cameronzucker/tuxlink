@@ -94,6 +94,13 @@ export interface RoutineDesignerProps {
    *  window's registry Component, or AppShell inline) can collect it into the
    *  continuity token at pop-out / dock-back time (tuxlink-dmwte task 8). */
   onDraftChange?: (draft: RoutineDef) => void;
+  /** The revision the continuity token's draft was loaded from (spec D7).
+   *  Seeds `loadedRevisionRef` for a token-seeded designer, whose suppressed
+   *  fetch would otherwise leave the save unchecked (adrev round 2 P1). */
+  initialRevision?: string;
+  /** Reports the current loaded/saved revision upward for token collection,
+   *  the counterpart of `onDraftChange`. */
+  onRevisionChange?: (revision: string | null) => void;
   /** When provided, the designer header shows a text-labeled "↗ Pop out"
    *  affordance (spec §5) that pops the Routines surface to its own window
    *  carrying THIS designer view + draft. Absent inside the popped window
@@ -275,6 +282,8 @@ export function RoutineDesigner({
   onTabChange,
   initialDraft,
   onDraftChange,
+  initialRevision,
+  onRevisionChange,
   onPopOut,
 }: RoutineDesignerProps) {
   // Fixed at mount: whether this designer opened on a brand-new, unsaved
@@ -296,8 +305,17 @@ export function RoutineDesigner({
   const [draft, setDraft] = useState<RoutineDef | null>(() => initialDraft ?? null);
   // The revision token the current draft was loaded from (spec D7) — sent
   // back on save so a concurrent writer's change refuses instead of being
-  // clobbered. Null for a brand-new or token-seeded draft (no load).
-  const loadedRevisionRef = useRef<string | null>(null);
+  // clobbered. A token-seeded draft inherits the revision the token carried
+  // (adrev round 2 P1: pop-out/dock-back must not shed the CAS protection);
+  // null only for a brand-new draft, which has nothing to conflict with.
+  const loadedRevisionRef = useRef<string | null>(initialRevision ?? null);
+  const setLoadedRevision = useCallback(
+    (rev: string | null) => {
+      loadedRevisionRef.current = rev;
+      onRevisionChangeRef.current?.(rev);
+    },
+    [],
+  );
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [findings, setFindings] = useState<Finding[]>([]);
@@ -400,6 +418,8 @@ export function RoutineDesigner({
   // the host reads the LATEST reported draft at pop-out / dock-back time. Kept
   // in a ref so a changing `onDraftChange` identity doesn't re-fire the effect.
   const onDraftChangeRef = useRef(onDraftChange);
+  const onRevisionChangeRef = useRef(onRevisionChange);
+  onRevisionChangeRef.current = onRevisionChange;
   onDraftChangeRef.current = onDraftChange;
   useEffect(() => {
     if (draft) onDraftChangeRef.current?.(draft);
@@ -420,7 +440,7 @@ export function RoutineDesigner({
       .then(({ def, revision }) => {
         if (!cancelled) {
           setDraft(def);
-          loadedRevisionRef.current = revision;
+          setLoadedRevision(revision);
           setLoadError(null);
         }
       })
@@ -553,7 +573,7 @@ export function RoutineDesigner({
       setFindings(result.findings);
       setParseFailure(null);
       setDirty(false);
-      loadedRevisionRef.current = result.revision;
+      setLoadedRevision(result.revision);
       return result;
     } catch (e) {
       // A thrown value here is a genuine backend/parse error — saveRoutine
@@ -746,9 +766,7 @@ export function RoutineDesigner({
                   onChange={(patch) => updateDraft((d) => updateSettings(d, patch))}
                   onSaved={handleSave}
                   onEnabledChange={setEnabledChip}
-                  onRevisionRefresh={(rev) => {
-                    loadedRevisionRef.current = rev;
-                  }}
+                  onRevisionRefresh={setLoadedRevision}
                 />
               </div>
             </div>

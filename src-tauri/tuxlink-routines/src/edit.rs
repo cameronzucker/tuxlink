@@ -296,25 +296,84 @@ pub fn step_update(def: &RoutineDef, step_id: &str, patch: &Value) -> Result<Rou
         EditError::InvalidPatch(format!("step \"{step_id}\": {e}"))
     })?;
 
+    // Reject patch keys serde silently dropped (adrev round 2, both
+    // reviewers): the step structs don't deny unknown fields, so a typo like
+    // {"timeout": 30} would deserialize unchanged and report applied:true —
+    // the exact "reported success, changed nothing" failure D6 outcome 1
+    // exists to prevent. Every REAL step field either always serializes or
+    // serializes when set to a non-null value (the only skip_serializing_if
+    // fields are Options the non-null patch just set), so key-presence in
+    // the re-serialized step is a sound acceptance test.
+    let reserialized = serde_json::to_value(&new_step)
+        .map_err(|e| EditError::InvalidPatch(e.to_string()))?;
+    let out_obj = reserialized
+        .as_object()
+        .expect("a serialized step is a JSON object");
+    for (k, v) in patch_obj {
+        if !v.is_null() && !out_obj.contains_key(k) {
+            return Err(EditError::InvalidPatch(format!(
+                "step \"{step_id}\": unknown field \"{k}\" for this step kind — it would be \
+                 silently ignored, not applied"
+            )));
+        }
+    }
+
     let mut out = def.clone();
     out.tracks[ti].steps[si] = new_step;
     Ok(out)
 }
 
-/// Remove the step AND scrub its id from every branch's `then`/`else` arm in
-/// every track — the designer's load-bearing invariant, verbatim. A retry
-/// step referencing the removed id is NOT repaired: the validator's finding
-/// surfaces it (the reference is the retry's meaning; silently deleting the
-/// retry would remove a step the caller didn't name).
+/// Remove the step AND scrub every reference to it (spec D1's amended
+/// contract: branch/retry references are scrubbed, never left dangling —
+/// adrev round 2, both reviewers: a dangling retry target plus a recycled id
+/// silently retargets the retry onto an unrelated future step, the same
+/// phantom-membership hazard the branch-arm scrub closes). Branch-arm
+/// entries are filtered out; a `retry` control step whose TARGET was removed
+/// is itself removed (a retry without its target has no meaning), and that
+/// removal cascades: the retry's own id is scrubbed from arms and from any
+/// retry targeting IT, to a fixpoint. Everything scrubbed is reported.
 pub fn step_remove(
     def: &RoutineDef,
     step_id: &str,
 ) -> Result<(RoutineDef, ScrubReport), EditError> {
-    let (ti, si) = find_step(def, step_id).ok_or_else(|| EditError::UnknownStep(step_id.into()))?;
+    if find_step(def, step_id).is_none() {
+        return Err(EditError::UnknownStep(step_id.into()));
+    }
+    Ok(remove_steps(def, &[step_id.to_string()]))
+}
+
+/// The shared removal core for [`step_remove`] / [`track_remove`]: grow the
+/// removed set with retry steps whose target is being removed (fixpoint),
+/// filter them all out of storage, scrub branch arms.
+fn remove_steps(def: &RoutineDef, named: &[String]) -> (RoutineDef, ScrubReport) {
+    let mut removed: Vec<String> = named.to_vec();
+    let mut report = ScrubReport::default();
+    loop {
+        let mut grew = false;
+        for track in &def.tracks {
+            for step in &track.steps {
+                if let Step::Control(c) = step {
+                    if let Control::Retry { step: target, .. } = &c.control {
+                        if removed.contains(&target.0) && !removed.contains(&c.id.0) {
+                            report.scrubbed.push((c.id.0.clone(), "retry", target.0.clone()));
+                            removed.push(c.id.0.clone());
+                            grew = true;
+                        }
+                    }
+                }
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
     let mut out = def.clone();
-    out.tracks[ti].steps.remove(si);
-    let report = scrub_arm_refs(&mut out, &[step_id.to_string()]);
-    Ok((out, report))
+    for track in &mut out.tracks {
+        track.steps.retain(|s| !removed.contains(&s.id().0));
+    }
+    let arm_report = scrub_arm_refs(&mut out, &removed);
+    report.scrubbed.extend(arm_report.scrubbed);
+    (out, report)
 }
 
 fn scrub_arm_refs(def: &mut RoutineDef, removed: &[String]) -> ScrubReport {
@@ -393,11 +452,13 @@ pub fn track_add(def: &RoutineDef, name: &str) -> Result<RoutineDef, EditError> 
     Ok(out)
 }
 
-/// Remove a track and every step it held, scrubbing those ids from the
-/// remaining branches' arms (same invariant as [`step_remove`], applied to
-/// the whole batch). Refuses to remove the last track — a routine with zero
-/// tracks is not an editable draft state, it is a shape the parser's
-/// consumers never see.
+/// Remove a track and every step it held, with the same reference scrub as
+/// [`step_remove`] applied to the whole batch — branch arms filtered AND
+/// retry steps in OTHER tracks whose target lived here are removed too (a
+/// retry may only legally target same-track steps, but the scrub walks
+/// everything, same posture as the arm scrub). Refuses to remove the last
+/// track — a routine with zero tracks is not an editable draft state, it is
+/// a shape the parser's consumers never see.
 pub fn track_remove(
     def: &RoutineDef,
     name: &str,
@@ -417,7 +478,7 @@ pub fn track_remove(
         .iter()
         .map(|s| s.id().0.clone())
         .collect();
-    let report = scrub_arm_refs(&mut out, &removed_ids);
+    let (out, report) = remove_steps(&out, &removed_ids);
     Ok((out, report))
 }
 
@@ -944,6 +1005,86 @@ mod tests {
         assert_eq!(out.transmit_mode, TransmitMode::Automatic);
         assert_eq!(out.on_interrupted, OnInterrupted::Stay); // untouched
         assert_eq!(out.inputs.len(), 1);
+    }
+
+    // ---- retry scrub (adrev round 2) ----------------------------------
+
+    fn retry(id: &str, target: &str) -> Step {
+        Step::Control(ControlStep {
+            id: StepId(id.into()),
+            control: Control::Retry {
+                step: StepId(target.into()),
+                attempts: 3,
+                backoff_s: 0,
+            },
+        })
+    }
+
+    #[test]
+    fn remove_scrubs_retry_wrappers_and_cascades_their_arm_membership() {
+        // s1 branch (then: [s2]), s2 retry->s3, s3 action. Removing s3 must
+        // remove the now-meaningless retry s2 AND scrub s2 out of the arm —
+        // otherwise a recycled s3 would be silently re-wrapped by the retry.
+        let def = one_track(vec![
+            branch("s1", "x", &["s2"], &[]),
+            retry("s2", "s3"),
+            action("s3", "a"),
+        ]);
+        let (out, report) = step_remove(&def, "s3").unwrap();
+        assert_eq!(ids(&out, 0), vec!["s1"]);
+        match &out.tracks[0].steps[0] {
+            Step::Control(c) => match &c.control {
+                Control::Branch { then, .. } => assert!(then.is_empty()),
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
+        }
+        assert!(report
+            .scrubbed
+            .contains(&("s2".to_string(), "retry", "s3".to_string())));
+        assert!(report
+            .scrubbed
+            .contains(&("s1".to_string(), "then", "s2".to_string())));
+    }
+
+    #[test]
+    fn track_remove_scrubs_cross_track_retry_targets() {
+        let def = def_with(vec![
+            Track {
+                name: "a".into(),
+                steps: vec![retry("s1", "s9"), action("s2", "x")],
+            },
+            Track {
+                name: "b".into(),
+                steps: vec![action("s9", "z")],
+            },
+        ]);
+        let (out, report) = track_remove(&def, "b").unwrap();
+        assert_eq!(ids(&out, 0), vec!["s2"], "the retry wrapping a removed target goes too");
+        assert!(report
+            .scrubbed
+            .contains(&("s1".to_string(), "retry", "s9".to_string())));
+    }
+
+    // ---- unknown patch keys (adrev round 2) ---------------------------
+
+    #[test]
+    fn update_rejects_keys_serde_would_silently_drop() {
+        let def = one_track(vec![action("s1", "a"), branch("s2", "x", &[], &[])]);
+        // typo'd field on an action step
+        let err = step_update(&def, "s1", &json!({"timeout": 30})).unwrap_err();
+        assert!(
+            matches!(&err, EditError::InvalidPatch(m) if m.contains("timeout")),
+            "got {err:?}"
+        );
+        // a delay payload smuggled onto a branch without changing `control`
+        let err = step_update(&def, "s2", &json!({"delay": "+5m"})).unwrap_err();
+        assert!(
+            matches!(&err, EditError::InvalidPatch(m) if m.contains("delay")),
+            "got {err:?}"
+        );
+        // real fields still patch
+        assert!(step_update(&def, "s1", &json!({"timeout_s": 30})).is_ok());
     }
 
     // ---- purity -------------------------------------------------------

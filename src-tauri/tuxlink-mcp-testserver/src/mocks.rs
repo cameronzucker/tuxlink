@@ -953,9 +953,21 @@ impl RoutinesPort for MockRoutines {
             blocked: false,
         })
     }
-    async fn rename(&self, routine: &str, new_name: &str) -> Result<RenameResultDto, PortError> {
+    async fn rename(
+        &self,
+        routine: &str,
+        new_name: &str,
+        expected_revision: Option<String>,
+    ) -> Result<RenameResultDto, PortError> {
         if routine != SEED_ROUTINE {
             return Err(PortError::NotFound);
+        }
+        if let Some(expected) = &expected_revision {
+            if expected != SEED_ROUTINE_REVISION {
+                return Err(PortError::InvalidInput(format!(
+                    "[REVISION_CONFLICT] expected revision {expected} but \"{SEED_ROUTINE}\"                      is at {SEED_ROUTINE_REVISION}"
+                )));
+            }
         }
         Ok(RenameResultDto {
             routine: new_name.to_string(),

@@ -633,6 +633,11 @@ function AppShellInner() {
   // (reported via onDraftChange) so the inline ↗ pop-out can collect it.
   const [routinesInitialDraft, setRoutinesInitialDraft] = useState<RoutineDef | undefined>(undefined);
   const routinesDraftRef = useRef<RoutineDef | undefined>(undefined);
+  // The revision riding with the token draft (spec D7): seeded on dock-back,
+  // mirrored live via onRevisionChange, collected at pop-out — so a draft
+  // that crossed windows still saves with its CAS token (adrev round 2 P1).
+  const [routinesInitialRevision, setRoutinesInitialRevision] = useState<string | undefined>(undefined);
+  const routinesRevisionRef = useRef<string | undefined>(undefined);
   // routines plan-5 Task 14 (spec §12): mirrors <ConsentGate>'s own parked-run
   // tracking, purely for chrome (MenuBar's amber badge + StatusBar's "N
   // transmit awaiting consent" item) — AppShell holds no tracking logic of
@@ -679,9 +684,14 @@ function AppShellInner() {
     if (prev !== 'popped' || cur !== 'docked') return;
     const envelope = dock.context.routines as DockContextEnvelope;
     if (!envelope?.foreground) return; // availability semantics — pane untouched
-    const state = (envelope.state ?? null) as { view?: unknown; draft?: RoutineDef } | null;
+    const state = (envelope.state ?? null) as {
+      view?: unknown;
+      draft?: RoutineDef;
+      revision?: string;
+    } | null;
     setRoutinesView(isRoutinesView(state?.view) ? state!.view : { view: 'dashboard' });
     setRoutinesInitialDraft(state?.draft);
+    setRoutinesInitialRevision(state?.revision);
   }, [dock]);
 
   // tuxlink-dmwte task 9 (spec §5): a ⇤ foreground dock-back for the Tac Map
@@ -753,6 +763,8 @@ function AppShellInner() {
   const onRoutinesNavigate = useCallback((next: RoutinesView | null) => {
     setRoutinesInitialDraft(undefined);
     routinesDraftRef.current = undefined;
+    setRoutinesInitialRevision(undefined);
+    routinesRevisionRef.current = undefined;
     setRoutinesView(next);
   }, []);
 
@@ -763,7 +775,8 @@ function AppShellInner() {
   const onRoutinesPopOut = useCallback(() => {
     const view: RoutinesView = routinesView ?? { view: 'dashboard' };
     const draft = view.view === 'designer' ? routinesDraftRef.current : undefined;
-    void popOut('routines', { foreground: true, state: { view, draft } }).catch((err) => {
+    const revision = view.view === 'designer' ? routinesRevisionRef.current : undefined;
+    void popOut('routines', { foreground: true, state: { view, draft, revision } }).catch((err) => {
       console.error('[dock] Routines pop-out failed:', err);
     });
   }, [routinesView]);
@@ -2208,6 +2221,8 @@ function AppShellInner() {
             onPopOut={onRoutinesPopOut}
             initialDraft={routinesInitialDraft}
             onDraftChange={(d) => { routinesDraftRef.current = d; }}
+            initialRevision={routinesInitialRevision}
+            onRevisionChange={(rev) => { routinesRevisionRef.current = rev ?? undefined; }}
             onClose={() => onRoutinesNavigate(null)}
           />
         </Suspense>

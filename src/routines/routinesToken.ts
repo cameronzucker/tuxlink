@@ -17,6 +17,11 @@ import type { RoutineDef } from './routinesApi';
 export interface RoutinesTokenState {
   view: RoutinesView;
   draft?: RoutineDef;
+  /** The revision token the carried draft was loaded from (spec D7) — rides
+   *  with the draft so a token-seeded designer still sends
+   *  `expectedRevision` on save instead of silently clobbering an edit that
+   *  landed while the surface moved between windows. */
+  revision?: string;
 }
 
 /** True when `value` is a well-formed {@link RoutinesView}. Used to validate a

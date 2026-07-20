@@ -481,10 +481,7 @@ pub fn save_routine_checked(
     def_json: &str,
     expected_revision: Option<&str>,
 ) -> Result<SaveResult, UiError> {
-    let _guard = state
-        .edit_lock
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _guard = edit_guard(state);
     let mut def = RoutineDef::parse(def_json).map_err(|e| UiError::Rejected(e.to_string()))?;
     if let Some(expected) = expected_revision {
         let current = state
@@ -581,6 +578,7 @@ pub fn validate_draft(state: &RoutinesState, def_json: &str) -> Result<Vec<Findi
 }
 
 pub fn delete_routine(state: &RoutinesState, name: &str) -> Result<(), UiError> {
+    let _guard = edit_guard(state);
     state.store.delete(name)?;
     state.emit(&RoutinesEvent::LibraryChanged {
         entity: LibraryEntity::Routine,
@@ -695,6 +693,19 @@ pub enum EditOp {
     },
 }
 
+/// Acquire the definition-store writer lock (spec D7). EVERY path that
+/// mutates a routine definition file or the enabled sidecar goes through
+/// this — the verbs, both save paths, rename, delete, enable/disable, and
+/// the acknowledgments (adrev round 2 P1: an unlocked ack's load-modify-save
+/// could resurrect a definition a concurrent verb had already replaced, and
+/// an unlocked enable could arm a definition mid-edit).
+fn edit_guard(state: &RoutinesState) -> std::sync::MutexGuard<'_, ()> {
+    state
+        .edit_lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 fn revision_conflict(routine: &str, expected: &str, current: Option<&str>) -> UiError {
     UiError::Rejected(match current {
         Some(cur) => format!(
@@ -761,10 +772,7 @@ pub fn edit_routine(
 ) -> Result<EditResult, UiError> {
     use tuxlink_routines::edit;
 
-    let _guard = state
-        .edit_lock
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _guard = edit_guard(state);
 
     // D5 enabled guard — the atomicity answer. Checked before anything else
     // so the refusal is deterministic regardless of the op.
@@ -897,36 +905,63 @@ pub fn rename_routine(
     state: &RoutinesState,
     old: &str,
     new: &str,
+    expected_revision: Option<&str>,
 ) -> Result<RenameResult, UiError> {
     use tuxlink_routines::types::{Control, Step};
 
-    let _guard = state
-        .edit_lock
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _guard = edit_guard(state);
 
-    let (mut def, _rev) = state
+    let (mut def, current_rev) = state
         .store
         .get_with_revision(old)
         .ok_or_else(|| UiError::NotFound(old.to_string()))?;
+    // D7 applies to rename like every other edit verb (adrev round 2, 5.6):
+    // a rename decided against a stale read must conflict, not proceed.
+    if let Some(expected) = expected_revision {
+        if expected != current_rev {
+            return Err(revision_conflict(old, expected, Some(&current_rev)));
+        }
+    }
     if new == old {
         return Err(UiError::Rejected(format!(
             "[NAME_TAKEN] \"{new}\" is already this routine's name"
         )));
     }
-    if state.store.get(new).is_some() {
+    let was_enabled = state.store.is_enabled(old);
+    def.routine = new.to_string();
+
+    // Crash-resume (adrev round 2, 5.6 P1): the rename is a SEQUENCE of
+    // atomic file writes, not one transaction. Its ordering (intent marker,
+    // new saved, callers/enabled/anchor migrated, old deleted, marker
+    // cleared) means every crash window leaves BOTH definitions present — so
+    // a retry must not dead-end on NAME_TAKEN when the existing `new` is
+    // this rename's own half-finished output. The intent MARKER is the
+    // discriminator, not content equality: two template-created routines are
+    // legitimately byte-identical, and "resuming" across them would delete a
+    // distinct routine (caught by the rename test's NAME_TAKEN case).
+    let resume = state.store.rename_intent()
+        == Some((old.to_string(), new.to_string()))
+        && state.store.get(new).is_some_and(|existing| existing == def);
+    if !resume && state.store.get(new).is_some() {
         return Err(UiError::Rejected(format!(
             "[NAME_TAKEN] a routine named \"{new}\" already exists"
         )));
     }
-    let was_enabled = state.store.is_enabled(old);
-    def.routine = new.to_string();
 
-    // Rewrite `call` steps in every other routine BEFORE the old name
-    // disappears; an invalid new name fails here (store.save's InvalidName)
-    // before anything is touched — validate it by saving the renamed def
-    // FIRST, then rewrite callers.
-    let revision = state.store.save(&def)?;
+    // Save the renamed def FIRST — an invalid new name fails here
+    // (store.save's InvalidName) before anything else is touched. The
+    // intent marker goes down before it so a crash after this point is
+    // resumable.
+    let revision = if resume {
+        state
+            .store
+            .get_with_revision(new)
+            .map(|(_, r)| r)
+            .ok_or_else(|| UiError::NotFound(new.to_string()))?
+    } else {
+        state.store.rename_intent_write(old, new)?;
+        state.store.save(&def)?
+    };
     let mut callers_updated = Vec::new();
     for summary in state.store.list() {
         if summary.routine == old || summary.routine == new {
@@ -961,7 +996,13 @@ pub fn rename_routine(
     if was_enabled {
         state.store.set_enabled(new, true)?;
     }
+    // The scheduling identity moves with the name (spec D1's rename row;
+    // adrev round 2, both reviewers): cadence anchor + diagnostics, so the
+    // next fire is measured from the routine's real history, not "first
+    // seen now".
+    crate::routines::scheduler::migrate_anchor(state, old, new);
     state.store.delete(old)?; // also drops old's enabled entry
+    state.store.rename_intent_clear();
     state.emit(&RoutinesEvent::LibraryChanged {
         entity: LibraryEntity::Routine,
         name: old.to_string(),
@@ -1016,6 +1057,11 @@ pub fn set_routine_enabled(
     now_unix: i64,
     utc_offset_seconds: i32,
 ) -> Result<EnableResult, UiError> {
+    // Atomic with the D5 enabled guard: without this, an edit verb could
+    // observe "disabled", a concurrent enable could validate + arm the OLD
+    // definition, and the edit could then save a definition that never
+    // passed the enable gate onto an armed schedule (adrev round 2 P1).
+    let _guard = edit_guard(state);
     let def = get_routine(state, name)?;
 
     if !enabled {
@@ -1116,6 +1162,7 @@ pub fn acknowledge_automatic(
     callsign: &str,
     at_rfc3339: &str,
 ) -> Result<(), UiError> {
+    let _guard = edit_guard(state);
     let mut def = get_routine(state, name)?;
     if def.transmit_mode != tuxlink_routines::types::TransmitMode::Automatic {
         return Err(UiError::Rejected(format!(
@@ -1155,6 +1202,7 @@ pub fn acknowledge_write(
     callsign: &str,
     at_rfc3339: &str,
 ) -> Result<(), UiError> {
+    let _guard = edit_guard(state);
     let mut def = get_routine(state, name)?;
     if def.transmit_mode != tuxlink_routines::types::TransmitMode::Automatic {
         return Err(UiError::Rejected(format!(
@@ -3431,7 +3479,7 @@ mod tests {
         .unwrap();
 
         // acceptance 7: single call — new name enabled, old gone, caller repointed.
-        let res = rename_routine(&state, "nightly", "nightly-v2").unwrap();
+        let res = rename_routine(&state, "nightly", "nightly-v2", None).unwrap();
         assert!(res.enabled);
         assert_eq!(res.callers_updated, vec!["wrapper".to_string()]);
         assert!(state.store.get("nightly").is_none());
@@ -3451,13 +3499,67 @@ mod tests {
         // NAME_TAKEN both ways.
         saved(&state, "other");
         rejected_code(
-            rename_routine(&state, "nightly-v2", "other").unwrap_err(),
+            rename_routine(&state, "nightly-v2", "other", None).unwrap_err(),
             "NAME_TAKEN",
         );
         rejected_code(
-            rename_routine(&state, "nightly-v2", "nightly-v2").unwrap_err(),
+            rename_routine(&state, "nightly-v2", "nightly-v2", None).unwrap_err(),
             "NAME_TAKEN",
         );
+    }
+
+    #[test]
+    fn rename_resumes_its_own_crash_but_refuses_a_distinct_identical_routine() {
+        let (_dir, state, _sink, _c) = test_state();
+        saved(&state, "r-old");
+        // Simulate the crash window: intent marker down, renamed def saved,
+        // old still present, nothing else migrated.
+        state.store.rename_intent_write("r-old", "r-new").unwrap();
+        let mut def = state.store.get("r-old").unwrap();
+        def.routine = "r-new".into();
+        state.store.save(&def).unwrap();
+
+        let res = rename_routine(&state, "r-old", "r-new", None).unwrap();
+        assert_eq!(res.routine, "r-new");
+        assert!(state.store.get("r-old").is_none());
+        assert!(state.store.rename_intent().is_none(), "marker cleared");
+
+        // Two DISTINCT routines that happen to be byte-identical (both from
+        // the template) must still refuse — content equality alone is not a
+        // resume test; without the marker this would delete a2's identity.
+        saved(&state, "a1");
+        saved(&state, "a2");
+        rejected_code(
+            rename_routine(&state, "a1", "a2", None).unwrap_err(),
+            "NAME_TAKEN",
+        );
+        assert!(state.store.get("a1").is_some());
+        assert!(state.store.get("a2").is_some());
+    }
+
+    #[test]
+    fn rename_checks_revision_and_migrates_the_scheduler_anchor() {
+        use crate::routines::scheduler::LastFireStore;
+
+        let (dir, state, _sink, _c) = test_state();
+        let saved_result = saved(&state, "nightly");
+        set_routine_enabled(&state, "nightly", true, NOW, 0).unwrap();
+
+        // A stale revision refuses the rename (D7 applies to every verb).
+        rejected_code(
+            rename_routine(&state, "nightly", "nightly-v2", Some("stale00000000000")).unwrap_err(),
+            "REVISION_CONFLICT",
+        );
+        assert!(state.store.get("nightly").is_some(), "refusal mutated nothing");
+
+        // The matching revision renames, and the scheduler anchor (written by
+        // the enable above) moves with the name.
+        let store = LastFireStore::open(dir.path().join("routines-last-fire.json"));
+        assert!(store.get("nightly").is_some(), "enable anchored the cadence");
+        rename_routine(&state, "nightly", "nightly-v2", Some(&saved_result.revision)).unwrap();
+        assert!(store.get("nightly").is_none(), "old anchor entry gone");
+        let migrated = store.get("nightly-v2").expect("anchor migrated to the new name");
+        assert_eq!(migrated.last_fire_unix, NOW);
     }
 
     #[test]

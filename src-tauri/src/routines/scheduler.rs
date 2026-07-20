@@ -324,6 +324,16 @@ impl LastFireStore {
         self.read().get(routine).cloned()
     }
 
+    /// Move `old`'s entry to `new` (see [`migrate_anchor`]). A no-op when
+    /// `old` has no entry — a never-fired routine has no identity to move.
+    pub fn rename(&self, old: &str, new: &str) {
+        let mut map = self.read();
+        if let Some(entry) = map.remove(old) {
+            map.insert(new.to_string(), entry);
+            self.write(&map);
+        }
+    }
+
     /// Record that `routine`'s schedule was evaluated at `at` (fired, skipped,
     /// or refused). Leaves the `missed` count alone — it is the launch-time
     /// reckoning's field, and a normal fire does not answer it.
@@ -485,6 +495,17 @@ pub fn schedule_status(state: &RoutinesState) -> Vec<ScheduleStatus> {
 /// See [`LastFireStore::record_enabled`].
 pub fn anchor_on_enable(state: &RoutinesState, routine: &str, at: i64) {
     LastFireStore::open(last_fire_path(state)).record_enabled(routine, at);
+}
+
+/// Migrate `old`'s last-fire entry to `new` (the transactional rename,
+/// tuxlink-aqy63): the routine keeps its scheduling IDENTITY across a rename
+/// — cadence anchor and missed/refusal/skip diagnostics move with the name.
+/// Without this a renamed enabled routine looks newly-observed to the
+/// scheduler: its anchor re-seeds at "first seen", shifting the next
+/// unaligned fire by up to a full interval and orphaning the diagnostics
+/// under a name that no longer exists.
+pub fn migrate_anchor(state: &RoutinesState, old: &str, new: &str) {
+    LastFireStore::open(last_fire_path(state)).rename(old, new);
 }
 
 /// Where the last-fire map lives for a given state (beside `config.json`).

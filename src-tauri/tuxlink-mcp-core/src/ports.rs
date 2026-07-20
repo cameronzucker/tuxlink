@@ -1912,7 +1912,12 @@ pub trait RoutinesPort: Send + Sync {
     /// enabled state, and `call` references in other routines migrate in one
     /// operation. Works on an enabled routine (content unchanged — no
     /// re-gate); refused when the new name is taken or invalid.
-    async fn rename(&self, routine: &str, new_name: &str) -> Result<RenameResultDto, PortError>;
+    async fn rename(
+        &self,
+        routine: &str,
+        new_name: &str,
+        expected_revision: Option<String>,
+    ) -> Result<RenameResultDto, PortError>;
     /// Enable a routine so its triggers can fire it. See the module note for
     /// the Ok-with-`blocked`-flag contract; `Err` only for an unknown name.
     async fn enable(&self, name: &str) -> Result<EnableResultDto, PortError>;

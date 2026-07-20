@@ -1627,11 +1627,15 @@ impl TuxlinkMcp {
         &self,
         params: Parameters<RoutineRenameParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let Parameters(RoutineRenameParams { routine, new_name }) = params;
+        let Parameters(RoutineRenameParams {
+            routine,
+            new_name,
+            expected_revision,
+        }) = params;
         let dto = self
             .state
             .routines
-            .rename(&routine, &new_name)
+            .rename(&routine, &new_name, expected_revision)
             .await
             .map_err(port_err)?;
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
@@ -1969,6 +1973,9 @@ pub struct RoutineRenameParams {
     pub routine: String,
     /// The new name (kebab-case, like every routine name).
     pub new_name: String,
+    /// Optional lost-update check (see `routines_save`).
+    #[serde(default)]
+    pub expected_revision: Option<String>,
 }
 
 /// `{ "name": "..." }` — input for `routines_enable`.

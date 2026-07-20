@@ -1101,6 +1101,7 @@ pub mod test_support {
             &self,
             _routine: &str,
             new_name: &str,
+            _expected_revision: Option<String>,
         ) -> Result<RenameResultDto, PortError> {
             Ok(RenameResultDto {
                 routine: new_name.to_string(),
