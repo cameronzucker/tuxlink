@@ -521,7 +521,7 @@ export function StationFinderPanel({
             sites, so none of it existed for the operator. The strip hosts the
             live band: waterfall, decode feed, stats, provenance chips, and the
             band-subset popover. Task 3: the strip now mounts UNCONDITIONALLY
-            alongside the map + rail above — the full-panel setup takeover that
+            alongside the map + rail above; the full-panel setup takeover that
             used to replace this whole body is gone. Setup lives IN the strip
             (the compact Ft8StripSetup form, Task 2), so onRehydrate wires the
             strip's in-place Start/Retry actions to a forced re-read. */}

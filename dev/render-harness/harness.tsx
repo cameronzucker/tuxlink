@@ -61,7 +61,7 @@ import { Sparkline } from '../../src/radio/charts/Sparkline';
 // strip is props-driven, so every state is drivable without a backend; the
 // needs-setup/device-lost arms render the in-strip Ft8StripSetup form
 // directly inside the strip body (Task 3 deleted the old standalone
-// full-panel surface — its device list/meter/rig reads come from the canned
+// full-panel surface; its device list/meter/rig reads come from the canned
 // shim below, unchanged).
 //   ?view=ft8&state=off|transitional|needs-setup|device-lost|wedged|yielded|
 //                    waiting-first-slot|band-dead|decoding
@@ -1498,7 +1498,7 @@ function Ft8StripFixtureView() {
   const snapWithFlags = snapshot
     ? { ...snapshot, flags, lastFailure: flags.jt9Degraded ? 'jt9 exited 137 (SIGKILL) — decode timeout' : snapshot.lastFailure }
     : null;
-  // Task 3: the standalone full-panel setup surface is deleted — needs-setup
+  // Task 3: the standalone full-panel setup surface is deleted. needs-setup
   // and device-lost now render the compact Ft8StripSetup form INSIDE the
   // strip's own body (LiveBandStrip's NonLiveBody), so there is nothing left
   // to mount separately here; the strip alone covers every D2 fixture state.

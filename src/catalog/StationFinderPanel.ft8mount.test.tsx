@@ -101,10 +101,10 @@ describe('StationFinderPanel — FT-8 surfaces are actually mounted (Phase D1)',
     );
   });
 
-  it('keeps map + rail + strip all mounted simultaneously in needs-setup — no panel takeover', async () => {
+  it('keeps map + rail + strip all mounted simultaneously in needs-setup (no panel takeover)', async () => {
     // Task 3: the panel used to swap its ENTIRE body for a full-panel takeover while
     // needs-setup held, unmounting the map + rail underneath. That takeover is
-    // deleted — needs-setup now renders its (compact, in-strip) setup form
+    // deleted: needs-setup now renders its (compact, in-strip) setup form
     // inside LiveBandStrip while the map + rail stay mounted the whole time.
     vi.mocked(invoke).mockImplementation(async (cmd?: string) => {
       if (cmd === 'ft8_listener_snapshot') {
