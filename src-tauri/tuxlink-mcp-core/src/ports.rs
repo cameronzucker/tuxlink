@@ -1572,6 +1572,10 @@ pub struct OutputSpecDto {
     #[serde(rename = "type")]
     pub value_type: String,
     pub description: String,
+    /// May be null or absent depending on the run's path — branch before
+    /// feeding it to a required param.
+    #[serde(default)]
+    pub nullable: bool,
 }
 
 /// One authorable routine action, curated for an AGENT author (tuxlink-dngvs).

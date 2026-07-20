@@ -142,21 +142,25 @@ impl Action for FindStations {
                     ty: ValueType::StationList,
                     description: "Distance-sorted deduped callsigns — feed radio.connect's \
                                   stations as a whole-value ref: \"$sN.callsigns\"",
+                    nullable: false,
                 },
                 OutputSpec {
                     key: "gateways",
                     ty: ValueType::ObjectList,
                     description: "Full gateway records (callsign, bands, distance, grid)",
+                    nullable: false,
                 },
                 OutputSpec {
                     key: "fetched_at_ms",
                     ty: ValueType::Number,
                     description: "Directory snapshot timestamp, unix ms",
+                    nullable: true,
                 },
                 OutputSpec {
                     key: "operator_grid",
                     ty: ValueType::String,
                     description: "The operator grid distances were computed from; may be null",
+                    nullable: true,
                 },
             ],
             dry_run_shape: Some(find_stations_dry_run_shape),

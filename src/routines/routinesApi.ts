@@ -327,6 +327,8 @@ export interface OutputSpec {
   key: string;
   type: ParamSpec['type'];
   description: string;
+  /** May be null or absent depending on the run's path. */
+  nullable: boolean;
 }
 
 /** One scripted dry-run outcome — `DryRunOutcomeDto` (commands.rs:184-194),

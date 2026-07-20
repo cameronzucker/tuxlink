@@ -94,6 +94,12 @@ pub struct OutputSpec {
     #[serde(rename = "type")]
     pub ty: ValueType,
     pub description: &'static str,
+    /// True when this output can be `null` or ABSENT depending on the run's
+    /// path (a band-less connect's `band`, a fresh config's `old`). The ref
+    /// lint warns when a nullable output feeds a REQUIRED param, and both
+    /// catalogs project the flag so authors see it (Codex adrev 2026-07-20,
+    /// both models independently).
+    pub nullable: bool,
 }
 
 /// Declared capabilities the validator and arbiter reason over (spec §6).

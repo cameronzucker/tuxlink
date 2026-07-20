@@ -4102,6 +4102,7 @@ impl RoutinesPort for MonolithRoutinesPort {
                         key: o.key.to_string(),
                         value_type: o.ty.token().to_string(),
                         description: o.description.to_string(),
+                        nullable: o.nullable,
                     })
                     .collect(),
             })

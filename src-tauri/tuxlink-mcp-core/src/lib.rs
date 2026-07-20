@@ -1303,6 +1303,7 @@ mod tests {
             key: "connected".into(),
             value_type: "boolean".into(),
             description: "did it".into(),
+            nullable: false,
         };
         let jo = serde_json::to_value(&o).unwrap();
         assert_eq!(jo["key"], "connected");

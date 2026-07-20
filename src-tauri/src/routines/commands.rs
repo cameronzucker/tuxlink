@@ -200,6 +200,8 @@ pub struct OutputSpecView {
     #[serde(rename = "type")]
     pub value_type: String,
     pub description: String,
+    /// May be null or absent depending on the run's path.
+    pub nullable: bool,
 }
 
 /// One relevant step in a routine's consent closure (C3), projected for the
@@ -798,6 +800,7 @@ pub fn list_actions(state: &RoutinesState) -> Vec<ActionInfo> {
                     key: o.key.to_string(),
                     value_type: o.ty.token().to_string(),
                     description: o.description.to_string(),
+                    nullable: o.nullable,
                 })
                 .collect(),
         })
@@ -2665,6 +2668,7 @@ mod tests {
             key: "connected",
             ty: ValueType::Boolean,
             description: "Did it connect",
+            nullable: false,
         }];
         let mut reg = ActionRegistry::default();
         reg.register(std::sync::Arc::new(

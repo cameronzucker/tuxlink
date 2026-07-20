@@ -314,11 +314,13 @@ impl Action for ComposeMessage {
                     key: "staged",
                     ty: ValueType::Boolean,
                     description: "Whether the message was staged to the outbox",
+                    nullable: false,
                 },
                 OutputSpec {
                     key: "mid",
                     ty: ValueType::String,
                     description: "Winlink message id of the staged message",
+                    nullable: false,
                 },
             ],
             dry_run_shape: None,
@@ -485,17 +487,28 @@ impl Action for ComposeCatalogRequest {
                     allowed: None,
                     example: r#""PUB_PACKET""#,
                 },
+                ParamSpec {
+                    key: "query",
+                    ty: ValueType::String,
+                    required: false,
+                    description: "Ad-hoc inquiry keyword not in the bundled catalog (staged \
+                                  the same as a filename — Codex adrev 2026-07-20 P2 #3)",
+                    allowed: None,
+                    example: r#""CMS_TRAFFIC""#,
+                },
             ],
             outputs: &[
                 OutputSpec {
                     key: "staged",
                     ty: ValueType::Boolean,
                     description: "Whether the request message was staged to the outbox",
+                    nullable: false,
                 },
                 OutputSpec {
                     key: "mid",
                     ty: ValueType::String,
                     description: "Winlink message id of the staged request",
+                    nullable: false,
                 },
             ],
             dry_run_shape: None,
@@ -605,6 +618,7 @@ impl Action for SetIdentity {
                 key: "identity",
                 ty: ValueType::Object,
                 description: "The identity as applied",
+                nullable: false,
             }],
             dry_run_shape: None,
         }

@@ -53,6 +53,7 @@ pub const PARAM_VALUE_NOT_ALLOWED: &str = "PARAM_VALUE_NOT_ALLOWED";
 pub const REF_TYPE_MISMATCH: &str = "REF_TYPE_MISMATCH";
 pub const REF_UNKNOWN_STEP: &str = "REF_UNKNOWN_STEP";
 pub const REF_UNKNOWN_OUTPUT: &str = "REF_UNKNOWN_OUTPUT";
+pub const REF_NULLABLE_SOURCE: &str = "REF_NULLABLE_SOURCE";
 pub const EMBEDDED_REF_IGNORED: &str = "EMBEDDED_REF_IGNORED";
 
 /// Descriptor self-consistency check (tuxlink-3nvvl): lint `desc`'s own
@@ -136,9 +137,10 @@ enum RefTarget {
     /// Step exists but its action declares no output by that key.
     UnknownOutput,
     /// Referenced action declares no outputs at all, or the path walks into
-    /// an `Object` output — inner type unknown, nothing to lint.
+    /// a container output — inner type unknown, nothing to lint.
     Unknowable,
-    Known(ValueType),
+    /// `(type, nullable)` of the declared output.
+    Known(ValueType, bool),
 }
 
 fn resolve_ref(
@@ -161,15 +163,34 @@ fn resolve_ref(
         return RefTarget::Unknowable;
     }
     // Exact key first (mirrors RunVars::resolve), then the first dot-segment
-    // for nested walks into an Object output.
+    // for nested walks. The executor's `walk_nested` traverses objects by key
+    // AND arrays by numeric index, so a path through ANY container output
+    // ($s1.gateways.0.callsign, $s1.callsigns.0) is real and its leaf type is
+    // unknowable here (Codex adrev 2026-07-20 GPT-5.5 P2 #4).
     if let Some(o) = desc.outputs.iter().find(|o| o.key == vp.output) {
-        return RefTarget::Known(o.ty);
+        return RefTarget::Known(o.ty, o.nullable);
     }
     let head = vp.output.split('.').next().unwrap_or(&vp.output);
     match desc.outputs.iter().find(|o| o.key == head) {
-        Some(o) if o.ty == ValueType::Object => RefTarget::Unknowable,
+        Some(o) if matches!(shape(o.ty), Shape::Obj | Shape::ObjList | Shape::List) => {
+            RefTarget::Unknowable
+        }
         Some(_) => RefTarget::UnknownOutput,
         None => RefTarget::UnknownOutput,
+    }
+}
+
+/// Expected value shape per `@entity:` kind, for the kinds whose resolved
+/// shape is fixed by construction: a preset resolves to the preset OBJECT, a
+/// station set to a callsign LIST. Unknown kinds return `None` (skip) —
+/// `refs::check` still validates existence (Codex adrev 2026-07-20 GPT-5.6
+/// P2 #1: an `@station-set:` ref into a `preset` param must not sail
+/// through).
+fn entity_kind_shape(kind: &str) -> Option<Shape> {
+    match kind {
+        "preset" => Some(Shape::Obj),
+        "station-set" => Some(Shape::List),
+        _ => None,
     }
 }
 
@@ -314,10 +335,51 @@ fn check_value(
 ) {
     let want = shape(spec.ty);
     match val {
-        // `@entity:name` refs (presets, station sets) resolve to their
-        // entity's shape before execution — resolution is refs::check's job
-        // and the resolved shape is the entity's, not the string's. Skip.
-        Value::String(s) if s.starts_with('@') => {}
+        // Explicit null: legal serde input for an OPTIONAL param
+        // (Option<T> fields deserialize null — GPT-5.6 adrev 2026-07-20),
+        // a guaranteed runtime rejection for a REQUIRED one (GPT-5.5, same
+        // round, opposite face of the same hole).
+        Value::Null => {
+            if spec.required {
+                push(Finding::error(
+                    PARAM_TYPE_MISMATCH,
+                    routine,
+                    format!(
+                        "step \"{}\" (action \"{}\"): required param \"{}\" is null — provide {} (example: {})",
+                        a.id.0,
+                        a.action,
+                        spec.key,
+                        shape_name(want),
+                        spec.example
+                    ),
+                ));
+            }
+        }
+        // `@entity:name` refs resolve to their entity's shape before
+        // execution. Existence is refs::check's job; the SHAPE is checkable
+        // for the kinds whose resolved shape is fixed (preset → object,
+        // station-set → list). Unknown kinds skip.
+        Value::String(s) if s.starts_with('@') => {
+            if let Some(entity) = crate::refs::EntityRef::parse(s) {
+                if let Some(got) = entity_kind_shape(&entity.kind) {
+                    if got != want {
+                        push(Finding::error(
+                            REF_TYPE_MISMATCH,
+                            routine,
+                            format!(
+                                "step \"{}\" (action \"{}\"): param \"{}\" wants {} but \"{s}\" (an @{} ref) resolves to {}",
+                                a.id.0,
+                                a.action,
+                                spec.key,
+                                shape_name(want),
+                                entity.kind,
+                                shape_name(got)
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
         // Whole-string `$ref`: the referenced output's type IS the value's
         // type after substitution.
         Value::String(s) if s.starts_with('$') => match resolve_ref(s, steps_by_id, ctx) {
@@ -338,7 +400,7 @@ fn check_value(
                 ),
             )),
             RefTarget::Unknowable => {}
-            RefTarget::Known(out_ty) => {
+            RefTarget::Known(out_ty, nullable) => {
                 if shape(out_ty) != want {
                     push(Finding::error(
                         REF_TYPE_MISMATCH,
@@ -350,6 +412,17 @@ fn check_value(
                             spec.key,
                             shape_name(want),
                             shape_name(shape(out_ty))
+                        ),
+                    ));
+                } else if nullable && spec.required {
+                    // Both adrev models, independently: a nullable output
+                    // must not read as unconditionally type-safe.
+                    push(Finding::warning(
+                        REF_NULLABLE_SOURCE,
+                        routine,
+                        format!(
+                            "step \"{}\" (action \"{}\"): required param \"{}\" takes \"{s}\", which can be null or absent depending on the referenced step's path — branch on it first or accept the runtime risk",
+                            a.id.0, a.action, spec.key
                         ),
                     ));
                 }
@@ -410,7 +483,7 @@ fn check_value(
                                 ),
                             )),
                             RefTarget::Unknowable => {}
-                            RefTarget::Known(out_ty) if shape(out_ty) == Shape::List => {
+                            RefTarget::Known(out_ty, _) if shape(out_ty) == Shape::List => {
                                 // THE motivating lint: element-wise
                                 // substitution puts the referenced LIST
                                 // inside this list — array-of-arrays,
@@ -424,7 +497,7 @@ fn check_value(
                                     ),
                                 ));
                             }
-                            RefTarget::Known(out_ty) if shape(out_ty) != Shape::Str => {
+                            RefTarget::Known(out_ty, _) if shape(out_ty) != Shape::Str => {
                                 push(Finding::error(
                                     REF_TYPE_MISMATCH,
                                     routine,
@@ -437,7 +510,7 @@ fn check_value(
                                     ),
                                 ));
                             }
-                            RefTarget::Known(_) => {}
+                            RefTarget::Known(..) => {}
                         }
                     }
                     Value::String(s) => {
@@ -549,11 +622,13 @@ mod tests {
                 key: "callsigns",
                 ty: ValueType::StationList,
                 description: "Distance-sorted deduped callsigns",
+                nullable: false,
             },
             OutputSpec {
                 key: "count",
                 ty: ValueType::Number,
                 description: "How many stations matched",
+                nullable: false,
             },
         ],
         dry_run_shape: None,
@@ -599,6 +674,7 @@ mod tests {
             key: "connected",
             ty: ValueType::Boolean,
             description: "Did any attempt connect",
+            nullable: false,
         }],
         dry_run_shape: None,
     };
@@ -880,16 +956,215 @@ mod tests {
         assert!(findings.is_empty(), "{findings:?}");
     }
 
-    /// `@entity:` string refs resolve to their entity's shape before
-    /// execution — never a literal type mismatch, whatever the declared type.
+    /// `@entity:` refs are shape-checked by KIND where the resolved shape is
+    /// fixed: a station set into a list param is clean; a station set into an
+    /// object param is the runtime deserialization death GPT-5.6 flagged
+    /// (adrev 2026-07-20). Unknown kinds skip.
     #[test]
-    fn entity_ref_strings_are_skipped_for_type_checks() {
+    fn entity_ref_kinds_are_shape_checked() {
+        // station-set → StationList param: clean.
         let def = routine(vec![action_step(
             "s2",
             "radio.connect",
             json!({"stations": "@station-set:or-gateways"}),
         )]);
         assert!(run(&def).is_empty(), "{:?}", run(&def));
+
+        // station-set → Object param: error naming both shapes.
+        const PRESET_TAKER: ActionDescriptor = ActionDescriptor {
+            name: "rig.apply_preset",
+            label: "",
+            description: "",
+            needs_radio: true,
+            transmits: false,
+            writes_config: false,
+            needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            params: &[ParamSpec {
+                key: "preset",
+                ty: ValueType::Object,
+                required: true,
+                description: "",
+                allowed: None,
+                example: "{}",
+            }],
+            outputs: &[],
+            dry_run_shape: None,
+        };
+        let def = routine(vec![action_step(
+            "s2",
+            "rig.apply_preset",
+            json!({"preset": "@station-set:or-gateways"}),
+        )]);
+        let mut findings = Vec::new();
+        check(&def, &StaticContext::new().with_action(PRESET_TAKER), &mut findings);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0].code, REF_TYPE_MISMATCH);
+        assert!(findings[0].message.contains("station-set"), "{}", findings[0].message);
+
+        // preset → Object param: clean.
+        let def = routine(vec![action_step(
+            "s2",
+            "rig.apply_preset",
+            json!({"preset": "@preset:vara-20m"}),
+        )]);
+        let mut findings = Vec::new();
+        check(&def, &StaticContext::new().with_action(PRESET_TAKER), &mut findings);
+        assert!(findings.is_empty(), "{findings:?}");
+    }
+
+    /// Explicit null: clean for an OPTIONAL param (Option<T> accepts it at
+    /// runtime — GPT-5.6's false-positive), an error for a REQUIRED one
+    /// (guaranteed runtime rejection — GPT-5.5's false-negative). Both faces
+    /// of the same hole, adrev 2026-07-20.
+    #[test]
+    fn null_is_clean_for_optional_and_error_for_required() {
+        // Optional bands: null → clean.
+        let def = routine(vec![action_step(
+            "s2",
+            "radio.connect",
+            json!({"stations": ["N0DAJ"], "bands": null}),
+        )]);
+        assert!(run(&def).is_empty(), "{:?}", run(&def));
+
+        // Required stations: null → error naming the param.
+        let def = routine(vec![action_step(
+            "s2",
+            "radio.connect",
+            json!({"stations": null}),
+        )]);
+        let findings = run(&def);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0].code, PARAM_TYPE_MISMATCH);
+        assert!(findings[0].message.contains("is null"), "{}", findings[0].message);
+    }
+
+    /// Nested paths through ANY container output are executor-walkable
+    /// ($s1.gateways.0.callsign — arrays traverse by numeric index), so they
+    /// must be Unknowable, not a false REF_UNKNOWN_OUTPUT (GPT-5.5 #4).
+    #[test]
+    fn nested_path_through_list_outputs_is_unknowable_not_warned() {
+        const WITH_GATEWAYS: ActionDescriptor = ActionDescriptor {
+            name: "data.find_stations",
+            label: "",
+            description: "",
+            needs_radio: false,
+            transmits: false,
+            writes_config: false,
+            needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            params: &[],
+            outputs: &[
+                OutputSpec {
+                    key: "gateways",
+                    ty: ValueType::ObjectList,
+                    description: "",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "callsigns",
+                    ty: ValueType::StationList,
+                    description: "",
+                    nullable: false,
+                },
+            ],
+            dry_run_shape: None,
+        };
+        const LOGGER2: ActionDescriptor = ActionDescriptor {
+            name: "local.log",
+            label: "",
+            description: "",
+            needs_radio: false,
+            transmits: false,
+            writes_config: false,
+            needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            params: &[ParamSpec {
+                key: "message",
+                ty: ValueType::String,
+                required: true,
+                description: "",
+                allowed: None,
+                example: "\"x\"",
+            }],
+            outputs: &[],
+            dry_run_shape: None,
+        };
+        let def = routine(vec![
+            action_step("s1", "data.find_stations", json!({})),
+            action_step("s2", "local.log", json!({"message": "$s1.gateways.0.callsign"})),
+            action_step("s3", "local.log", json!({"message": "$s1.callsigns.0"})),
+        ]);
+        let mut findings = Vec::new();
+        check(
+            &def,
+            &StaticContext::new().with_action(WITH_GATEWAYS).with_action(LOGGER2),
+            &mut findings,
+        );
+        assert!(findings.is_empty(), "{findings:?}");
+    }
+
+    /// A nullable output feeding a REQUIRED param warns (never errors): the
+    /// shape matches when present, but both adrev models flagged the
+    /// unconditional-safety illusion.
+    #[test]
+    fn nullable_output_into_required_param_warns() {
+        const CONNECTOR: ActionDescriptor = ActionDescriptor {
+            name: "radio.connect",
+            label: "",
+            description: "",
+            needs_radio: true,
+            transmits: true,
+            writes_config: false,
+            needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            params: &[],
+            outputs: &[OutputSpec {
+                key: "band",
+                ty: ValueType::String,
+                description: "",
+                nullable: true,
+            }],
+            dry_run_shape: None,
+        };
+        const LOGGER3: ActionDescriptor = ActionDescriptor {
+            name: "local.log",
+            label: "",
+            description: "",
+            needs_radio: false,
+            transmits: false,
+            writes_config: false,
+            needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            params: &[ParamSpec {
+                key: "message",
+                ty: ValueType::String,
+                required: true,
+                description: "",
+                allowed: None,
+                example: "\"x\"",
+            }],
+            outputs: &[],
+            dry_run_shape: None,
+        };
+        let def = routine(vec![
+            action_step("s1", "radio.connect", json!({})),
+            action_step("s2", "local.log", json!({"message": "$s1.band"})),
+        ]);
+        let mut findings = Vec::new();
+        check(
+            &def,
+            &StaticContext::new().with_action(CONNECTOR).with_action(LOGGER3),
+            &mut findings,
+        );
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0].code, REF_NULLABLE_SOURCE);
+        assert_eq!(findings[0].severity, Severity::Warning);
     }
 
     /// Engine-injected `_`-prefixed keys are reserved, not author params —

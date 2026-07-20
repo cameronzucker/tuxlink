@@ -90,6 +90,7 @@ impl Action for DocsSearch {
                 key: "hits",
                 ty: ValueType::ObjectList,
                 description: "Matching doc pages (slug, title, snippet)",
+                nullable: false,
             }],
             dry_run_shape: Some(docs_search_dry_run_shape),
         }
