@@ -4,7 +4,7 @@
 // aggregation window Ft8HeardLayer draws from. Default OFF (an operator
 // opt-in overview layer, not evidence like the heard-station dots). Consumes
 // the SAME `rows` Ft8HeardLayer's caller already computes via
-// `aggregateLiveDecodes` — this component never re-aggregates the raw ring.
+// `aggregateLiveDecodes`; this component never re-aggregates the raw ring.
 //
 // Mirrors Ft8HeardLayer's structural template: a full clear + rebuild each
 // time `rows`/`enabled` changes (cheap at the ring's aggregation cap), and
@@ -12,7 +12,7 @@
 // (there is no shared renderer across this panel's layers; Task 4's
 // reviewer confirmed this per-layer-owned-renderer idiom is the established
 // pattern). Rectangles ride the SVG path renderer explicitly because the
-// map is constructed with `preferCanvas: true` (LeafletMap.tsx) — without an
+// map is constructed with `preferCanvas: true` (LeafletMap.tsx): without an
 // explicit SVG renderer a plain `L.rectangle` would default to canvas, which
 // has no 2D context under the Pi's software-GL WebKitGTK.
 import { useEffect, useRef } from 'react';
@@ -22,7 +22,7 @@ import { useLeafletLayerGroup } from './leafletHooks';
 import { gridToLatLon } from '../forms/position/maidenhead';
 import type { LiveDecodeRow } from '../catalog/LiveDecodesTab';
 
-/** Fill colour for every heat cell — the same HOT ramp colour Ft8HeardLayer
+/** Fill colour for every heat cell: the same HOT ramp colour Ft8HeardLayer
  *  uses at its brightest, so the two FT-8 layers read as one evidence family. */
 const HEAT_FILL_COLOR = '#ff5470';
 /** Density-scaled fillOpacity floor: even a single-station square stays visible. */
