@@ -59,6 +59,13 @@ export interface MenuHandlers {
    *  (tuxlink-1wi5w). Distinct from openElmer so AppShell can set the
    *  expandModel flag independently of a plain Elmer open. */
   openElmerModel: () => void;
+  /** bd tuxlink-mfssz: dock the popped Elmer window back inline. AppShell
+   *  forwards the verb to the popped window via `dock:intent` so THAT window
+   *  flushes its live conversation as the token — main cannot supply it, and
+   *  `state: null` would drop the conversation (not the routines dashboard
+   *  fallback situation). Only meaningful while Elmer is popped; MenuBar only
+   *  shows the item then. */
+  dockBackElmer: () => void;
   /** Open the inline Catalog Builder panel (tuxlink-a2gd) — location-aware
    *  station finder (direct /listings poll) + by-message info-category requests. */
   openCatalogBuilder: () => void;
@@ -147,6 +154,13 @@ export function dispatchMenuAction(id: MenuActionId, h: MenuHandlers): void {
     // the Model section expanded. connect_agent / ConnectAgentModal are UNCHANGED.
     case 'menu:tools:elmer_model':
       h.openElmerModel(); return;
+    // bd tuxlink-mfssz: dock the popped Elmer window back inline. UNLIKE the
+    // routines dockback (main-side `state: null`, dashboard fallback
+    // accepted), AppShell's handler forwards the verb to the popped window,
+    // which flushes its OWN live conversation token — a main-side null state
+    // here would drop the conversation.
+    case 'menu:tools:elmer_dockback':
+      h.dockBackElmer(); return;
     // routines plan-5 Task 7: the Routines top menu opens the inline
     // full-pane surface (spec §12) — no new OS window, no pop-out.
     case 'menu:routines:open':

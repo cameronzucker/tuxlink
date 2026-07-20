@@ -24,8 +24,8 @@ const { mockFocusSurface, mockPopOut, mockDockBack, dockRef } = vi.hoisted(() =>
 
 function snapshot(routines: DockMode, context: unknown = null): DockSnapshot {
   return {
-    surfaces: { routines, tac_map: 'docked', aprs_chat: 'docked' },
-    context: { routines: context, tac_map: null, aprs_chat: null },
+    surfaces: { routines, tac_map: 'docked', aprs_chat: 'docked', elmer: 'docked' },
+    context: { routines: context, tac_map: null, aprs_chat: null, elmer: null },
   };
 }
 
@@ -34,8 +34,8 @@ function snapshot(routines: DockMode, context: unknown = null): DockSnapshot {
 // (task 9 does not touch it).
 function tacMapSnapshot(tac_map: DockMode, context: unknown = null): DockSnapshot {
   return {
-    surfaces: { routines: 'docked', tac_map, aprs_chat: 'docked' },
-    context: { routines: null, tac_map: context, aprs_chat: null },
+    surfaces: { routines: 'docked', tac_map, aprs_chat: 'docked', elmer: 'docked' },
+    context: { routines: null, tac_map: context, aprs_chat: null, elmer: null },
   };
 }
 
@@ -43,8 +43,17 @@ function tacMapSnapshot(tac_map: DockMode, context: unknown = null): DockSnapsho
 // stay docked/null throughout (task 10 does not touch them).
 function aprsChatSnapshot(aprs_chat: DockMode, context: unknown = null): DockSnapshot {
   return {
-    surfaces: { routines: 'docked', tac_map: 'docked', aprs_chat },
-    context: { routines: null, tac_map: null, aprs_chat: context },
+    surfaces: { routines: 'docked', tac_map: 'docked', aprs_chat, elmer: 'docked' },
+    context: { routines: null, tac_map: null, aprs_chat: context, elmer: null },
+  };
+}
+
+// bd tuxlink-mfssz: flips elmer's mode/context; the other three stay
+// docked/null throughout.
+function elmerSnapshot(elmer: DockMode, context: unknown = null): DockSnapshot {
+  return {
+    surfaces: { routines: 'docked', tac_map: 'docked', aprs_chat: 'docked', elmer },
+    context: { routines: null, tac_map: null, aprs_chat: null, elmer: context },
   };
 }
 
@@ -101,6 +110,19 @@ vi.mock('@tauri-apps/api/core', () => ({
     if (cmd === 'mailbox_list') return [CHAT_INBOX_MSG];
     if (cmd === 'routines_validate_draft') return [];
     if (cmd === 'routines_actions_list') return [];
+    // bd tuxlink-mfssz: the Elmer drawer mounts in the arrival/pop-out cases.
+    if (cmd === 'elmer_config_read') {
+      return {
+        agentEndpoint: 'http://localhost:11434',
+        agentModel: 'test-model',
+        keyStatus: 'absent',
+        agentTurnTimeoutSecs: 900,
+        onboarded: true,
+      };
+    }
+    if (cmd === 'egress_status') {
+      return { armed: false, armedRemainingSecs: 0, tainted: false };
+    }
     return undefined;
   }),
 }));
@@ -501,5 +523,150 @@ describe('AppShell dock wiring (task 8)', () => {
       (c) => c[0] === 'shell_mounted',
     );
     expect(calls).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// bd tuxlink-mfssz: Elmer pop-out wiring
+// ---------------------------------------------------------------------------
+
+describe('AppShell Elmer dock wiring (bd tuxlink-mfssz)', () => {
+  beforeEach(() => {
+    globalThis.localStorage?.clear?.();
+    vi.clearAllMocks();
+    dockRef.current = elmerSnapshot('docked');
+  });
+
+  function rerenderShell(rerender: (ui: ReactNode) => void) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    rerender(
+      <QueryClientProvider client={qc}>
+        <AppShell />
+      </QueryClientProvider>,
+    );
+  }
+
+  it('↗ in the drawer header pops Elmer out carrying the conversation token', async () => {
+    renderShell();
+    await screen.findByTestId('folder-sidebar');
+
+    clickMenu('Tools', /Elmer \(AI assistant\)/);
+    const popBtn = await screen.findByTestId('elmer-pop-out', {}, { timeout: 5000 });
+    fireEvent.click(popBtn);
+
+    await waitFor(() => expect(mockPopOut).toHaveBeenCalledTimes(1));
+    const [surface, envelope] = mockPopOut.mock.calls[0] as unknown as [string, { foreground: boolean; state: { items: unknown[] } }];
+    expect(surface).toBe('elmer');
+    expect(envelope.foreground).toBe(true);
+    // The pane reported its (empty) conversation before the click — the token
+    // must carry the items array, never undefined.
+    expect(Array.isArray(envelope.state.items)).toBe(true);
+  });
+
+  it('while Elmer is popped, Tools → Elmer focuses the window instead of opening the drawer', async () => {
+    dockRef.current = elmerSnapshot('popped');
+    renderShell();
+    await screen.findByTestId('folder-sidebar');
+
+    clickMenu('Tools', /Elmer \(AI assistant\)/);
+    await waitFor(() => expect(mockFocusSurface).toHaveBeenCalledWith('elmer'));
+    expect(screen.queryByTestId('elmer-pane')).not.toBeInTheDocument();
+  });
+
+  it("while Elmer is popped, Set up Elmer's model… focuses the window and forwards the open_model intent", async () => {
+    dockRef.current = elmerSnapshot('popped');
+    renderShell();
+    await screen.findByTestId('folder-sidebar');
+
+    clickMenu('Tools', /Set up Elmer's model/);
+    await waitFor(() => expect(mockFocusSurface).toHaveBeenCalledWith('elmer'));
+    expect(emit).toHaveBeenCalledWith('dock:intent', { surface: 'elmer', intent: 'open_model' });
+    expect(screen.queryByTestId('elmer-pane')).not.toBeInTheDocument();
+  });
+
+  it('Dock Elmer back is hidden while docked, and while popped forwards the dock_back intent (never a main-side state:null dockBack)', async () => {
+    dockRef.current = elmerSnapshot('popped');
+    renderShell();
+    await screen.findByTestId('folder-sidebar');
+
+    clickMenu('Tools', /Dock Elmer back/);
+    await waitFor(() =>
+      expect(emit).toHaveBeenCalledWith('dock:intent', { surface: 'elmer', intent: 'dock_back' }),
+    );
+    // The conversation lives in the popped window — main must NOT dock back
+    // with its own (null) state.
+    expect(mockDockBack).not.toHaveBeenCalled();
+  });
+
+  it('Dock Elmer back is not rendered while Elmer is docked', async () => {
+    renderShell();
+    await screen.findByTestId('folder-sidebar');
+    const menubar = screen.getByRole('menubar');
+    fireEvent.click(within(menubar).getByRole('button', { name: 'Tools' }));
+    expect(within(menubar).queryByRole('button', { name: /Dock Elmer back/ })).not.toBeInTheDocument();
+  });
+
+  it('a foreground popped→docked arrival opens the drawer with the adopted conversation', async () => {
+    dockRef.current = elmerSnapshot('popped');
+    const { rerender } = renderShell();
+    await screen.findByTestId('folder-sidebar');
+
+    dockRef.current = elmerSnapshot('docked', {
+      foreground: true,
+      state: {
+        items: [{ kind: 'turn', id: 'popwin-0', role: 'user', text: 'carried across windows' }],
+      },
+    });
+    rerenderShell(rerender);
+
+    expect(await screen.findByTestId('elmer-pane', {}, { timeout: 5000 })).toBeInTheDocument();
+    expect(await screen.findByText('carried across windows')).toBeInTheDocument();
+  });
+
+  it('adrev 2026-07-20 P1: a null/invalid dock-back token does NOT wipe the inline conversation (foreground still opens the drawer)', async () => {
+    const { rerender } = renderShell();
+    await screen.findByTestId('folder-sidebar');
+
+    // Build inline conversation state: open the drawer and send a message
+    // (send appends the user turn locally, no backend round-trip needed).
+    clickMenu('Tools', /Elmer \(AI assistant\)/);
+    const input = await screen.findByPlaceholderText(/ask/i, {}, { timeout: 5000 });
+    fireEvent.change(input, { target: { value: 'precious inline turn' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(await screen.findByText('precious inline turn')).toBeInTheDocument();
+
+    // Pop out, then dock back with state:null — the host flushed before
+    // ElmerPopped registered getContext (or a liveness-timeout stateless
+    // dock-back). The inline mounted-hidden copy is the best remaining state.
+    dockRef.current = elmerSnapshot('popped');
+    rerenderShell(rerender);
+    dockRef.current = elmerSnapshot('docked', { foreground: true, state: null });
+    rerenderShell(rerender);
+
+    // The conversation survives (no remount-wipe) and the drawer is open.
+    expect(await screen.findByText('precious inline turn', {}, { timeout: 5000 })).toBeInTheDocument();
+  });
+
+  it('a NON-foreground popped→docked arrival keeps the drawer closed but STILL adopts the conversation', async () => {
+    dockRef.current = elmerSnapshot('popped');
+    const { rerender } = renderShell();
+    await screen.findByTestId('folder-sidebar');
+
+    dockRef.current = elmerSnapshot('docked', {
+      foreground: false,
+      state: {
+        items: [{ kind: 'turn', id: 'popwin-0', role: 'user', text: 'adopted quietly' }],
+      },
+    });
+    rerenderShell(rerender);
+
+    // Availability semantics: no drawer theft.
+    expect(screen.queryByText('adopted quietly')).not.toBeInTheDocument();
+
+    // But the adoption is real (the deliberate asymmetry with routines): the
+    // next open shows the popped window's conversation, not the pane's
+    // diverged mounted-hidden copy.
+    clickMenu('Tools', /Elmer \(AI assistant\)/);
+    expect(await screen.findByText('adopted quietly', {}, { timeout: 5000 })).toBeInTheDocument();
   });
 });

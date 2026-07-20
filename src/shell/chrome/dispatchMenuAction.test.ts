@@ -25,6 +25,7 @@ function handlers(): MenuHandlers {
     openConnectAgent: vi.fn(),
     openElmer: vi.fn(),
     openElmerModel: vi.fn(),
+    dockBackElmer: vi.fn(),
     openCatalogBuilder: vi.fn(),
     openRequestCenter: vi.fn(),
     openRoutines: vi.fn(),

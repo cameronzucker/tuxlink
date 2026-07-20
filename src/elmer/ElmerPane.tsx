@@ -27,6 +27,7 @@
 
 import { memo, useState, useRef, useEffect, useCallback, useMemo, type KeyboardEvent } from 'react';
 import { useElmer, keyStatusForOrigins, type ElmerItem, type ElmerPhase } from './useElmer';
+import type { ElmerTokenState } from './elmerToken';
 import { EgressArmControl } from '../shell/EgressArmControl';
 import type { EgressStatusDto } from '../security/egressTypes';
 import { PRESETS, inferPreset, isLoopback, isLocalOllamaEndpoint, originOf, nextModelForPreset } from './elmerModelConfig';
@@ -965,6 +966,32 @@ export interface ElmerPaneProps {
   /** When true on mount, open the Model section disclosure so the operator
    *  lands directly on the endpoint/model picker (tuxlink-1wi5w). */
   expandModel?: boolean;
+  /** bd tuxlink-mfssz: continuity seed adopted ONCE at mount (change the
+   *  React key to re-seed). Carries the conversation across a window move —
+   *  see elmerToken.ts for why events can't rebuild it. */
+  initialConversation?: ElmerTokenState | null;
+  /** bd tuxlink-mfssz: live token-state reporter, fired whenever the
+   *  conversation / run-state / context-meter snapshot changes. The hosting
+   *  window keeps the latest value in a ref and flushes it as the continuity
+   *  token's `state` at pop-out / dock-back time (the routines onDraftChange
+   *  pattern). */
+  onConversationChange?: (state: ElmerTokenState) => void;
+  /** bd tuxlink-mfssz: pop Elmer out to its own window. Rendered as a header
+   *  ↗ affordance only when provided — the popped host omits it (no
+   *  self-pop from inside the popped window), mirroring APRS chat. */
+  onPopOut?: () => void;
+  /** bd tuxlink-mfssz (adrev 2026-07-20): REACTIVE model-section opener for
+   *  hosts that cannot use the mount-time `expandModel` flag without a
+   *  remount (a remount tears down the five live event listeners — a
+   *  mid-run event-loss window). Each increment past 0 opens the disclosure
+   *  exactly as a fresh expandModel mount would. The popped host drives this
+   *  from the forwarded "Set up Elmer's model…" dock:intent. */
+  openModelNonce?: number;
+  /** bd tuxlink-mfssz: popped-window layout — the pane fills its host
+   *  (PoppedSurfaceHost's body) instead of overlaying as a fixed right
+   *  drawer, and the ✕ close control is hidden (the window's title bar owns
+   *  close/dock-back semantics there). */
+  popped?: boolean;
 }
 
 export const ElmerPane = memo(function ElmerPane({
@@ -976,6 +1003,11 @@ export const ElmerPane = memo(function ElmerPane({
   egressError,
   onClose,
   expandModel,
+  initialConversation,
+  onConversationChange,
+  onPopOut,
+  openModelNonce,
+  popped,
 }: ElmerPaneProps) {
   const {
     items,
@@ -993,7 +1025,16 @@ export const ElmerPane = memo(function ElmerPane({
     detectModels,
     detectState,
     context,
-  } = useElmer();
+  } = useElmer(initialConversation ?? undefined);
+
+  // bd tuxlink-mfssz: report the live token state upward. The callback rides
+  // in a ref so a parent that re-creates it per render doesn't churn the
+  // effect; the effect fires exactly when the reported values change.
+  const onConversationChangeRef = useRef(onConversationChange);
+  onConversationChangeRef.current = onConversationChange;
+  useEffect(() => {
+    onConversationChangeRef.current?.({ items, running: phase === 'running', context });
+  }, [items, phase, context]);
   const [input, setInput] = useState('');
   // T10: When the operator clicks "Switch provider" from a rate-limit callout,
   // show the tile picker with a paygo pre-selection. Null = normal message list.
@@ -1005,6 +1046,17 @@ export const ElmerPane = memo(function ElmerPane({
   // picker re-renders (and re-fetches keyStatusByOrigin) on every open — not just
   // on initial state. This replaces the initial-state-only open path (:906).
   const [openCounter, setOpenCounter] = useState(() => (expandModel === true ? 1 : 0));
+  // bd tuxlink-mfssz (adrev 2026-07-20): the reactive sibling of expandModel —
+  // every openModelNonce increment past 0 opens the disclosure without a
+  // remount (a remount tears down the live event listeners — a mid-run
+  // event-loss window). openCounter bumps too so the picker re-fetches key
+  // statuses on each open (the same contract as the gear toggle, T8b).
+  useEffect(() => {
+    if ((openModelNonce ?? 0) > 0) {
+      setAdvancedOpen(true);
+      setOpenCounter((c) => c + 1);
+    }
+  }, [openModelNonce]);
   // T8b: Per-origin key-status map passed to the tile picker. Populated once
   // when the picker opens (not per-keystroke).
   const [keyStatusByOrigin, setKeyStatusByOrigin] = useState<KeyStatusByOrigin>({});
@@ -1120,7 +1172,11 @@ export const ElmerPane = memo(function ElmerPane({
     context !== null && context.numCtx != null && context.numCtx > 0 && context.promptTokens / context.numCtx >= 0.85;
 
   return (
-    <aside className="elmer-pane" data-testid="elmer-pane" aria-label="Elmer assistant">
+    <aside
+      className={'elmer-pane' + (popped ? ' elmer-pane--popped' : '')}
+      data-testid="elmer-pane"
+      aria-label="Elmer assistant"
+    >
       {/* Header: title + new-conversation + close */}
       <div className="elmer-header">
         <span className="elmer-header-title">Elmer</span>
@@ -1161,16 +1217,36 @@ export const ElmerPane = memo(function ElmerPane({
             </svg>
           </button>
         )}
-        <button
-          type="button"
-          className="elmer-close-button"
-          data-testid="elmer-close"
-          aria-label="Close Elmer"
-          title="Close"
-          onClick={() => onClose?.()}
-        >
-          ×
-        </button>
+        {/* bd tuxlink-mfssz: ↗ pop-out — rendered only when the host provides
+            the callback (docked context). The popped host omits it, so there
+            is no self-pop from inside the popped window (the APRS-chat rule). */}
+        {onPopOut && (
+          <button
+            type="button"
+            className="elmer-popout-button"
+            data-testid="elmer-pop-out"
+            aria-label="Pop out Elmer"
+            title="Pop out to its own window"
+            onClick={() => onPopOut()}
+          >
+            ↗
+          </button>
+        )}
+        {/* bd tuxlink-mfssz: in the popped window the title bar owns
+            close/dock-back semantics — a second ✕ here would ambiguously
+            offer "close the pane inside its own window". */}
+        {!popped && (
+          <button
+            type="button"
+            className="elmer-close-button"
+            data-testid="elmer-close"
+            aria-label="Close Elmer"
+            title="Close"
+            onClick={() => onClose?.()}
+          >
+            ×
+          </button>
+        )}
       </div>
 
       {/* Agent-send authority — relocated from the dashboard ribbon (the merged

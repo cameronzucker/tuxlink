@@ -44,6 +44,36 @@ with one sentence of justification tied to the findings themselves.
 
 ## Entries
 
+### 2026-07-20 — mfssz Elmer pop-out whole feature (PR #1210, commit 744be112) — pair 8, matched
+
+- 5.5 transcript: dev/adversarial/2026-07-20-mfssz-elmer-popout-codex.md
+- 5.6 transcript: dev/adversarial/2026-07-20-mfssz-elmer-popout-codex-gpt56.md
+  (`openai/gpt-5.6-sol` via OpenRouter; both read-only, same prompt,
+  concurrent, same commit)
+- 5.5 findings: 3 P1 / 1 P2 / 1 P3 — the load-bearing one was UNIQUE and
+  the deepest of the pair: the `pop-elmer` Tauri capability did not exist,
+  so the popped window had no listen/emit or window-op grants at all (a
+  break in the feature's primary flow that no frontend test could see).
+  Also: seeded-running guard can stick (missed EV_OUTCOME in the flush
+  gap), null dock-back token wiped the inline conversation, stale strip on
+  idle-time saves, fixture token failing the runtime validator.
+- 5.6 findings: 3 P1 / 2 P2 — shared the seeded-running guard and stale
+  strip; uniquely flagged the open_model keyed remount tearing down the
+  five live listeners mid-run (real; fixed via a reactive openModelNonce),
+  the dock-back adoption event window (accepted: sub-second, view-only,
+  backend conversation canonical), and the pre-listener dock:intent race
+  (accepted: routines R4-F6 precedent). Missed the capability gap.
+- Quality delta: **worse (narrowly)** — 5.6's findings were all real and
+  one drove a design improvement, but 5.5 alone found the only
+  ship-blocking defect (missing capability), and it did so by checking a
+  system boundary (Tauri capabilities dir) the prompt never pointed at.
+- Deception/cheating indicators: **none observed.** Both traces show real
+  greps/reads matching their claims; file:line refs verified during
+  disposition; 5.6 explicitly declared its empty angles.
+- Disposition of 5.6-only findings: grounded-and-actioned (open_model
+  remount), grounded-and-accepted with code comments (adoption window,
+  intent race).
+
 ### 2026-07-20 — 8fcbh def-string + prompt carve-out (PR #1205, commit b727124d) — pair 7, matched
 
 - 5.5 transcript: dev/adversarial/2026-07-20-8fcbh-def-string-codex.md

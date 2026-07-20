@@ -155,6 +155,20 @@ describe('MenuBar', () => {
     });
   });
 
+  // bd tuxlink-mfssz: "Dock Elmer back" is a dynamic Tools affordance.
+  it('hides Dock Elmer back while Elmer is docked, shows + fires it while popped', () => {
+    const onAction = vi.fn();
+    const { unmount } = render(<MenuBar onAction={onAction} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Tools' }));
+    expect(screen.queryByRole('button', { name: 'Dock Elmer back' })).not.toBeInTheDocument();
+    unmount();
+
+    render(<MenuBar onAction={onAction} elmerPopped />);
+    fireEvent.click(screen.getByRole('button', { name: 'Tools' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Dock Elmer back' }));
+    expect(onAction).toHaveBeenCalledWith('menu:tools:elmer_dockback');
+  });
+
   it('keeps top-app dropdown layers above message-list scroll content', () => {
     const panesZ = requiredZIndex(
       appShellCss,

@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "pop-elmer",
+  "description": "Popped Elmer window (tuxlink-mfssz): events + custom-chrome window ops, plus shell open for GetKeyCard's provider key pages. NO allow-close — close routes through surface_dock_back (spec §3).",
+  "windows": ["pop-elmer"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:event:allow-emit",
+    "core:window:allow-start-dragging",
+    "core:window:allow-start-resize-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-is-maximized",
+    "shell:allow-open"
+  ]
+}

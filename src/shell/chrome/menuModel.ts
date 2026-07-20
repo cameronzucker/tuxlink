@@ -128,6 +128,10 @@ export const MENU_TREE: TopMenu[] = [
     // with the Model section expanded so the operator lands directly on the
     // endpoint/model picker. Purely additive; does NOT touch connect_agent.
     { id: 'menu:tools:elmer_model', label: "Set up Elmer's model…" },
+    // bd tuxlink-mfssz: dock the popped Elmer window back inline (foreground).
+    // Hidden unless Elmer is popped (MenuBar filters on `elmerPopped`, the
+    // same dynamic-affordance seam as the routines dockback item).
+    { id: 'menu:tools:elmer_dockback', label: 'Dock Elmer back' },
     // tuxlink-esb65: the disabled "Templates" stub was removed — it was leftover
     // menu scaffolding for a Tools-level forms browser that never landed there.
     // The Standard Forms library (wle-forms/Standard_Forms) ships and is reached

@@ -601,6 +601,18 @@ impl ElmerSession {
     /// After signalling, waits up to [`CANCEL_DRAIN_TIMEOUT`] for the task to
     /// exit.  If it has not exited (e.g. a tool blocked in a blocking FFI call),
     /// `abort_handle.abort()` forcibly cancels the task.
+    /// bd tuxlink-mfssz: whether a turn is in flight RIGHT NOW (`op_lock`
+    /// taken). Backs the cross-window `running`-seed reconcile: a window
+    /// adopting a continuity token flushed with `running: true` may have
+    /// missed the terminal `EV_OUTCOME` broadcast (the flush →
+    /// listener-registration gap), which is otherwise the only signal that
+    /// clears its send guard — leaving Send dead until a destructive New
+    /// conversation. `try_lock` on a free lock briefly takes and drops it;
+    /// non-blocking either way.
+    pub fn run_active(&self) -> bool {
+        self.op_lock.try_lock().is_err()
+    }
+
     pub async fn cancel_and_abort(&self) {
         // ── Brief inner lock: take current (token + handle) ───────────────
         // No `.await` inside.

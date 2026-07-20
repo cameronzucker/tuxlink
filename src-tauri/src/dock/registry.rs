@@ -66,7 +66,7 @@ pub fn apply_with_context(
 /// Returns `true` iff the transition is EFFECTIVE.
 pub fn apply_with_generation(
     snap: &mut DockSnapshot,
-    generations: &mut [u64; 3],
+    generations: &mut [u64; 4],
     surface: SurfaceId,
     target: DockMode,
     context: Option<serde_json::Value>,
@@ -117,7 +117,7 @@ struct RegistryState {
     snapshot: DockSnapshot,
     /// Monotonic pop counter per surface, indexed by [`SurfaceId::index`].
     /// Bumped on every effective transition to [`DockMode::Popped`].
-    pop_generations: [u64; 3],
+    pop_generations: [u64; 4],
 }
 
 /// The managed-state registry (spec §3). Owns the authoritative snapshot
@@ -135,7 +135,7 @@ impl DockRegistry {
                 surfaces: persisted,
                 context: DockContext::default(),
             },
-            pop_generations: [0; 3],
+            pop_generations: [0; 4],
         }))
     }
 
@@ -328,7 +328,7 @@ mod tests {
     #[test]
     fn pop_generation_bumps_only_on_effective_pop() {
         let mut snap = DockSnapshot::default();
-        let mut gens = [0u64; 3];
+        let mut gens = [0u64; 4];
         let s = SurfaceId::Routines;
         let i = s.index();
 
@@ -373,7 +373,7 @@ mod tests {
     #[test]
     fn generation_guard_refuses_on_mismatch_proceeds_on_match() {
         let mut snap = DockSnapshot::default();
-        let mut gens = [0u64; 3];
+        let mut gens = [0u64; 4];
         let s = SurfaceId::TacMap;
 
         // Pop out: generation is now 1, surface Popped.
@@ -404,7 +404,7 @@ mod tests {
     #[test]
     fn generation_guard_survives_dock_back_then_repop() {
         let mut snap = DockSnapshot::default();
-        let mut gens = [0u64; 3];
+        let mut gens = [0u64; 4];
         let s = SurfaceId::AprsChat;
 
         // Pop: gen 1. This is the generation the close-intent timer samples.

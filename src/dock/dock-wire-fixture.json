@@ -1,20 +1,66 @@
 {
   "routinesDocked": {
-    "surfaces": { "routines": "docked", "tac_map": "docked", "aprs_chat": "docked" },
-    "context": { "routines": null, "tac_map": null, "aprs_chat": null }
+    "surfaces": {
+      "routines": "docked",
+      "tac_map": "docked",
+      "aprs_chat": "docked",
+      "elmer": "docked"
+    },
+    "context": {
+      "routines": null,
+      "tac_map": null,
+      "aprs_chat": null,
+      "elmer": null
+    }
   },
   "routinesPopped": {
-    "surfaces": { "routines": "popped", "tac_map": "docked", "aprs_chat": "docked" },
+    "surfaces": {
+      "routines": "popped",
+      "tac_map": "docked",
+      "aprs_chat": "docked",
+      "elmer": "docked"
+    },
     "context": {
       "routines": {
         "foreground": true,
         "state": {
-          "view": { "view": "designer", "routine": "morning-ics-cycle", "tab": "design" },
+          "view": {
+            "view": "designer",
+            "routine": "morning-ics-cycle",
+            "tab": "design"
+          },
           "draft": {}
         }
       },
       "tac_map": null,
-      "aprs_chat": null
+      "aprs_chat": null,
+      "elmer": null
+    }
+  },
+  "elmerPopped": {
+    "surfaces": {
+      "routines": "docked",
+      "tac_map": "docked",
+      "aprs_chat": "docked",
+      "elmer": "popped"
+    },
+    "context": {
+      "routines": null,
+      "tac_map": null,
+      "aprs_chat": null,
+      "elmer": {
+        "foreground": true,
+        "state": {
+          "items": [
+            {
+              "kind": "turn",
+              "id": "elmer-item-0",
+              "role": "user",
+              "text": "hello"
+            }
+          ]
+        }
+      }
     }
   }
 }

@@ -73,15 +73,16 @@ export function parseStationsRoute(pathname: string): boolean {
   return /^\/stations\/?$/.test(pathname);
 }
 
-// bd tuxlink-dmwte, spec §3 wire table: the three pop-out routes for the
-// dockable surfaces (Routines / Tac Map / APRS Chat). The map is literal
-// (never derived) because the route segment drops the surface id's
-// underscore irregularly: `tac_map` -> `/pop/tacmap`, `aprs_chat` ->
-// `/pop/aprschat`.
+// bd tuxlink-dmwte, spec §3 wire table: the pop-out routes for the dockable
+// surfaces (Routines / Tac Map / APRS Chat / Elmer, the last per bd
+// tuxlink-mfssz). The map is literal (never derived) because the route
+// segment drops the surface id's underscore irregularly: `tac_map` ->
+// `/pop/tacmap`, `aprs_chat` -> `/pop/aprschat`.
 const POP_ROUTE_SURFACE: Record<string, SurfaceId> = {
   routines: 'routines',
   tacmap: 'tac_map',
   aprschat: 'aprs_chat',
+  elmer: 'elmer',
 };
 
 /**

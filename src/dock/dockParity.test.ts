@@ -9,6 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import fixture from './dock-wire-fixture.json';
 import { consentHostWindow, type DockSnapshot } from './dockState';
+import { isElmerTokenState } from '../elmer/elmerToken';
 
 describe('dock wire fixture parity (spec §10)', () => {
   it('routinesDocked parses into a DockSnapshot and resolves the consent host to main', () => {
@@ -38,5 +39,23 @@ describe('dock wire fixture parity (spec §10)', () => {
     });
     expect(snap.context.tac_map).toBeNull();
     expect(snap.context.aprs_chat).toBeNull();
+  });
+
+  it('elmerPopped parses, carries the conversation token, and does NOT move the routines consent host (tuxlink-mfssz)', () => {
+    const snap = fixture.elmerPopped as DockSnapshot;
+    expect(snap.surfaces.elmer).toBe('popped');
+    expect(snap.surfaces.routines).toBe('docked');
+    // Elmer's approval UX renders inside the pane itself, so the routines
+    // consent host is untouched by an Elmer pop-out.
+    expect(consentHostWindow(snap.surfaces)).toBe('main');
+    expect(snap.context.elmer).toEqual({
+      foreground: true,
+      state: { items: [{ kind: 'turn', id: 'elmer-item-0', role: 'user', text: 'hello' }] },
+    });
+    // Adrev 2026-07-20 (5.5 round, P3): the fixture's token must PASS the
+    // runtime seed validator — a fixture the seed guard would discard blesses
+    // a wire shape the app can't actually adopt, hiding token-shape drift.
+    const envelope = snap.context.elmer as { state?: unknown };
+    expect(isElmerTokenState(envelope.state)).toBe(true);
   });
 });

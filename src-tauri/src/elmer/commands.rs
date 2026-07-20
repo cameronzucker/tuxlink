@@ -206,6 +206,18 @@ pub async fn elmer_stop(session: State<'_, Arc<ElmerSession>>) -> Result<(), Str
     Ok(())
 }
 
+/// bd tuxlink-mfssz: non-blocking "is a turn in flight?" probe.
+///
+/// A window that adopts a continuity token with `running: true` calls this
+/// AFTER its event listeners register: `false` means the run's terminal
+/// `EV_OUTCOME` was missed in the flush → registration gap, so the frontend
+/// releases its seeded send guard instead of blocking Send forever. `true`
+/// means the outcome is still coming and the now-live listeners will catch it.
+#[tauri::command]
+pub fn elmer_run_active(session: State<'_, Arc<ElmerSession>>) -> bool {
+    session.run_active()
+}
+
 /// Start a fresh Elmer conversation ("New conversation" — tuxlink-vbv2k).
 ///
 /// Cancels any in-flight run, then clears the accumulated conversation so the
