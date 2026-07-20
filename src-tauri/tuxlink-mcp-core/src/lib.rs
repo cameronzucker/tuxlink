@@ -997,8 +997,20 @@ pub mod test_support {
     impl RoutinesPort for MockRoutines {
         async fn actions_catalog(&self) -> Result<ActionsCatalogDto, PortError> {
             Ok(ActionsCatalogDto {
-                actions: vec![ActionInfoDto {
-                    name: "radio.connect".into(),
+                actions: vec![
+                    ActionInfoDto {
+                        name: "local.log".into(),
+                        label: "Log entry".into(),
+                        description: "Write a line to the station log".into(),
+                        needs_radio: false,
+                        transmits: false,
+                        writes_config: false,
+                        needs_internet: false,
+                        example_params: Some(serde_json::json!({"message": "hello"})),
+                        allowed_values: None,
+                    },
+                    ActionInfoDto {
+                        name: "radio.connect".into(),
                     label: "Connect".into(),
                     description: "Connect to a Winlink gateway".into(),
                     needs_radio: true,
@@ -1014,6 +1026,17 @@ pub mod test_support {
                     fields: serde_json::json!({}),
                     example: serde_json::json!({"type": "manual"}),
                 }],
+                definition_template: serde_json::json!({
+                    "routine": "my-routine-name",
+                    "schema_version": 1,
+                    "transmit_mode": "attended",
+                    "triggers": [{"type": "manual"}],
+                    "tracks": [{"name": "track-1", "steps": [
+                        {"id": "s1", "action": "local.log", "on_radio_busy": "wait",
+                         "params": {"message": "hello"}},
+                        {"id": "s2", "control": "end"}
+                    ]}]
+                }),
             })
         }
 

@@ -1339,7 +1339,10 @@ impl TuxlinkMcp {
         description = "The routine AUTHORING catalog: every valid step action (name, description, \
                        example params, and whether it transmits / writes config / needs radio or \
                        internet) plus every trigger kind with its fields and a paste-ready \
-                       example. Call this BEFORE writing a routine definition — action names are \
+                       example, plus definition_template: one COMPLETE valid routine document \
+                       (the exact shape routines_save accepts — copy it and substitute your \
+                       steps; note `routine` is the routine's NAME string and `triggers` is a \
+                       list). Call this BEFORE writing a routine definition — action names are \
                        a closed set; invented names (e.g. \"modem.vara.connect\") fail validation \
                        with UNKNOWN_ACTION. Read-only."
     )]
@@ -1386,7 +1389,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "routines_save",
-        description = "Parse and save a routine definition (def_json, the same JSON shape routines_get returns: routine, schema_version, transmit_mode, triggers, tracks). Call routines_actions_list FIRST for the valid action names, their params, and the trigger kinds — action names are a closed set. NEVER refused by validation findings — a half-written draft still saves, and the result's findings/blocked say what is wrong so you can iterate. Refused only when def_json fails to parse or its routine name is invalid."
+        description = "Parse and save a routine definition (def_json, the same JSON shape routines_get returns and routines_actions_list's definition_template shows: routine [the NAME string], schema_version, transmit_mode, triggers [a list], tracks[].steps). Call routines_actions_list FIRST and copy its definition_template — action names are a closed set. NEVER refused by validation findings — a half-written draft still saves, and the result's findings/blocked say what is wrong so you can iterate. Refused only when def_json fails to parse or its routine name is invalid."
     )]
     pub async fn routines_save(
         &self,
@@ -2833,7 +2836,9 @@ mod tests {
         assert!(!h.state.guard.is_tainted());
         let result = h.routines_actions_list().await.unwrap();
         let json: serde_json::Value = json_of(&result);
-        let action = &json["actions"][0];
+        // Mock lists local.log (the template's step action — closed-set
+        // consistent, Codex rt4ey P2) then radio.connect; assert on the latter.
+        let action = &json["actions"][1];
         assert_eq!(action["name"], "radio.connect");
         assert_eq!(action["transmits"], true);
         assert_eq!(action["writes_config"], false);
@@ -2843,6 +2848,11 @@ mod tests {
              step's params) — not a string-in-JSON (Codex adrev P2 #1): {json}"
         );
         assert_eq!(json["trigger_kinds"][0]["type"], "manual");
+        assert!(
+            json["definition_template"]["routine"].is_string()
+                && json["definition_template"]["tracks"].is_array(),
+            "the catalog carries a complete definition_template (tuxlink-rt4ey): {json}"
+        );
         assert!(
             json["trigger_kinds"][0]["example"].is_object(),
             "each trigger kind carries a paste-ready example: {json}"
