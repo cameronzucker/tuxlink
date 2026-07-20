@@ -44,7 +44,7 @@ with one sentence of justification tied to the findings themselves.
 
 ## Entries
 
-### 2026-07-20 — 8fcbh def-string + prompt carve-out (PR #1205, commit 373b) — pair 7, matched
+### 2026-07-20 — 8fcbh def-string + prompt carve-out (PR #1205, commit b727124d) — pair 7, matched
 
 - 5.5 transcript: dev/adversarial/2026-07-20-8fcbh-def-string-codex.md
 - 5.6 transcript: dev/adversarial/2026-07-20-8fcbh-def-string-codex-gpt56.md
