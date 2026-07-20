@@ -60,7 +60,7 @@ capture / playback ALSA devices, optional PTT serial path, command port
 ## VARA HF
 
 VARA is a separate HF protocol with a different waveform. Tuxlink cannot
-bundle the VARA modem (it is proprietary), but its guided setup flow —
+include the VARA modem (it is proprietary), but its guided setup flow —
 the first-run wizard's VARA step, or the VARA panel's **Set up VARA
 HF…** button — installs it under Wine on x86-64 Linux from an installer
 the operator downloads. Alternatively, VARA runs on another machine

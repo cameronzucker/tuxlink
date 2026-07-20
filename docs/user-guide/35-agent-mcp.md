@@ -94,7 +94,7 @@ The quickest path is **Tools → Connect an AI agent…**, which shows a ready-t
 
 The server listens on a Unix-domain socket in the user's runtime directory
 (`$XDG_RUNTIME_DIR/tuxlink/mcp.sock`, or a private fallback when the runtime
-directory is not private to the user). A bundled stdio shim, `tuxlink-mcp`,
+directory is not private to the user). An included stdio shim, `tuxlink-mcp`,
 bridges an MCP client to that socket. Point an MCP-capable agent at the shim with
 the socket path; the exact client configuration depends on the agent.
 

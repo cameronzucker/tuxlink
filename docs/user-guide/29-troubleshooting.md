@@ -136,7 +136,7 @@ comes back. Check, in order:
   [Composing](19-composing.md#attachments)). An oversized attachment on a
   narrow RF link can exhaust the session before the message completes.
 - For large messages, retry with Telnet or a faster RF mode. Packet and narrow
-  HF links are easy to exhaust with catalog responses, form bundles, and
+  HF links are easy to exhaust with catalog responses, form payloads, and
   image-heavy traffic.
 
 ## Internet mail, spam, and Accept List issues

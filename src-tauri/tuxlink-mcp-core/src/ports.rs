@@ -859,7 +859,7 @@ pub struct SolarSnapshotDto {
     pub ssn: f64,
     /// When this snapshot was last updated (unix ms).
     pub updated_at_ms: u64,
-    /// Provenance of the data (e.g. `"bundled"`, `"noaa"`).
+    /// Provenance of the data (e.g. `"shipped"`, `"noaa"`).
     pub source: String,
 }
 
@@ -925,7 +925,7 @@ pub trait UiHintPort: Send + Sync {
 /// [`crate::McpState`] can hold it as `Arc<dyn ProvisionPort>`.
 #[async_trait]
 pub trait ProvisionPort: Send + Sync {
-    /// True iff the VARA setup engine is bundled in this build. Read-only.
+    /// True iff the VARA setup engine ships in this build. Read-only.
     async fn vara_engine_available(&self) -> Result<bool, PortError>;
     /// Offline readiness probe (no network, no launch). Read-only.
     async fn vara_install_status(&self) -> Result<VaraInstallStatusDto, PortError>;

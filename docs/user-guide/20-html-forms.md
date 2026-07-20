@@ -3,16 +3,16 @@
 Winlink forms are HTML templates that capture structured fields and pack
 them into a B2F message body. The receiving client renders the same form
 to present the fields cleanly. Tuxlink ships the entire Winlink Express
-Standard Forms catalog bundled in the binary; full WLE parity for compose
+Standard Forms catalog built into the binary; full WLE parity for compose
 + view is the design target.
 
 ## What's available
 
-The bundled snapshot is **Winlink Express Standard Forms version 1.1.20.0**
+The included snapshot is **Winlink Express Standard Forms version 1.1.20.0**
 (April 2026), 251 templates across 25 categories — ICS series, ARC, MARS,
 RACES, weather, search-and-rescue, hazmat, medical, RRI/Radiogram, and
 state-specific forms. Custom forms dropped into the operator's
-custom-forms directory appear alongside the bundle.
+custom-forms directory appear alongside the included forms.
 
 Two compose paths exist:
 
@@ -112,7 +112,7 @@ messages of that type render the viewer; otherwise the receive side falls
 back to the key/value listing.
 
 Use cases: club-specific incident forms, an organization's form set
-handed to new members, WLE templates published after the bundled
+handed to new members, WLE templates published after the included
 snapshot, or short-lived forms for an exercise.
 
 ## Catalog request (WLE inquiry)

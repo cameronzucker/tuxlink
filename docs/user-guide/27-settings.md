@@ -183,7 +183,7 @@ the operator knows the pending queue is small.
 ## Offline maps
 
 Tools -> Settings… -> Offline maps configures an optional LAN tile source for map
-views. Without a LAN tile source, Tuxlink uses the bundled offline raster and
+views. Without a LAN tile source, Tuxlink uses the built-in offline raster and
 keeps map zoom coarse. With a validated local tile source, map-backed position
 selection can zoom farther and can permit six-character grid picks where the
 view is detailed enough.
@@ -193,7 +193,7 @@ local or LAN tile service the operator controls.
 
 ## Color schemes
 
-View -> Color scheme lists the bundled presets:
+View -> Color scheme lists the included presets:
 
 - **Default (dark).** The cool-slate dark theme and design baseline.
 - **Repository Dark.** A code-host-inspired dark theme with neutral surfaces,

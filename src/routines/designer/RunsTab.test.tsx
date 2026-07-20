@@ -122,7 +122,7 @@ function installInvokeMock(overrides: InvokeOverrides = {}) {
         return Promise.resolve(true);
       case 'routines_take_radio':
         return Promise.resolve(true);
-      case 'routines_export_run_bundle':
+      case 'routines_export_run_artifact':
         return Promise.resolve({ path: '/home/operator/exports/tuxlink-run-run-1.json', bytes: 512 });
       default:
         return Promise.resolve(undefined);
@@ -381,11 +381,11 @@ describe('RunsTab — step detail (b)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// (c) Export — save dialog -> routines_export_run_bundle -> shows written path.
+// (c) Export — save dialog -> routines_export_run_artifact -> shows written path.
 // ---------------------------------------------------------------------------
 
-describe('RunsTab — export run bundle (c)', () => {
-  it('invokes the save dialog with the default filename, then exportRunBundle with {runId, outputPath}, and shows the absolute written path', async () => {
+describe('RunsTab — export run artifact (c)', () => {
+  it('invokes the save dialog with the default filename, then exportRunArtifact with {runId, outputPath}, and shows the absolute written path', async () => {
     mockSaveDialog.mockResolvedValue('/home/operator/exports/tuxlink-run-run-1.json');
     renderRunsTab();
     await screen.findByTestId('run-header');
@@ -398,7 +398,7 @@ describe('RunsTab — export run bundle (c)', () => {
       'tuxlink-run-run-1.json',
     );
 
-    const exportCalls = callsFor('routines_export_run_bundle');
+    const exportCalls = callsFor('routines_export_run_artifact');
     expect(exportCalls).toHaveLength(1);
     expect(exportCalls[0]![1]).toEqual({ runId: 'run-1', outputPath: '/home/operator/exports/tuxlink-run-run-1.json' });
 
@@ -414,7 +414,7 @@ describe('RunsTab — export run bundle (c)', () => {
     fireEvent.click(screen.getByTestId('export-run-btn'));
     await act(async () => {});
 
-    expect(callsFor('routines_export_run_bundle')).toHaveLength(0);
+    expect(callsFor('routines_export_run_artifact')).toHaveLength(0);
     expect(screen.queryByTestId('runs-feedback')).not.toBeInTheDocument();
   });
 });

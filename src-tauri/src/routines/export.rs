@@ -1,4 +1,4 @@
-//! Redacted run-bundle export (plan-5 Task 4, spec §11 "definition snapshot +
+//! Redacted run-artifact export (plan-5 Task 4, spec §11 "definition snapshot +
 //! run journal + engine context in one file").
 //!
 //! ## Redaction is an export-boundary property, not a journal property
@@ -6,7 +6,7 @@
 //! On-screen views (the run detail panel, the journal viewer) show the
 //! journal RAW — verbatim `StepErr.cause` text is the whole point of a
 //! diagnostic surface. This module is the one export boundary that redacts:
-//! [`export_run_bundle`] runs the WHOLE assembled bundle through
+//! [`export_run_artifact`] runs the WHOLE assembled artifact through
 //! [`redact_json`] before it ever touches disk. Redaction is field-name
 //! keyed ([`crate::logging::redact::should_redact_field`]), never
 //! content-guessing — a `cause` string that happens to mention "password"
@@ -44,21 +44,21 @@ use super::session::RoutinesState;
 use crate::logging::redact::should_redact_field;
 use crate::ui_commands::UiError;
 
-/// Where the bundle landed and how big it is — enough for the UI to show a
+/// Where the artifact landed and how big it is — enough for the UI to show a
 /// "saved to <path> (<n> KB)" confirmation without re-`stat`-ing the file.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BundleResult {
+pub struct ArtifactResult {
     pub path: String,
     pub bytes: u64,
 }
 
 /// Export one run's full record as a single pretty-printed JSON file:
-/// `kind`/`schemaVersion` (bundle format identity), `exportedAt`/`appVersion`
+/// `kind`/`schemaVersion` (artifact format identity), `exportedAt`/`appVersion`
 /// (engine context), `runId`, `definitionSnapshot` (the resolved definition
 /// the run actually executed — `RunStarted.snapshot`, spec §7), and `journal`
 /// (every entry, verbatim before redaction). Redaction is applied to the
-/// WHOLE assembled bundle as the last step before serialization — see the
+/// WHOLE assembled artifact as the last step before serialization — see the
 /// module doc.
 ///
 /// Unknown run id → [`UiError::NotFound`]. `output_path` is overwritten if it
@@ -67,11 +67,11 @@ pub struct BundleResult {
 /// managed file, so it does not go through `atomic_write`, same precedent as
 /// `logging/export.rs`'s `build_archive`). Any I/O failure maps to
 /// [`UiError::Internal`] with the verbatim OS error message.
-pub fn export_run_bundle(
+pub fn export_run_artifact(
     state: &RoutinesState,
     run_id: &str,
     output_path: &str,
-) -> Result<BundleResult, UiError> {
+) -> Result<ArtifactResult, UiError> {
     let entries = state
         .journal_entries(run_id)
         .ok_or_else(|| UiError::NotFound(run_id.to_string()))?;
@@ -79,8 +79,8 @@ pub fn export_run_bundle(
         RunEvent::RunStarted { snapshot, .. } => Some(snapshot.clone()),
         _ => None,
     });
-    let mut bundle = serde_json::json!({
-        "kind": "tuxlink-routine-run-bundle",
+    let mut artifact = serde_json::json!({
+        "kind": "tuxlink-routine-run-artifact",
         "schemaVersion": 1,
         "exportedAt": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         "appVersion": env!("CARGO_PKG_VERSION"),
@@ -89,15 +89,15 @@ pub fn export_run_bundle(
         "journal": serde_json::to_value(&entries)
             .map_err(|e| UiError::Internal { detail: e.to_string() })?,
     });
-    redact_json(&mut bundle); // export boundary ONLY — on-screen stays raw.
+    redact_json(&mut artifact); // export boundary ONLY — on-screen stays raw.
 
-    let bytes = serde_json::to_vec_pretty(&bundle)
+    let bytes = serde_json::to_vec_pretty(&artifact)
         .map_err(|e| UiError::Internal { detail: e.to_string() })?;
     std::fs::write(output_path, &bytes).map_err(|e| UiError::Internal {
         detail: e.to_string(),
     })?;
 
-    Ok(BundleResult {
+    Ok(ArtifactResult {
         path: output_path.to_string(),
         bytes: bytes.len() as u64,
     })
@@ -216,7 +216,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn export_run_bundle_writes_runid_snapshot_journal_and_context() {
+    async fn export_run_artifact_writes_runid_snapshot_journal_and_context() {
         let (_dir, state) = test_state();
         save_routine(&state, &def_json("quick")).unwrap();
         let run_id = run_routine(&state, "quick", json!({})).await.unwrap();
@@ -224,65 +224,65 @@ mod tests {
             .await;
 
         let out_dir = tempfile::tempdir().unwrap();
-        let out_path = out_dir.path().join("bundle.json");
+        let out_path = out_dir.path().join("artifact.json");
         let out_path_str = out_path.to_str().unwrap().to_string();
 
-        let result = export_run_bundle(&state, &run_id, &out_path_str).unwrap();
+        let result = export_run_artifact(&state, &run_id, &out_path_str).unwrap();
         assert_eq!(result.path, out_path_str);
-        assert!(result.bytes > 0, "a written bundle is never zero bytes");
+        assert!(result.bytes > 0, "a written artifact is never zero bytes");
         assert!(out_path.exists(), "the file is created at output_path");
 
         let contents = std::fs::read_to_string(&out_path).unwrap();
-        let bundle: Value = serde_json::from_str(&contents).unwrap();
+        let artifact: Value = serde_json::from_str(&contents).unwrap();
 
-        assert_eq!(bundle["kind"], "tuxlink-routine-run-bundle");
-        assert_eq!(bundle["schemaVersion"], 1);
-        assert_eq!(bundle["runId"], run_id);
+        assert_eq!(artifact["kind"], "tuxlink-routine-run-artifact");
+        assert_eq!(artifact["schemaVersion"], 1);
+        assert_eq!(artifact["runId"], run_id);
         assert!(
-            bundle["exportedAt"].as_str().is_some(),
+            artifact["exportedAt"].as_str().is_some(),
             "exportedAt is a timestamp string"
         );
         assert!(
-            bundle["appVersion"].as_str().is_some(),
+            artifact["appVersion"].as_str().is_some(),
             "appVersion is present"
         );
         assert_eq!(
-            bundle["definitionSnapshot"]["routine"], "quick",
+            artifact["definitionSnapshot"]["routine"], "quick",
             "the definition snapshot is RunStarted's resolved snapshot"
         );
 
         let live_entries = state.journal_entries(&run_id).unwrap();
-        let bundled_journal = bundle["journal"].as_array().unwrap();
+        let exported_journal = artifact["journal"].as_array().unwrap();
         assert_eq!(
-            bundled_journal.len(),
+            exported_journal.len(),
             live_entries.len(),
-            "every journal entry is present in the bundle"
+            "every journal entry is present in the artifact"
         );
         assert!(
-            bundled_journal
+            exported_journal
                 .iter()
                 .any(|e| e["event"]["type"] == "run_started"),
-            "RunStarted is in the bundled journal"
+            "RunStarted is in the exported journal"
         );
         assert!(
-            bundled_journal
+            exported_journal
                 .iter()
                 .any(|e| e["event"]["type"] == "run_finished"),
-            "RunFinished is in the bundled journal"
+            "RunFinished is in the exported journal"
         );
 
         // Overwrite allowed: exporting again to the same path succeeds.
-        export_run_bundle(&state, &run_id, &out_path_str)
+        export_run_artifact(&state, &run_id, &out_path_str)
             .expect("re-exporting to the same path overwrites, not errors");
     }
 
     #[test]
-    fn export_run_bundle_refuses_an_unknown_run_id() {
+    fn export_run_artifact_refuses_an_unknown_run_id() {
         let (_dir, state) = test_state();
         let out_dir = tempfile::tempdir().unwrap();
-        let out_path = out_dir.path().join("bundle.json");
+        let out_path = out_dir.path().join("artifact.json");
         assert!(matches!(
-            export_run_bundle(&state, "run-does-not-exist", out_path.to_str().unwrap()),
+            export_run_artifact(&state, "run-does-not-exist", out_path.to_str().unwrap()),
             Err(UiError::NotFound(_))
         ));
     }

@@ -818,13 +818,13 @@ pub mod test_support {
                 k_index: Some(2.0),
                 ssn: 70.0,
                 updated_at_ms: 0,
-                source: "bundled".into(),
+                source: "shipped".into(),
             })
         }
     }
 
     /// A mock [`ProvisionPort`]. The two probes are canned reads (engine
-    /// bundled; not-yet-ready with one pending checkpoint). `vara_install_start`
+    /// shipped; not-yet-ready with one pending checkpoint). `vara_install_start`
     /// is UNGATED (provisioning is non-transmit), so it flips the shared `op_ran`
     /// flag and returns a green summary WITHOUT any guard interaction — a test on
     /// a DISARMED guard proves the install ran precisely because it is ungated.

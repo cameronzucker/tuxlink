@@ -32,7 +32,7 @@ Pre-1.0 releases are explicitly experimental. Use in production amateur-radio op
 
 In-scope:
 
-- The Tauri application binary and its bundled dependencies.
+- The Tauri application binary and its included dependencies.
 - The native Winlink B2F engine and CMS connection (telnet / TLS), and the AX.25 / VARA / ARDOP transports and rig-control paths.
 - Credential handling: the CMS password is stored in the OS keyring via the secret-service interface and is never written to disk; `$XDG_CONFIG_HOME/tuxlink/` holds non-secret settings only.
 - Package distribution (`.deb` / `.rpm` / `.AppImage`): signing, checksum publication, supply-chain integrity.

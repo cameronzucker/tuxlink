@@ -669,6 +669,6 @@ describe('RoutineDesigner — Export routine dialog', () => {
 
     expect(dialog).toBeInTheDocument();
     // No fs write — only clipboard.
-    expect(callsFor('routines_export_run_bundle')).toHaveLength(0);
+    expect(callsFor('routines_export_run_artifact')).toHaveLength(0);
   });
 });

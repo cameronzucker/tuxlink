@@ -152,7 +152,7 @@ pub use consent::{closure_transmits, ConsentRegistry};
 pub use events::{
     LibraryEntity, RoutinesEvent, RoutinesEventSink, TauriRoutinesEventSink, ROUTINES_EVENT,
 };
-pub use export::BundleResult;
+pub use export::ArtifactResult;
 pub use presets::{PresetError, RadioPreset, RadioPresetStore};
 pub use resolver::MonolithEntityResolver;
 pub use scheduler::{

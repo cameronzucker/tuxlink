@@ -6,7 +6,7 @@ provisioning tools. Read this before calling `vara_install_start`.
 ## What this is
 
 VARA HF is a proprietary Windows HF data modem. It has no native Linux build, so
-Tuxlink runs it under WINE (a Windows compatibility layer). Tuxlink bundles a
+Tuxlink runs it under WINE (a Windows compatibility layer). Tuxlink ships a
 setup engine that automates the fragile one-time install: the WINE prefix, the
 Visual Basic 6 runtime VARA needs, the OCX control registration, and a launch
 check.
@@ -31,7 +31,7 @@ it over TCP and does not manage it at runtime.
 1. **WINE** installed system-wide (on Debian/Ubuntu: `sudo apt install wine`).
    The setup engine's `deps` checkpoint checks for it.
 2. **The VARA HF installer `.exe`**, downloaded by the operator themselves.
-   Tuxlink cannot bundle it — it is proprietary. The current build is published
+   Tuxlink cannot include it — it is proprietary. The current build is published
    at rosmodem.wordpress.com (the author's site) and linked from winlink.org.
    The operator downloads it to their own machine (for example
    `~/Downloads/VARA HF v4.x.x setup.exe`) and gives you that path.

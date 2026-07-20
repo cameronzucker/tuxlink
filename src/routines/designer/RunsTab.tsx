@@ -1,6 +1,6 @@
 /**
  * RunsTab — the run list, journal-truth Gantt monitor, verbatim step detail,
- * redacted bundle export, and take-the-radio UI (routines plan-5 Task 13,
+ * redacted artifact export, and take-the-radio UI (routines plan-5 Task 13,
  * `.superpowers/sdd/task-13-brief.md`, spec §12 flows 3/5/6).
  *
  * Layout is the approved mock verbatim (dev/scratch/routines-ui-mocks/
@@ -53,7 +53,7 @@ import {
   runStatus,
   cancelRun,
   takeRadio,
-  exportRunBundle,
+  exportRunArtifact,
   type JournalEntry,
   type ParkKind,
   type RunEvent,
@@ -733,11 +733,11 @@ export function RunsTab({ routine, highlightRunId }: RunsTabProps) {
     const defaultPath = `tuxlink-run-${selectedRunId}.json`;
     const path = await saveDialog({
       defaultPath,
-      filters: [{ name: 'Tuxlink Run Bundle', extensions: ['json'] }],
+      filters: [{ name: 'Tuxlink Run Artifact', extensions: ['json'] }],
     });
     if (!path) return; // dialog cancel — no-op
     try {
-      const result = await exportRunBundle(selectedRunId, path);
+      const result = await exportRunArtifact(selectedRunId, path);
       setExportFeedback(`Saved to ${result.path}`);
     } catch (e) {
       setExportFeedback(`Export failed: ${formatUiError(e)}`);
@@ -865,7 +865,7 @@ export function RunsTab({ routine, highlightRunId }: RunsTabProps) {
                 data-testid="export-run-btn"
                 onClick={() => void handleExport()}
               >
-                ⇩ Export run bundle
+                ⇩ Export run artifact
               </button>
             </div>
 

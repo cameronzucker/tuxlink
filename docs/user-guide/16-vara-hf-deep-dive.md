@@ -7,7 +7,7 @@ generally more robust at low SNR, and the de-facto choice for many active
 HF Winlink operators — but it has licensing tiers, runs only as a Windows
 binary (requiring Wine on Linux), and is closed source.
 
-Tuxlink cannot bundle VARA (it is proprietary), but it ships a guided
+Tuxlink cannot include VARA (it is proprietary), but it ships a guided
 setup flow that installs VARA HF under Wine from an installer the
 operator downloads (see "Guided setup" below). At run time, tuxlink
 connects to VARA's TCP command + data ports.

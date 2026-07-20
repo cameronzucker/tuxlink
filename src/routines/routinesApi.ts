@@ -3,7 +3,7 @@
 // UI-only additions from plan-5 Tasks 1-4: routines_runs_list,
 // routines_acknowledge_automatic, routines_validate, routines_validate_draft,
 // routines_actions_list, routines_next_fires, routines_fleet_check,
-// routines_export_run_bundle, routines_take_radio).
+// routines_export_run_artifact, routines_take_radio).
 //
 // Field-casing note (mirrors wwvApi.ts's convention):
 // Tauri v2 maps camelCase JS invoke ARGS to the Rust command's snake_case
@@ -19,7 +19,7 @@
 //   camelCase -- `#[serde(rename_all = "camelCase")]` on the Rust struct:
 //     RoutineSummary, RadioPreset, StationSet, SaveResult, EnableResult,
 //     RunStatusDto, DryRunStarted, DryRunScriptDto, ScheduleStatus, Refusal,
-//     Skip, NextFire, RunListEntry, ActionInfo, BundleResult.
+//     Skip, NextFire, RunListEntry, ActionInfo, ArtifactResult.
 //   enum TAGS only (rename_all on the enum, fields inside a variant keep
 //   their own casing): TransmitMode/OnInterrupted/Severity (lowercase tags),
 //   IfMissed (snake_case tags), Trigger/Control (`tag = "type"|"control"`,
@@ -405,8 +405,8 @@ export interface StationSet {
   callsigns: string[];
 }
 
-/** `BundleResult` (export.rs:49-54) — camelCase. */
-export interface BundleResult {
+/** `ArtifactResult` (export.rs:49-54) — camelCase. */
+export interface ArtifactResult {
   path: string;
   bytes: number;
 }
@@ -445,14 +445,14 @@ const CMD = {
   nextFires: 'routines_next_fires',
   runsList: 'routines_runs_list',
   fleetCheck: 'routines_fleet_check',
-  exportRunBundle: 'routines_export_run_bundle',
+  exportRunArtifact: 'routines_export_run_artifact',
   takeRadio: 'routines_take_radio',
 } as const;
 
 /** Every routines Tauri command name, the 18 pre-existing plus the 11
  * UI-only additions (`routines_runs_list`, `routines_acknowledge_automatic`,
  * `routines_validate`, `routines_validate_draft`, `routines_actions_list`,
- * `routines_next_fires`, `routines_fleet_check`, `routines_export_run_bundle`,
+ * `routines_next_fires`, `routines_fleet_check`, `routines_export_run_artifact`,
  * `routines_take_radio`, and the C3 consent pair `routines_acknowledge_write`
  * + `routines_consent_closure`). Derived from `CMD` so this list and the
  * bindings below can never drift apart. */
@@ -598,8 +598,8 @@ export async function fleetCheck(): Promise<Finding[]> {
   return await invoke<Finding[]>(CMD.fleetCheck);
 }
 
-export async function exportRunBundle(runId: string, outputPath: string): Promise<BundleResult> {
-  return await invoke<BundleResult>(CMD.exportRunBundle, { runId, outputPath });
+export async function exportRunArtifact(runId: string, outputPath: string): Promise<ArtifactResult> {
+  return await invoke<ArtifactResult>(CMD.exportRunArtifact, { runId, outputPath });
 }
 
 // ============================================================================

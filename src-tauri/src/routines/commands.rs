@@ -65,7 +65,7 @@ use tuxlink_routines::validate::{
 };
 
 use super::events::{LibraryEntity, RoutinesEvent};
-use super::export::{export_run_bundle, BundleResult};
+use super::export::{export_run_artifact, ArtifactResult};
 use super::presets::{PresetError, RadioPreset};
 use super::scheduler::{
     anchor_on_enable, next_fires_report, schedule_status, NextFire, ScheduleStatus,
@@ -1837,12 +1837,12 @@ pub async fn routines_fleet_check(
 /// context — as a single redacted JSON file (plan-5 Task 4, spec §11).
 /// **UI-only**; not on the MCP surface.
 #[tauri::command]
-pub async fn routines_export_run_bundle(
+pub async fn routines_export_run_artifact(
     state: State<'_, Arc<RoutinesState>>,
     run_id: String,
     output_path: String,
-) -> Result<BundleResult, UiError> {
-    export_run_bundle(&state, &run_id, &output_path)
+) -> Result<ArtifactResult, UiError> {
+    export_run_artifact(&state, &run_id, &output_path)
 }
 
 /// The operator's "take the radio" button (plan-5 Task 4): asks the current

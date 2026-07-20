@@ -81,7 +81,7 @@ That makes tuxlink complementary rather than universally superior:
 | **Group Addresses** | Address -> Contacts -> Groups |
 | **Import / Export Contacts** | Not yet provided; recreate high-value entries manually for now |
 | **Channel Selection** | Catalog request → RMS_LIST → results show in the radio panel's gateway picker |
-| **Color preferences** | View → Color scheme (bundled presets + custom theme) |
+| **Color preferences** | View → Color scheme (included presets + custom theme) |
 
 ### From Pat
 

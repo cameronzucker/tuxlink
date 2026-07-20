@@ -101,7 +101,7 @@ A response that doesn't get parsed (or that the operator dismisses) still
 sits in the Inbox as a readable message — no data is lost.
 
 The CMS replies to each requested filename with a separate message, so
-a request that bundled three filenames produces three Inbox messages on
+a request that carried three filenames produces three Inbox messages on
 the next Connect.
 
 ```mermaid
