@@ -219,7 +219,7 @@ tracing-test = "0.2"       # alpha-logging (tuxlink-qjgx) — Task 9.1 emission-
 # resolution reasoning as the `tokio`/`test-util` override above), so it
 # never reaches the release binary.
 tauri = { version = "2", features = ["test"] }
-syn = { version = "2", features = ["full", "parsing", "visit"] }  # alpha-logging (tuxlink-qjgx) — credential struct source-scan (§10.2 #9)
+syn = { version = "2", features = ["full", "parsing", "visit"] }  # alpha-logging (tuxlink-qjgx) — credential struct source-scan (§10.3 #9)
 quote = "1"                # alpha-logging (tuxlink-qjgx) — ToTokens for type normalization in source-scan
 
 [lib]
