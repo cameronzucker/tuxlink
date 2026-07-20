@@ -612,6 +612,19 @@ pub(crate) fn run_holder_from_params(params: &serde_json::Value, action_name: &s
     Holder::Run { run_id, step }
 }
 
+/// The declared spec for the shared optional `"rig"` param every
+/// arbiter-leasing action reads via [`rig_id_from_params`] (tuxlink-3nvvl).
+/// One const so all radio/CAT descriptors declare it identically.
+pub(crate) const RIG_PARAM: tuxlink_routines::action::ParamSpec =
+    tuxlink_routines::action::ParamSpec {
+        key: "rig",
+        ty: tuxlink_routines::action::ValueType::String,
+        required: false,
+        description: "Target rig id for the arbiter lease (defaults to the primary rig)",
+        allowed: None,
+        example: "\"primary\"",
+    };
+
 /// Reads the optional `"rig"` param a radio action accepts to target a
 /// specific arbiter lease instead of [`DEFAULT_RIG_ID`]. No action's spec'd
 /// param table names this today (v1 ships one physical rig) — this is

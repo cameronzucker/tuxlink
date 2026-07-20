@@ -12,6 +12,90 @@ use tokio_util::sync::CancellationToken;
 
 use crate::error::StepError;
 
+/// The closed value-shape vocabulary for declared params and outputs
+/// (tuxlink-3nvvl). Deliberately NOT a JSON-schema engine: a handful of
+/// shapes the validator can lint, the human designer can render as typed
+/// fields, and the agent catalog can teach. `Object` is the escape hatch for
+/// genuinely nested params (compose vars, identity blobs) — it lints only
+/// presence, never inner shape.
+///
+/// The list kinds matter to `$ref` type checking: executor substitution
+/// (`resolve_params`) replaces a whole `"$path"` string with the referenced
+/// value and resolves array ELEMENTS in place without flattening — so a
+/// list-typed param accepts a bare `"$sN.key"` string only when the
+/// referenced output is itself list-typed, and `["$sN.key"]` where `key` is
+/// a list is an array-of-arrays that dies at runtime (the GLM/122b stations
+/// divergence this type system exists to catch at save time).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ValueType {
+    String,
+    Number,
+    Boolean,
+    /// List of free strings.
+    StringList,
+    /// List of band labels ("20m", "40m", …) — renderable as a band picker.
+    BandList,
+    /// List of station callsigns — renderable as a station picker and the
+    /// canonical target of `$sN.callsigns` refs.
+    StationList,
+    /// List of objects (e.g. `find_stations`' `gateways`, docs-search hits).
+    /// Element shape is not linted.
+    ObjectList,
+    /// Nested object; presence-only linting.
+    Object,
+}
+
+impl ValueType {
+    /// Stable snake_case token for catalog projections ("string",
+    /// "band_list", "station_list", …) — matches this enum's serde
+    /// `rename_all` by construction (shape-tested in the projections).
+    pub fn token(self) -> &'static str {
+        match self {
+            ValueType::String => "string",
+            ValueType::Number => "number",
+            ValueType::Boolean => "boolean",
+            ValueType::StringList => "string_list",
+            ValueType::BandList => "band_list",
+            ValueType::StationList => "station_list",
+            ValueType::ObjectList => "object_list",
+            ValueType::Object => "object",
+        }
+    }
+}
+
+/// One declared parameter of an action (tuxlink-3nvvl). The single source
+/// both audiences project: the validator lints against it at save time, the
+/// designer renders a typed field from it, the MCP catalog teaches it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct ParamSpec {
+    pub key: &'static str,
+    #[serde(rename = "type")]
+    pub ty: ValueType,
+    /// Required at deserialization time — absence is a RUNTIME failure, so
+    /// the validator flags it as an error at save.
+    pub required: bool,
+    /// One-line human description (also the field help text in the designer).
+    pub description: &'static str,
+    /// Closed vocabulary for `String` params or the ELEMENTS of list params.
+    /// Generalizes the legacy single-param `allowed_values` tuple.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed: Option<&'static [&'static str]>,
+    /// Compact JSON example for THIS param alone (e.g. `"[\"20m\"]"`).
+    pub example: &'static str,
+}
+
+/// One declared output of an action (tuxlink-3nvvl): what `$sN.<key>` can
+/// reference and what type it resolves to. The `$ref` type lint and the
+/// designer's insert-result picker both read this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct OutputSpec {
+    pub key: &'static str,
+    #[serde(rename = "type")]
+    pub ty: ValueType,
+    pub description: &'static str,
+}
+
 /// Declared capabilities the validator and arbiter reason over (spec §6).
 ///
 /// `PartialEq`/`Eq` are hand-written to EXCLUDE `dry_run_shape`: comparing fn
@@ -46,6 +130,12 @@ pub struct ActionDescriptor {
     /// (non-`$ref`) value for `param_key` is outside this set. Today only
     /// `data.read`'s `source` carries one. `None` = no closed vocabulary.
     pub allowed_values: Option<(&'static str, &'static [&'static str])>,
+    /// Declared parameters (tuxlink-3nvvl). Empty = the action declares no
+    /// param contract yet; the params lint skips it entirely (no false
+    /// UNKNOWN_PARAM storms from an undeclared surface).
+    pub params: &'static [ParamSpec],
+    /// Declared step outputs (tuxlink-3nvvl): the `$sN.<key>` surface.
+    pub outputs: &'static [OutputSpec],
     /// A pure function mapping RESOLVED params to this action's shape-true
     /// dry-run output (D6, round-2 P1-5). Consulted by the dry-run registry's
     /// default path when nothing was scripted for this action; a fn pointer so
@@ -69,6 +159,8 @@ impl PartialEq for ActionDescriptor {
             && self.needs_internet == other.needs_internet
             && self.example_params == other.example_params
             && self.allowed_values == other.allowed_values
+            && self.params == other.params
+            && self.outputs == other.outputs
     }
 }
 

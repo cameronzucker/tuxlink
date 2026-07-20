@@ -27,6 +27,7 @@ pub mod context;
 pub mod contracts;
 pub mod findings;
 pub mod fleet;
+pub mod params;
 pub mod refs;
 pub mod structure;
 pub mod triggers;
@@ -51,6 +52,7 @@ pub fn validate(def: &RoutineDef, ctx: &dyn ValidationContext) -> Vec<Finding> {
     structure::check(def, ctx, &mut findings);
     consent::check(def, ctx, &mut findings);
     triggers::check(def, &mut findings);
+    params::check(def, ctx, &mut findings);
 
     sort_findings(&mut findings);
     findings
@@ -182,6 +184,8 @@ mod tests {
             needs_internet: false,
             example_params: None,
             allowed_values: None,
+            params: &[],
+            outputs: &[],
             dry_run_shape: None,
         };
 

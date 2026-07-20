@@ -292,6 +292,41 @@ export interface ActionInfo {
   /** Canonical example `params` object as a compact JSON string (D6); the
    *  authoring UI seeds it on insert. `null` when the action takes no params. */
   exampleParams?: string | null;
+  /** Declared per-param contracts (tuxlink-3nvvl): the typed-field surface the
+   *  inspector renders. Empty array = the action has not declared its params.
+   *  Optional for older fixtures; the backend always sends it. */
+  params?: ParamSpec[];
+  /** Declared step outputs — the insert-result picker's source. */
+  outputs?: OutputSpec[];
+}
+
+/** One declared action parameter — `ParamSpecView` (commands.rs,
+ * tuxlink-3nvvl). `type` is the registry's snake_case value-type token. */
+export interface ParamSpec {
+  key: string;
+  type:
+    | 'string'
+    | 'number'
+    | 'boolean'
+    | 'string_list'
+    | 'band_list'
+    | 'station_list'
+    | 'object_list'
+    | 'object';
+  required: boolean;
+  description: string;
+  /** Closed vocabulary for string params / list elements, when declared. */
+  allowed?: string[];
+  /** Paste-ready example for THIS param alone, as a real JSON value. */
+  example: unknown;
+}
+
+/** One declared action output — `OutputSpecView` (commands.rs,
+ * tuxlink-3nvvl): what a `$sN.<key>` step ref resolves to. */
+export interface OutputSpec {
+  key: string;
+  type: ParamSpec['type'];
+  description: string;
 }
 
 /** One scripted dry-run outcome — `DryRunOutcomeDto` (commands.rs:184-194),

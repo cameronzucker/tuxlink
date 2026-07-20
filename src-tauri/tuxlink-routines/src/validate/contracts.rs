@@ -599,6 +599,8 @@ mod tests {
         needs_internet: false,
         example_params: None,
         allowed_values: Some(("source", READ_SOURCES)),
+        params: &[],
+        outputs: &[],
         dry_run_shape: None,
     };
 

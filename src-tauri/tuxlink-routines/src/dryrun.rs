@@ -158,6 +158,8 @@ mod tests {
         needs_internet: false,
         example_params: None,
         allowed_values: None,
+        params: &[],
+        outputs: &[],
         dry_run_shape: None,
     };
     const LOCAL_LOG: ActionDescriptor = ActionDescriptor {
@@ -170,6 +172,8 @@ mod tests {
         needs_internet: false,
         example_params: None,
         allowed_values: None,
+        params: &[],
+        outputs: &[],
         dry_run_shape: None,
     };
     const DATA_LOOKUP: ActionDescriptor = ActionDescriptor {
@@ -182,6 +186,8 @@ mod tests {
         needs_internet: true,
         example_params: None,
         allowed_values: None,
+        params: &[],
+        outputs: &[],
         dry_run_shape: None,
     };
 
@@ -226,6 +232,8 @@ mod tests {
             needs_internet: false,
             example_params: None,
             allowed_values: None,
+            params: &[],
+            outputs: &[],
             dry_run_shape: None,
         };
         let registry = build_dryrun_registry(&[CONFIG_WRITE], DryRunScript::new());
@@ -341,6 +349,8 @@ mod tests {
         needs_internet: false,
         example_params: None,
         allowed_values: None,
+        params: &[],
+        outputs: &[],
         dry_run_shape: Some(source_shape),
     };
 
