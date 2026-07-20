@@ -6,6 +6,7 @@ import { gridToLatLon } from '../forms/position/maidenhead';
 import { stationKey } from './useReachabilityMap';
 import type { ReachTier } from './reachability';
 import type { Station } from './stationModel';
+import type { DecodeDto, SlotRecord } from '../ft8ui/ft8Types';
 
 // Leaflet re-expression: each station is an L.circleMarker rendered on an explicit
 // SVG renderer. These tests run the REAL Leaflet map in jsdom (no engine mock) and
@@ -229,7 +230,7 @@ describe('StationFinderMap (Leaflet)', () => {
 });
 
 describe('StationFinderMap layer control (tuxlink-b026z.4 Task C11, §Scope map layer-control)', () => {
-  it('renders a layer control housing a Gateways entry ONLY — no FT-8/heat entry (L5 owns that)', async () => {
+  it('renders a layer control housing Gateways + FT-8 heard entries', async () => {
     await renderMap(
       <StationFinderMap stations={stations} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
     );
@@ -237,10 +238,10 @@ describe('StationFinderMap layer control (tuxlink-b026z.4 Task C11, §Scope map 
     expect(control).toBeInTheDocument();
     expect(screen.getByTestId('map-layer-gateways')).toBeInTheDocument();
     expect(control.textContent).toMatch(/gateways/i);
-    // No dead/disabled heat-layer control ships at L3 — the housing carries
-    // exactly one entry until L5 adds its own.
-    expect(control.textContent).not.toMatch(/heat|ft-?8/i);
-    expect(control.querySelectorAll('button')).toHaveLength(1);
+    // Task 4: the FT-8 heard entry the housing anticipated.
+    expect(screen.getByTestId('map-layer-ft8')).toBeInTheDocument();
+    expect(control.textContent).toMatch(/ft-8 heard/i);
+    expect(control.querySelectorAll('button')).toHaveLength(2);
   });
 
   it('Gateways entry defaults on and is a real, non-transparent toggle (aria-pressed truthy, opaque background)', async () => {
@@ -265,6 +266,102 @@ describe('StationFinderMap layer control (tuxlink-b026z.4 Task C11, §Scope map 
     fireEvent.click(screen.getByTestId('map-layer-gateways'));
     expect(screen.getByTestId('map-layer-gateways')).toHaveAttribute('aria-pressed', 'true');
     expect(stationPins()).toHaveLength(2); // restored, same station set
+  });
+});
+
+describe('StationFinderMap FT-8 heard layer (Task 4, spec L3 traffic map)', () => {
+  const NOW = 1_700_000_000_000;
+
+  function mkDecode(over: Partial<DecodeDto> = {}): DecodeDto {
+    return {
+      slotUtcMs: NOW,
+      snrDb: -10,
+      dtS: 0,
+      freqHz: 1500,
+      message: 'CQ W7GTE DN26',
+      fromCall: 'W7GTE',
+      toCall: null,
+      grid: 'DN26',
+      partial: false,
+      ...over,
+    };
+  }
+
+  function mkSlot(slotUtcMs: number, decodes: DecodeDto[]): SlotRecord {
+    return {
+      slotUtcMs,
+      band: '20m',
+      dialHz: 14074000,
+      bandSource: 'cat-confirmed',
+      bandLabelConfirmedUtcMs: null,
+      outcome: decodes.length ? { kind: 'decoded' } : { kind: 'band-dead' },
+      decodes,
+      partialSalvage: false,
+      lostFrames: 0,
+      boundarySkewFrames: 0,
+      clipFraction: 0,
+      rmsDbfs: -20,
+      dwellSlotIndex: null,
+    };
+  }
+
+  const decodesRing: SlotRecord[] = [mkSlot(NOW, [mkDecode()])];
+
+  /** Heard-station markers, identified by the layer's distinctive style
+   *  (radius 4, no stroke), which distinguishes them from the
+   *  gateway/operator/glow circle markers sharing the same map. */
+  function heardMarkers(): L.CircleMarker[] {
+    const out: L.CircleMarker[] = [];
+    captured!.eachLayer((l) => {
+      if (l instanceof L.CircleMarker && l.options.radius === 4 && l.options.stroke === false) out.push(l);
+    });
+    return out;
+  }
+
+  it('plots heard-station markers from decodesRing, on by default', async () => {
+    await renderMap(
+      <StationFinderMap
+        stations={[]}
+        operatorGrid=""
+        tiers={new Map()}
+        selectedKey={null}
+        onSelect={() => {}}
+        decodesRing={decodesRing}
+        nowMs={NOW}
+      />,
+    );
+    expect(screen.getByTestId('map-layer-ft8')).toHaveAttribute('aria-pressed', 'true');
+    expect(heardMarkers()).toHaveLength(1);
+  });
+
+  it('clicking the FT-8 toggle removes the heard markers; clicking again restores them', async () => {
+    await renderMap(
+      <StationFinderMap
+        stations={[]}
+        operatorGrid=""
+        tiers={new Map()}
+        selectedKey={null}
+        onSelect={() => {}}
+        decodesRing={decodesRing}
+        nowMs={NOW}
+      />,
+    );
+    expect(heardMarkers()).toHaveLength(1);
+
+    fireEvent.click(screen.getByTestId('map-layer-ft8'));
+    expect(screen.getByTestId('map-layer-ft8')).toHaveAttribute('aria-pressed', 'false');
+    expect(heardMarkers()).toHaveLength(0);
+
+    fireEvent.click(screen.getByTestId('map-layer-ft8'));
+    expect(screen.getByTestId('map-layer-ft8')).toHaveAttribute('aria-pressed', 'true');
+    expect(heardMarkers()).toHaveLength(1);
+  });
+
+  it('omits decodesRing entirely without crashing and plots nothing', async () => {
+    await renderMap(
+      <StationFinderMap stations={[]} operatorGrid="" tiers={new Map()} selectedKey={null} onSelect={() => {}} />,
+    );
+    expect(heardMarkers()).toHaveLength(0);
   });
 });
 

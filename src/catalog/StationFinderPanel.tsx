@@ -491,6 +491,10 @@ export function StationFinderPanel({
             onSelectPeer={(peer) => setSelection({ kind: 'peer', peer })}
             selectedPeerId={selection?.kind === 'peer' ? selection.peer.id : null}
             panTarget={panTarget}
+            // Task 4 (spec L3 traffic map): the same ring the strip/rail
+            // already consume, aggregated in-place by the map for its own
+            // heard-station layer.
+            decodesRing={ft8.decodesRing}
           />
           <StationRail
             station={selected}

@@ -15,11 +15,9 @@
 // wiring (count, tier style, selection emphasis, click→onSelect, operator pin).
 //
 // Layer-control housing (Task C11, plan tuxlink-b026z.4 §Scope map
-// layer-control): a top-right toggle pill with a Gateways entry that
-// shows/hides the whole station-pin layer group. Gateways-ONLY today — the
-// FT-8 heat layer is L5 (tuxlink-b026z.6); the housing exists so L5 can add
-// its entry beside Gateways later, but no dead/disabled heat toggle ships
-// here (spec §Scope "Out").
+// layer-control): a top-right toggle pill. Started Gateways-ONLY; Task 4
+// (spec L3 traffic map) fills in the FT-8 heard-station entry the housing
+// anticipated; see `Ft8HeardLayer.tsx`.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import { LeafletMap } from '../map/LeafletMap';
@@ -28,6 +26,7 @@ import { useLeafletLayerGroup } from '../map/leafletHooks';
 import { usePersistedViewport } from '../map/usePersistedViewport';
 import { LeafletRecenterControl } from '../map/LeafletRecenterControl';
 import { PeerLayer, type PeerVisual } from '../map/PeerLayer';
+import { Ft8HeardLayer } from '../map/Ft8HeardLayer';
 import { gridToLatLon, type LatLon } from '../forms/position/maidenhead';
 import { reportFrontendError } from '../frontendErrorLog';
 import { type ReachTier } from './reachability';
@@ -35,6 +34,8 @@ import { stationKey } from './useReachabilityMap';
 import { baseCallsign, type Station } from './stationModel';
 import { usePeers, useP2pCapabilities } from '../peers/usePeers';
 import { aggregatePeers, type AggregatedPeer } from '../peers/peerModel';
+import { aggregateLiveDecodes } from './LiveDecodesTab';
+import type { SlotRecord } from '../ft8ui/ft8Types';
 
 export interface StationFinderMapProps {
   stations: Station[];
@@ -54,6 +55,14 @@ export interface StationFinderMapProps {
    *  request — identity drives the pan, so repeat targets re-pan). The
    *  Live-decodes tab's row click feeds this via the panel. */
   panTarget?: LatLon | null;
+  /** Task 4 (spec L3 traffic map): the FT-8 listener's ring buffer
+   *  (`useFt8Listener().decodesRing`), aggregated in-place into the heard
+   *  layer's per-station rows via `aggregateLiveDecodes`. Omitted ⇒ no
+   *  heard-station markers (an idle/never-started listener). */
+  decodesRing?: SlotRecord[];
+  /** Injectable "now" for deterministic tests; defaults to `Date.now()`
+   *  (mirrors `StationRail`'s/`LiveBandStrip`'s `nowMs` convention). */
+  nowMs?: number;
 }
 
 // Recenter zoom on the operator, on the z0–14 scale (matches the MapLibre edition).
@@ -336,16 +345,21 @@ export function StationFinderMap(props: StationFinderMapProps) {
   const initialZoom = saved ? saved.zoom : me ? OPERATOR_ZOOM : 2;
 
   // Layer-control housing (Task C11, plan tuxlink-b026z.4 §Scope map
-  // layer-control): a Gateways-only toggle today. This is deliberately a
-  // HOUSING — L5 (tuxlink-b026z.6) adds the FT-8 heat-layer entry beside it
-  // later; L3 ships ONLY the Gateways entry (a dead/disabled heat toggle
-  // wired to a nonexistent layer would itself be the incomplete-control
-  // anti-pattern the no-incomplete-refs rule bans — spec §Scope "Out").
+  // layer-control): originally a Gateways-only toggle housing; Task 4 fills
+  // in the FT-8 heard-station entry beside it.
   const [gatewaysVisible, setGatewaysVisible] = useState(true);
   // Peers toggle (approved reconciliation mock: [Gateways][Peers] side by side).
   // Rendered ONLY when the map_peers capability is on — with peers unavailable a
   // lone toggle would be dead chrome (capability-hide, not disable).
   const [peersVisible, setPeersVisible] = useState(true);
+  // FT-8 heard layer toggle (Task 4, spec L3 traffic map): default ON, like
+  // Gateways. Evidence of who was actually heard is on by default, same as
+  // the predicted-reachability pins.
+  const [ft8Visible, setFt8Visible] = useState(true);
+  const ft8Rows = useMemo(
+    () => aggregateLiveDecodes(props.decodesRing ?? [], props.nowMs ?? Date.now()),
+    [props.decodesRing, props.nowMs],
+  );
 
   // Task delta2 (spec §6 reconciliation): the peer DIAMOND layer, gated
   // end-to-end on `map_peers` [R5-8] — false (or still loading) HIDES every
@@ -384,6 +398,7 @@ export function StationFinderMap(props: StationFinderMapProps) {
           visible={gatewaysVisible}
         />
         <OperatorPin location={me} />
+        <Ft8HeardLayer rows={ft8Rows} enabled={ft8Visible} />
         <PeerLayer
           peers={aggregatedPeers}
           enabled={mapPeersEnabled && peersVisible}
@@ -405,6 +420,16 @@ export function StationFinderMap(props: StationFinderMapProps) {
         >
           <span className="station-finder__layer-swatch" aria-hidden="true" />
           Gateways
+        </button>
+        <button
+          type="button"
+          className={`station-finder__layer-btn${ft8Visible ? ' on' : ''}`}
+          data-testid="map-layer-ft8"
+          aria-pressed={ft8Visible}
+          onClick={() => setFt8Visible((v) => !v)}
+        >
+          <span className="station-finder__layer-swatch station-finder__layer-swatch--ft8" aria-hidden="true" />
+          FT-8 heard
         </button>
         {mapPeersEnabled && (
           <button

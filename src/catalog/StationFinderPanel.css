@@ -618,6 +618,13 @@
   border-radius: 50%;
   background: var(--m-vara, #4aa3ff);
 }
+/* FT-8 heard-layer toggle swatch (Task 4, spec L3 traffic map): the same
+   HOT ramp colour the heard-station markers use at their brightest, so the
+   swatch reads as "the evidence layer" at a glance. */
+.station-finder__layer-swatch--ft8 {
+  background: var(--open-hot, #ff5470);
+}
+
 /* Peers layer toggle swatch + legend keys (peers↔L3 reconciliation, approved
    mock: [Gateways][Peers] toggles + a PEERS legend row). Diamond = the peer
    glyph (rotated hollow square — border carries the tier color, mirroring
