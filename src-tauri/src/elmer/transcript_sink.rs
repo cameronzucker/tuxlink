@@ -50,9 +50,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
-use tuxlink_agent_runner::{Message, TranscriptSink};
+use tuxlink_agent_runner::{Message, RunOutcome, TranscriptSink};
 
-use crate::elmer::provider::redact_message;
+use crate::elmer::events::outcome_kind;
+use crate::elmer::provider::{redact_message, redact_text};
 
 /// One JSONL line in a transcript file. `message` uses [`Message`]'s derived
 /// externally-tagged serde shape (`{"User": ...}`, `{"ToolCall": {...}}`,
@@ -63,6 +64,28 @@ struct TranscriptLine<'a> {
     seq: u64,
     ts_unix_ms: u64,
     message: &'a Message,
+}
+
+/// The terminal outcome line (tuxlink-93lzx): one synthetic line recorded by
+/// the session layer at the run's terminus, so a wedged / cancelled /
+/// completed run is distinguishable from the file alone. Shaped
+/// `{session_id, seq, ts_unix_ms, outcome: {kind, detail}}` — deliberately NO
+/// `message` key, so `grep '"outcome"'` finds exactly the run boundaries.
+#[derive(Serialize)]
+struct OutcomeLine<'a> {
+    session_id: &'a str,
+    seq: u64,
+    ts_unix_ms: u64,
+    outcome: OutcomeBody,
+}
+
+/// Body of [`OutcomeLine`]. `kind` uses the UI outcome vocabulary
+/// ([`outcome_kind`]); `detail` carries the redacted reason for the
+/// non-`done` kinds.
+#[derive(Serialize)]
+struct OutcomeBody {
+    kind: &'static str,
+    detail: String,
 }
 
 /// Upper bound on lines queued to the writer thread. Normal queue depth is
@@ -241,6 +264,76 @@ impl ElmerTranscriptSink {
             Err(poisoned) => poisoned.into_inner(),
         }
     }
+
+    /// Record the run's terminal outcome as a synthetic [`OutcomeLine`]
+    /// (tuxlink-93lzx). Called by the session layer at the join — after the
+    /// panic/hard-cancel mapping — so every run leaves a how-it-ended line.
+    /// Same fire-and-forget contract and queue budgets as `record`.
+    ///
+    /// `Completed` and `Cancelled` carry no detail: the final assistant text
+    /// is already on disk as the runner-recorded message line, and duplicating
+    /// it here would double the largest payload in the file.
+    pub fn record_outcome(&self, outcome: &RunOutcome) {
+        let detail = match outcome {
+            RunOutcome::Completed(_) | RunOutcome::Cancelled => String::new(),
+            RunOutcome::NeedsOperator(msg)
+            | RunOutcome::InvalidAction(msg)
+            | RunOutcome::ToolDenied(msg)
+            | RunOutcome::RateLimited(msg)
+            | RunOutcome::ProviderError(msg) => redact_text(msg),
+        };
+        let (session_id, seq) = {
+            let mut s = self.lock_state();
+            let seq = s.seq;
+            s.seq += 1;
+            (s.session_id.clone(), seq)
+        };
+        let line = OutcomeLine {
+            session_id: &session_id,
+            seq,
+            ts_unix_ms: unix_ms(),
+            outcome: OutcomeBody {
+                kind: outcome_kind(outcome),
+                detail,
+            },
+        };
+        match serde_json::to_string(&line) {
+            Ok(json) => self.enqueue(json, &session_id),
+            Err(e) => {
+                tracing::warn!(target: "elmer", error = %e, "transcript outcome line serialize failed; dropped");
+            }
+        }
+    }
+
+    /// Budget-checked handoff of one serialized line to the writer thread —
+    /// the shared tail of `record` and `record_outcome`. Appends the trailing
+    /// newline so the writer issues one `write_all` per line.
+    fn enqueue(&self, mut json: String, session_id: &str) {
+        json.push('\n');
+        let len = json.len() as u64;
+        // Byte budget: when the writer is wedged (dead SD card), the queue
+        // must not grow until the app OOMs. Over budget → drop and count; the
+        // run itself is never affected.
+        if self.queued_bytes.load(Ordering::Relaxed).saturating_add(len) > self.queue_byte_budget {
+            self.count_drop("queue byte budget exceeded");
+            return;
+        }
+        self.queued_bytes.fetch_add(len, Ordering::Relaxed);
+        // try_send, never send: a full queue (line bound) must not block the
+        // agent loop. Disconnected means the writer thread is gone (already
+        // warned once at spawn/death).
+        if self
+            .tx
+            .try_send(Job::Line {
+                file_name: format!("{session_id}.jsonl"),
+                line: json,
+            })
+            .is_err()
+        {
+            self.queued_bytes.fetch_sub(len, Ordering::Relaxed);
+            self.count_drop("queue full or writer gone");
+        }
+    }
 }
 
 impl TranscriptSink for ElmerTranscriptSink {
@@ -261,38 +354,7 @@ impl TranscriptSink for ElmerTranscriptSink {
             message: &redacted,
         };
         match serde_json::to_string(&line) {
-            Ok(mut json) => {
-                // Newline appended HERE so the writer issues one `write_all`
-                // per line — a single O_APPEND write keeps concurrent readers
-                // (operator `tail -f` / `grep`) from observing torn lines in
-                // the common case.
-                json.push('\n');
-                let len = json.len() as u64;
-                // Byte budget: when the writer is wedged (dead SD card), the
-                // queue must not grow until the app OOMs. Over budget → drop
-                // and count; the run itself is never affected.
-                if self.queued_bytes.load(Ordering::Relaxed).saturating_add(len)
-                    > self.queue_byte_budget
-                {
-                    self.count_drop("queue byte budget exceeded");
-                    return;
-                }
-                self.queued_bytes.fetch_add(len, Ordering::Relaxed);
-                // try_send, never send: a full queue (line bound) must not
-                // block the agent loop. Disconnected means the writer thread
-                // is gone (already warned once at spawn/death).
-                if self
-                    .tx
-                    .try_send(Job::Line {
-                        file_name: format!("{session_id}.jsonl"),
-                        line: json,
-                    })
-                    .is_err()
-                {
-                    self.queued_bytes.fetch_sub(len, Ordering::Relaxed);
-                    self.count_drop("queue full or writer gone");
-                }
-            }
+            Ok(json) => self.enqueue(json, &session_id),
             Err(e) => {
                 tracing::warn!(target: "elmer", error = %e, "transcript line serialize failed; dropped");
             }
@@ -489,7 +551,7 @@ pub fn export_archive(dir: &Path, output_path: &Path) -> Result<TranscriptExport
 mod tests {
     use super::*;
     use serde_json::json;
-    use tuxlink_agent_runner::ToolCall;
+    use tuxlink_agent_runner::{RunOutcome, ToolCall};
 
     const FLUSH: Duration = Duration::from_secs(5);
 
@@ -676,6 +738,80 @@ mod tests {
         assert_eq!(
             files[0].1[0]["message"]["User"], "new session evidence",
             "the surviving file is the ACTIVE session"
+        );
+    }
+
+    /// The terminal outcome line (tuxlink-93lzx): recorded after the run's
+    /// terminus, it shares the session's seq counter, uses the UI outcome-kind
+    /// vocabulary, and is shaped `{.., "outcome": {..}}` with NO `message` key
+    /// — so `grep '"outcome"'` finds exactly the run boundaries.
+    #[test]
+    fn outcome_line_is_terminal_greppable_and_seq_continuous() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sink = ElmerTranscriptSink::new(tmp.path().to_path_buf());
+        sink.record(&Message::User("author a routine".into()));
+        sink.record_outcome(&RunOutcome::NeedsOperator(
+            "turn budget exhausted after 12 turns".into(),
+        ));
+        assert!(sink.flush(FLUSH));
+
+        let files = read_session_lines(tmp.path());
+        assert_eq!(files.len(), 1, "outcome joins the active session file");
+        let lines = &files[0].1;
+        assert_eq!(lines.len(), 2);
+        let outcome = &lines[1];
+        assert_eq!(outcome["seq"], 1, "outcome continues the session seq");
+        assert_eq!(outcome["outcome"]["kind"], "needsOperator");
+        assert!(
+            outcome["outcome"]["detail"]
+                .as_str()
+                .unwrap()
+                .contains("turn budget exhausted"),
+            "detail carries HOW the run ended: {outcome}"
+        );
+        assert!(
+            outcome.get("message").is_none(),
+            "outcome lines carry no message key: {outcome}"
+        );
+        assert!(outcome["session_id"].is_string());
+        assert!(outcome["ts_unix_ms"].as_u64().unwrap() > 1_700_000_000_000);
+    }
+
+    /// A `Completed` outcome must NOT duplicate the final assistant text (the
+    /// runner already recorded it as a message line) — kind only, empty detail.
+    #[test]
+    fn completed_outcome_records_kind_without_duplicating_final_text() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sink = ElmerTranscriptSink::new(tmp.path().to_path_buf());
+        sink.record_outcome(&RunOutcome::Completed(
+            "Here is your routine, saved as hourly-vara-check.".into(),
+        ));
+        assert!(sink.flush(FLUSH));
+
+        let line = &read_session_lines(tmp.path())[0].1[0];
+        assert_eq!(line["outcome"]["kind"], "done");
+        assert_eq!(line["outcome"]["detail"], "", "final text lives in the Assistant message line, not here");
+    }
+
+    /// The outcome path redacts like the message path: a secret in a
+    /// ProviderError detail must not reach disk.
+    #[test]
+    fn secret_in_outcome_detail_is_redacted_in_written_jsonl() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sink = ElmerTranscriptSink::new(tmp.path().to_path_buf());
+        sink.record_outcome(&RunOutcome::ProviderError(
+            "HTTP 500 replaying [C:B2F ;PQ: 23753528 AUTH OK]".into(),
+        ));
+        assert!(sink.flush(FLUSH));
+
+        let raw = fs::read_to_string(&read_session_lines(tmp.path())[0].0).unwrap();
+        assert!(
+            !raw.contains("23753528"),
+            "secure-login token must not reach disk via the outcome line: {raw}"
+        );
+        assert_eq!(
+            read_session_lines(tmp.path())[0].1[0]["outcome"]["kind"],
+            "error"
         );
     }
 
