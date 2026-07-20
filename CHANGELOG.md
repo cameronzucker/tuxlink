@@ -31,6 +31,52 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.96.0](https://github.com/cameronzucker/tuxlink/compare/v0.95.0...v0.96.0) (2026-07-20)
+
+
+### Features
+
+* **catalog:** bandwidth filter chips in both locations, one shared state; VARA FM end-to-end ([44b3828](https://github.com/cameronzucker/tuxlink/commit/44b382806b6155ff7168a2aa6bcf8d2f2df0c917))
+* **catalog:** frequency hero + channel-row frequency/bandwidth badges ([c9e90dd](https://github.com/cameronzucker/tuxlink/commit/c9e90dd933ef70e4957e46c9e38945c5fb4b6b3b))
+* **catalog:** FT-8 evidence corroboration math (spec constants, fixture-backed) ([f88f325](https://github.com/cameronzucker/tuxlink/commit/f88f3251d012d64c3b06507cbd3bfd38d651466f))
+* **catalog:** FT-8 evidence filter with ghosting and honest note chip ([9e58d3d](https://github.com/cameronzucker/tuxlink/commit/9e58d3db39b2e1fd105b3313edb7034df813736d))
+* **catalog:** FT-8 heard stations plotted on the finder map (spec L3 traffic map) ([d4cf10b](https://github.com/cameronzucker/tuxlink/commit/d4cf10b7c20e8217395308dadd2a3c1ff19f8483))
+* **catalog:** FT-8 heat layer as grid-square choropleth (spec L5) ([e93ebdb](https://github.com/cameronzucker/tuxlink/commit/e93ebdb78fe21f897c0ec5d0765cb492a6c13159))
+* **catalog:** Winlink channels JSON API with bandwidth + VARA FM (tuxlink-nkzng) ([2b764f3](https://github.com/cameronzucker/tuxlink/commit/2b764f3f316570f03ff2a23027bf57b7e53f5c11))
+* **elmer:** land agent transcripts on disk — redacted JSONL sink + export (tuxlink-gzbpo) ([2a2e7ce](https://github.com/cameronzucker/tuxlink/commit/2a2e7ce79b1923a617546c31433d22427dc99328))
+* **elmer:** transcript records the run's terminal outcome line (tuxlink-93lzx) ([63c9ace](https://github.com/cameronzucker/tuxlink/commit/63c9ace75edf19493b414c1643cc307dd6c824c1))
+* **ft8ui:** compact in-strip setup form with OS-convention device select ([b2c233e](https://github.com/cameronzucker/tuxlink/commit/b2c233e7d3d3fb3c48030fa4cc1069c5905657c8))
+* **ft8ui:** setup lives in the strip; header start/stop control ([6ec1348](https://github.com/cameronzucker/tuxlink/commit/6ec1348e6b93b93aa52f734135a976eb55dd9c46))
+* **mcp:** evidence + channels parity over find_stations; VARA FM reaches agents ([582786f](https://github.com/cameronzucker/tuxlink/commit/582786f324b4ee4e3b98be831dfc62efe28dfdda))
+* **routines:** agent-boundary remedy suffixes + radio.connect contract + trigger docs — close the 591dw discoverability remainder (tuxlink-591dw) ([1a82f7c](https://github.com/cameronzucker/tuxlink/commit/1a82f7ccc82428d76c2ec00288e9b2e57d5c688f))
+* **routines:** agent-discoverable authoring — routines_actions_list catalog + UNKNOWN_ACTION enumerates valid actions (tuxlink-dngvs) ([cbefa04](https://github.com/cameronzucker/tuxlink/commit/cbefa0479cb679483bc4b9b93269e1315c1fe003))
+* **routines:** P2 edit-verb core — pure edit ops, command-layer verbs, revision CAS, rename, port DTOs (tuxlink-aqy63) ([d53504a](https://github.com/cameronzucker/tuxlink/commit/d53504a3cf8b1cab3d2168f8ff9791dbcd6f70cc))
+* **routines:** P2 edit-verb surface complete — 9 MCP tools, adapter, mocks, designer revision CAS, catalog flow note (tuxlink-aqy63) ([7184116](https://github.com/cameronzucker/tuxlink/commit/7184116a2d7552db9294d00a7d7156d5a3e3eee0))
+* **routines:** registry param/output self-description + save-time param validation (tuxlink-3nvvl) ([09f3e5c](https://github.com/cameronzucker/tuxlink/commit/09f3e5cde6a6981ac8a1bba7af411567e78af943))
+
+
+### Bug Fixes
+
+* **catalog,ft8ui,mcp:** five Codex adversarial findings on the SI branch ([cc8198f](https://github.com/cameronzucker/tuxlink/commit/cc8198f672000ee2533f089b03f3b469bc63abcd))
+* **catalog:** evidence corroboration re-evaluates as decodes age out ([c7043cd](https://github.com/cameronzucker/tuxlink/commit/c7043cdb430ad8325f59faa847cfe2dce89ec731))
+* **catalog:** fixed-height panel; decode feeds scroll in place; WWV row contained (tuxlink-6i0ie, tuxlink-1w0d0) ([495444f](https://github.com/cameronzucker/tuxlink/commit/495444f4e7a52a7304e678794dbadd1fd767de7c))
+* **catalog:** map+rail always mounted; FT-8 setup takeover deleted (tuxlink-6i0ie) ([65b5820](https://github.com/cameronzucker/tuxlink/commit/65b58209a178f51f7b8c0cad24f777d8c96472a4))
+* **elmer:** harden transcript sink per Codex adrev — bounded queue, retention sweep, snapshot-export docs (tuxlink-gzbpo) ([9294000](https://github.com/cameronzucker/tuxlink/commit/9294000e4bed8f9200af5663e1674697e596c1d3))
+* **elmer:** system prompt routes routine authoring to routines_actions_list — the docs-first rule was sending models docs-circling for schemas the docs don't carry (tuxlink-591dw) ([4047307](https://github.com/cameronzucker/tuxlink/commit/4047307c2bacaba9cd7609e1913b700da05ea939))
+* **ft8ui:** clear stale start error when picking a device ([2287c04](https://github.com/cameronzucker/tuxlink/commit/2287c0478400151d3c6708758a24307b6eb42a4a))
+* **ft8ui:** restore notice class on needs-setup arm for visual parity ([bc9bbd7](https://github.com/cameronzucker/tuxlink/commit/bc9bbd7a337afe50532ece55836b72f78be30af5))
+* **ft8ui:** scope the fixed strip height to the live body only ([800a255](https://github.com/cameronzucker/tuxlink/commit/800a2555134500d967c1fee322f0a2d1b1ac00c2))
+* **help:** group the routines-actions chapter in the Help sidebar (F1 fixup) ([6f0c1e5](https://github.com/cameronzucker/tuxlink/commit/6f0c1e53b5d54dc27d2fcfece7a00a062cbd2151))
+* **mcp:** complete main's new find_stations test initializer post-merge ([62d4612](https://github.com/cameronzucker/tuxlink/commit/62d46126ef2bcc13cae7429b98e36a0696100975))
+* **routines:** catalog examples are paste-ready JSON objects; 11 missing example_params authored; spec §13 amended (tuxlink-dngvs Codex adrev) ([61bfb48](https://github.com/cameronzucker/tuxlink/commit/61bfb488a56d699c02c586b9c2bca8940f64d15a))
+* **routines:** definition_template in the catalog — teach the envelope the catalog itself mis-taught (tuxlink-rt4ey) ([a402c15](https://github.com/cameronzucker/tuxlink/commit/a402c154a0c25e9dc0d5914f64295d552a4b572b))
+* **routines:** disposition all 7 round-2 adrev classes — full writer lock, token-carried revision, retry scrub cascade, patch-key rejection, rename CAS + intent-marker resume + anchor migration (tuxlink-aqy63) ([39fa58f](https://github.com/cameronzucker/tuxlink/commit/39fa58f4d8a6dce61a1ebd867dc8d355d25d3f91))
+* **routines:** disposition all 9 adrev findings — camelCase output keys, @-kind shape checks, null semantics, nullable outputs (tuxlink-3nvvl) ([733fd7d](https://github.com/cameronzucker/tuxlink/commit/733fd7d7ac805409123bf9ba9852700e885305cc))
+* **routines:** mock catalogs list local.log so the template's action is closed-set consistent (Codex rt4ey P2) ([4ad5ccd](https://github.com/cameronzucker/tuxlink/commit/4ad5ccd97f564bfabe44feb2a9c08aa191a59155))
+* **routines:** narrow the acknowledgment-invalidation remedy to closure-changing edits (Codex P2) ([50fed83](https://github.com/cameronzucker/tuxlink/commit/50fed83da139efebecbb591c736a194a66578192))
+* **search:** rebuild_index repopulates docs_fts — Rebuild no longer silently kills docs_search until restart (tuxlink-mbh5z) ([edc79bf](https://github.com/cameronzucker/tuxlink/commit/edc79bfd72991cdafd3c4eee67dd1f94baa19e1a))
+* **shell:** ribbon slack moves to the cluster seam, off Station Intel's shoulder (tuxlink-7tsik) ([a30991c](https://github.com/cameronzucker/tuxlink/commit/a30991c4c9e1ad9afb4cdb5ae51c7500310af4df))
+
 ## [0.95.0](https://github.com/cameronzucker/tuxlink/compare/v0.94.0...v0.95.0) (2026-07-19)
 
 
