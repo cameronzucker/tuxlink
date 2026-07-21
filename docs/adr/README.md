@@ -78,6 +78,8 @@ Deciders: <names or session monikers of people involved>
 - [0023 — Ban GPT-5.6 for adrev and all tasks; GPT-5.5 is the ceiling](0023-ban-gpt-5-6-until-deception-assessed.md) — *trust-critical adrev role; precautionary until GPT-5.6's cheating/deception is honestly assessed as-deployed in a Tuxlink context*
 
 - [0024, Dual actionability: one capability tree, two front-ends](0024-dual-actionability-one-capability-tree.md) (*Proposed: every operator-meaningful capability is actionable by both the agent (MCP tool) and the human (Routines action/UI); requirements flow from the distillation scenario corpus*)
+- [0025 - Agent-native: a feature's complete functionality is reachable by the agent, by design](0025-agent-native-full-functionality-parity.md) (*Proposed*)
+- [0026 - End the GPT-5.6 shadow-assessment program; retain the operational ban](0026-end-gpt56-shadow-assessment-retain-ban.md) (*16 ledger pairs, zero integrity indicators; single 5.5 adrev round returns; ban stays pending further testing - reviewer-role evidence only, and API pricing dwarfs the plan-based 5.5 without proportional benefit*)
 
 ## References
 
