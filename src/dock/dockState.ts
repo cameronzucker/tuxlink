@@ -12,7 +12,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useEffect, useState } from 'react';
 
-export type SurfaceId = 'routines' | 'tac_map' | 'aprs_chat' | 'elmer';
+export type SurfaceId = 'routines' | 'tac_map' | 'aprs_chat' | 'elmer' | 'station_intelligence';
 export type DockMode = 'docked' | 'popped';
 
 export interface DockSurfaces {
@@ -20,6 +20,7 @@ export interface DockSurfaces {
   tac_map: DockMode;
   aprs_chat: DockMode;
   elmer: DockMode;
+  station_intelligence: DockMode;
 }
 
 /** The `dock:changed` payload and `dock_state_get` return (spec §3) — a full
@@ -60,6 +61,9 @@ export const SURFACE_WINDOW_LABEL: Record<SurfaceId, string> = {
   tac_map: 'pop-tacmap',
   aprs_chat: 'pop-aprschat',
   elmer: 'pop-elmer',
+  // bd tuxlink-9obx2: hyphenated (unlike the drop-the-underscore forms
+  // above) since the wire table is a lookup, never derived (spec §3).
+  station_intelligence: 'pop-station-intelligence',
 };
 
 /**

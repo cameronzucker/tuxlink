@@ -122,18 +122,23 @@ describe('parseStationsRoute', () => {
   });
 });
 
-// bd tuxlink-dmwte, spec §3 wire table: the three pop-out routes for
-// Routines / Tac Map / APRS Chat. Same shape as parseComposeRoute, but the
-// map is literal — the route segment drops the underscore irregularly
-// (tacmap, aprschat), the surface id keeps it.
+// bd tuxlink-dmwte, spec §3 wire table (extended by bd tuxlink-9obx2): the
+// four pop-out routes for Routines / Tac Map / APRS Chat / Station
+// Intelligence. Same shape as parseComposeRoute, but the map is literal —
+// the route segment drops the underscore irregularly (tacmap, aprschat) or
+// keeps a hyphen (station-intelligence); the surface id always keeps the
+// underscore.
 describe('parsePopRoute', () => {
-  it('maps the three pop routes to surface ids (spec §3 table — underscore dropped in route, kept in id)', () => {
+  it('maps the four pop routes to surface ids (spec §3 table — underscore dropped/hyphenated in route, kept in id)', () => {
     expect(parsePopRoute('/pop/routines')).toBe('routines');
     expect(parsePopRoute('/pop/tacmap')).toBe('tac_map');
     expect(parsePopRoute('/pop/aprschat')).toBe('aprs_chat');
     expect(parsePopRoute('/pop/elmer')).toBe('elmer');           // bd tuxlink-mfssz
+    expect(parsePopRoute('/pop/station-intelligence')).toBe('station_intelligence'); // bd tuxlink-9obx2
     expect(parsePopRoute('/pop/tacmap/')).toBe('tac_map');       // trailing slash tolerated
+    expect(parsePopRoute('/pop/station-intelligence/')).toBe('station_intelligence');
     expect(parsePopRoute('/pop/tac_map')).toBeNull();            // the id form is NOT a route
+    expect(parsePopRoute('/pop/station_intelligence')).toBeNull(); // the id form is NOT a route
     expect(parsePopRoute('/pop')).toBeNull();
     expect(parsePopRoute('/')).toBeNull();
   });
@@ -143,7 +148,10 @@ describe('parsePopRoute', () => {
 // emission, wizard probing). isSecondaryWindow is the shared guard predicate.
 describe('isSecondaryWindow', () => {
   it('covers all five secondary kinds (adrev Codex-9: pop windows must not run main-only side effects)', () => {
-    for (const p of ['/compose/d1', '/help', '/logging', '/stations', '/pop/routines', '/pop/tacmap', '/pop/aprschat', '/pop/elmer']) {
+    for (const p of [
+      '/compose/d1', '/help', '/logging', '/stations',
+      '/pop/routines', '/pop/tacmap', '/pop/aprschat', '/pop/elmer', '/pop/station-intelligence',
+    ]) {
       expect(isSecondaryWindow(p)).toBe(true);
     }
     expect(isSecondaryWindow('/')).toBe(false);

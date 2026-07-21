@@ -4,9 +4,9 @@
 // arrival. Mock scaffold copied from AppShell.routines.test.tsx (that file
 // knows which backends a real AppShell mount needs).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, within, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { ReactNode } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import type { MessageMeta } from '../mailbox/types';
 import type { DockSnapshot, DockMode } from '../dock/dockState';
 
@@ -15,17 +15,59 @@ import type { DockSnapshot, DockMode } from '../dock/dockState';
 // reassigns it to a fresh object and `rerender`s so the shell's `dock:changed`
 // effect (keyed on the snapshot) fires. Spies + the mutable ref go through
 // `vi.hoisted` since the `vi.mock` factory is hoisted above module top-level.
-const { mockFocusSurface, mockPopOut, mockDockBack, dockRef } = vi.hoisted(() => ({
+//
+// `dockListeners` backs a SECOND way to push a dock-state transition: see
+// `pushDockSnapshot` below. Most of this file's arrival tests mutate
+// `dockRef.current` and then force a full-tree `rerender(<AppShell />)`,
+// which re-executes every ancestor in the tree, INCLUDING `<HintProvider>`
+// (AppShell.tsx wraps `AppShellInner` in it). `HintProvider`'s context
+// `value` is a fresh, unmemoized object literal every render, so a full-tree
+// rerender always hands `AppShellInner` a new `hints` reference regardless
+// of the dock transition. That masks any bug in a `useMemo`/`useCallback`
+// dependency array that omits a dock-derived value (like `stationIntelPopped`
+// below): the memo recomputes anyway, for the unrelated reason that `hints`
+// changed too, and a missing dependency test would false-negative. A real
+// `dock:changed` event in production re-renders ONLY `AppShellInner` (it owns
+// the `useDockState()` call), never its `HintProvider` ancestor, so
+// `pushDockSnapshot` reproduces that: it notifies the reactive `useDockState`
+// mock's subscribers directly, inside `act()`, without touching RTL's
+// `rerender` or the ancestor tree.
+const { mockFocusSurface, mockPopOut, mockDockBack, dockRef, dockListeners } = vi.hoisted(() => ({
   mockFocusSurface: vi.fn(async () => {}),
   mockPopOut: vi.fn(async () => {}),
   mockDockBack: vi.fn(async () => {}),
   dockRef: { current: null as DockSnapshot | null },
+  dockListeners: new Set<() => void>(),
 }));
+
+/** Push a new dock snapshot the way a real `dock:changed` event would land:
+ *  ONLY the component(s) subscribed via `useDockState()` re-render, not the
+ *  whole tree. See the mock's header comment above for why this differs from
+ *  the `dockRef.current = X; rerender(<AppShell />)` pattern used elsewhere
+ *  in this file. */
+function pushDockSnapshot(snap: DockSnapshot) {
+  act(() => {
+    dockRef.current = snap;
+    dockListeners.forEach((listener) => listener());
+  });
+}
 
 function snapshot(routines: DockMode, context: unknown = null): DockSnapshot {
   return {
-    surfaces: { routines, tac_map: 'docked', aprs_chat: 'docked', elmer: 'docked' },
-    context: { routines: context, tac_map: null, aprs_chat: null, elmer: null },
+    surfaces: {
+      routines,
+      tac_map: 'docked',
+      aprs_chat: 'docked',
+      elmer: 'docked',
+      station_intelligence: 'docked',
+    },
+    context: {
+      routines: context,
+      tac_map: null,
+      aprs_chat: null,
+      elmer: null,
+      station_intelligence: null,
+    },
   };
 }
 
@@ -34,8 +76,20 @@ function snapshot(routines: DockMode, context: unknown = null): DockSnapshot {
 // (task 9 does not touch it).
 function tacMapSnapshot(tac_map: DockMode, context: unknown = null): DockSnapshot {
   return {
-    surfaces: { routines: 'docked', tac_map, aprs_chat: 'docked', elmer: 'docked' },
-    context: { routines: null, tac_map: context, aprs_chat: null, elmer: null },
+    surfaces: {
+      routines: 'docked',
+      tac_map,
+      aprs_chat: 'docked',
+      elmer: 'docked',
+      station_intelligence: 'docked',
+    },
+    context: {
+      routines: null,
+      tac_map: context,
+      aprs_chat: null,
+      elmer: null,
+      station_intelligence: null,
+    },
   };
 }
 
@@ -43,17 +97,63 @@ function tacMapSnapshot(tac_map: DockMode, context: unknown = null): DockSnapsho
 // stay docked/null throughout (task 10 does not touch them).
 function aprsChatSnapshot(aprs_chat: DockMode, context: unknown = null): DockSnapshot {
   return {
-    surfaces: { routines: 'docked', tac_map: 'docked', aprs_chat, elmer: 'docked' },
-    context: { routines: null, tac_map: null, aprs_chat: context, elmer: null },
+    surfaces: {
+      routines: 'docked',
+      tac_map: 'docked',
+      aprs_chat,
+      elmer: 'docked',
+      station_intelligence: 'docked',
+    },
+    context: {
+      routines: null,
+      tac_map: null,
+      aprs_chat: context,
+      elmer: null,
+      station_intelligence: null,
+    },
   };
 }
 
-// bd tuxlink-mfssz: flips elmer's mode/context; the other three stay
+// bd tuxlink-mfssz: flips elmer's mode/context; the other surfaces stay
 // docked/null throughout.
 function elmerSnapshot(elmer: DockMode, context: unknown = null): DockSnapshot {
   return {
-    surfaces: { routines: 'docked', tac_map: 'docked', aprs_chat: 'docked', elmer },
-    context: { routines: null, tac_map: null, aprs_chat: null, elmer: context },
+    surfaces: {
+      routines: 'docked',
+      tac_map: 'docked',
+      aprs_chat: 'docked',
+      elmer,
+      station_intelligence: 'docked',
+    },
+    context: {
+      routines: null,
+      tac_map: null,
+      aprs_chat: null,
+      elmer: context,
+      station_intelligence: null,
+    },
+  };
+}
+
+// bd tuxlink-9obx2: flips station_intelligence's mode/context; the other
+// surfaces stay docked/null throughout (this surface's wiring does not
+// touch them).
+function stationIntelSnapshot(station_intelligence: DockMode, context: unknown = null): DockSnapshot {
+  return {
+    surfaces: {
+      routines: 'docked',
+      tac_map: 'docked',
+      aprs_chat: 'docked',
+      elmer: 'docked',
+      station_intelligence,
+    },
+    context: {
+      routines: null,
+      tac_map: null,
+      aprs_chat: null,
+      elmer: null,
+      station_intelligence: context,
+    },
   };
 }
 
@@ -61,7 +161,23 @@ vi.mock('../dock/dockState', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../dock/dockState')>();
   return {
     ...actual, // keep the real consentHostWindow + SURFACE_WINDOW_LABEL
-    useDockState: () => dockRef.current,
+    // Reactive: subscribes to `dockListeners` so `pushDockSnapshot` (above)
+    // can trigger a re-render of ONLY the calling component (AppShellInner),
+    // matching how the real `dock:changed` listener drives `useDockState`.
+    // Still returns the plain `dockRef.current` value at every render, so
+    // every OTHER test in this file that sets `dockRef.current` directly
+    // (at initial mount, or via a full-tree `rerender`) is unaffected.
+    useDockState: () => {
+      const [, forceRender] = useState(0);
+      useEffect(() => {
+        const listener = () => forceRender((n) => n + 1);
+        dockListeners.add(listener);
+        return () => {
+          dockListeners.delete(listener);
+        };
+      }, []);
+      return dockRef.current;
+    },
     focusSurface: mockFocusSurface,
     popOut: mockPopOut,
     dockBack: mockDockBack,
@@ -520,6 +636,125 @@ describe('AppShell dock wiring (task 8)', () => {
     await waitFor(() => expect(mockFocusSurface).toHaveBeenCalledWith('aprs_chat'));
     // Behavior 4: it must NOT escort the operator to the in-dock placeholder.
     expect(screen.queryByTestId('aprs-dock-surface')).not.toBeInTheDocument();
+  });
+
+  // --- bd tuxlink-9obx2: Station Intelligence pop-out wiring ---------------
+
+  it('entry point (spec §5): the docked Station Intelligence header shows ↗ Pop out; clicking pops the surface out', async () => {
+    renderShell();
+    await screen.findByTestId('folder-sidebar');
+    clickMenu('Tools', /station intelligence/i);
+    const popout = await screen.findByRole(
+      'button',
+      { name: /pop out station intelligence/i },
+      { timeout: 10000 },
+    );
+    fireEvent.click(popout);
+    await waitFor(() =>
+      expect(mockPopOut).toHaveBeenCalledWith('station_intelligence', {
+        foreground: true,
+        state: null,
+      }),
+    );
+  });
+
+  it('while station_intelligence is popped, Tools → Station Intelligence focuses the window instead of opening a second copy', async () => {
+    dockRef.current = stationIntelSnapshot('popped');
+    renderShell();
+    await screen.findByTestId('folder-sidebar');
+
+    clickMenu('Tools', /station intelligence/i);
+    expect(screen.queryByRole('dialog', { name: /station intelligence/i })).not.toBeInTheDocument();
+    await waitFor(() => expect(mockFocusSurface).toHaveBeenCalledWith('station_intelligence'));
+  });
+
+  it('a station_intelligence foreground popped→docked arrival reopens the inline overlay', async () => {
+    dockRef.current = stationIntelSnapshot('popped');
+    const { rerender } = renderShell();
+    await screen.findByTestId('folder-sidebar');
+    expect(screen.queryByRole('dialog', { name: /station intelligence/i })).not.toBeInTheDocument();
+
+    dockRef.current = stationIntelSnapshot('docked', { foreground: true, state: null });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    rerender(
+      <QueryClientProvider client={qc}>
+        <AppShell />
+      </QueryClientProvider>,
+    );
+
+    expect(
+      await screen.findByRole('dialog', { name: /station intelligence/i }, { timeout: 10000 }),
+    ).toBeInTheDocument();
+  });
+
+  it('a NON-foreground station_intelligence popped→docked arrival leaves the overlay closed (availability)', async () => {
+    dockRef.current = stationIntelSnapshot('popped');
+    const { rerender } = renderShell();
+    await screen.findByTestId('folder-sidebar');
+
+    dockRef.current = stationIntelSnapshot('docked', { foreground: false, state: null });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    rerender(
+      <QueryClientProvider client={qc}>
+        <AppShell />
+      </QueryClientProvider>,
+    );
+
+    // Availability semantics: no overlay theft, the mailbox stays put.
+    expect(screen.getByTestId('folder-sidebar')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: /station intelligence/i })).not.toBeInTheDocument();
+  });
+
+  it('once station_intelligence becomes popped, the inline overlay never renders, even if it was already open', async () => {
+    dockRef.current = snapshot('docked'); // station_intelligence docked (default)
+    const { rerender } = renderShell();
+    await screen.findByTestId('folder-sidebar');
+    clickMenu('Tools', /station intelligence/i);
+    expect(
+      await screen.findByRole('dialog', { name: /station intelligence/i }, { timeout: 10000 }),
+    ).toBeInTheDocument();
+
+    // station_intelligence flips to popped (e.g. the ↗ affordance was used
+    // from a second launch, or another window); the inline overlay
+    // disappears regardless of the still-true `catalogBuilderOpen` local
+    // state (the force-close effect).
+    dockRef.current = stationIntelSnapshot('popped');
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    rerender(
+      <QueryClientProvider client={qc}>
+        <AppShell />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.queryByRole('dialog', { name: /station intelligence/i })).not.toBeInTheDocument();
+  });
+
+  // Reviewer finding (Important, post-tuxlink-9obx2 review): the pre-mount-
+  // popped test above ("while station_intelligence is popped, Tools ->
+  // Station Intelligence focuses...") cannot discriminate a stale-closure
+  // bug, since `handlers` is freshly built on the FIRST render and already
+  // captures the right `stationIntelPopped` value with no prior render to go
+  // stale relative to. This test starts DOCKED, renders, and only THEN
+  // transitions to popped via `pushDockSnapshot` (a re-render of ONLY
+  // AppShellInner, mirroring a real `dock:changed` event; see that helper's
+  // doc comment for why the OTHER arrival tests' `rerender(<AppShell />)`
+  // pattern cannot be reused here without masking the bug), so firing the
+  // Tools menu action afterward exercises whatever closure the `handlers`
+  // useMemo held across that transition. It would have caught the bug where
+  // `stationIntelPopped` was missing from that memo's dependency array: the
+  // memo never recomputed, so the menu action kept calling
+  // `setCatalogBuilderOpen(true)` against a render guard that had already
+  // flipped to false; a silent dead action.
+  it('regression: popping station_intelligence mid-session (after mount) still makes Tools -> Station Intelligence focus the window, not a dead action', async () => {
+    dockRef.current = snapshot('docked'); // station_intelligence docked (default)
+    renderShell();
+    await screen.findByTestId('folder-sidebar');
+
+    pushDockSnapshot(stationIntelSnapshot('popped'));
+
+    clickMenu('Tools', /station intelligence/i);
+    await waitFor(() => expect(mockFocusSurface).toHaveBeenCalledWith('station_intelligence'));
+    expect(screen.queryByRole('dialog', { name: /station intelligence/i })).not.toBeInTheDocument();
   });
 
   it('invokes shell_mounted once on mount (launch restoration signal, spec §3)', async () => {

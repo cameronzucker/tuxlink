@@ -17,6 +17,10 @@ describe('dock wire fixture parity (spec §10)', () => {
     expect(snap.surfaces.routines).toBe('docked');
     expect(snap.surfaces.tac_map).toBe('docked');
     expect(snap.surfaces.aprs_chat).toBe('docked');
+    // bd tuxlink-9obx2: Station Intelligence never participates in
+    // consent-host resolution (that stays Routines-only, spec §6), so this
+    // fixture variant just carries it docked/null like tac_map and aprs_chat.
+    expect(snap.surfaces.station_intelligence).toBe('docked');
     expect(consentHostWindow(snap.surfaces)).toBe('main');
   });
 
@@ -39,6 +43,8 @@ describe('dock wire fixture parity (spec §10)', () => {
     });
     expect(snap.context.tac_map).toBeNull();
     expect(snap.context.aprs_chat).toBeNull();
+    expect(snap.surfaces.station_intelligence).toBe('docked');
+    expect(snap.context.station_intelligence).toBeNull();
   });
 
   it('elmerPopped parses, carries the conversation token, and does NOT move the routines consent host (tuxlink-mfssz)', () => {

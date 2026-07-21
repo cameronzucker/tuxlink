@@ -103,6 +103,13 @@ vi.mock('./dock/surfaceRegistry', () => ({
       },
       StatusStrip: () => <div data-testid="pop-aprschat-strip-mock" />,
     },
+    // bd tuxlink-9obx2: the fourth surface, same fake-registry treatment.
+    station_intelligence: {
+      id: 'station_intelligence',
+      title: 'Station Intelligence - Tuxlink',
+      Component: () => <div data-testid="pop-station-intelligence-surface-mock" />,
+      StatusStrip: () => <div data-testid="pop-station-intelligence-strip-mock" />,
+    },
   },
 }));
 // PoppedSurfaceHost mounts ConsentGate directly (not via the registry) for
@@ -314,8 +321,11 @@ describe('<App> popped-surface routing (bd tuxlink-dmwte task 11)', () => {
     (invoke as ReturnType<typeof vi.fn>).mockImplementation((cmd: string) => {
       if (cmd === 'dock_state_get') {
         return Promise.resolve({
-          surfaces: { routines: 'popped', tac_map: 'popped', aprs_chat: 'popped' },
-          context: { routines: null, tac_map: null, aprs_chat: null },
+          surfaces: {
+            routines: 'popped', tac_map: 'popped', aprs_chat: 'popped',
+            station_intelligence: 'popped',
+          },
+          context: { routines: null, tac_map: null, aprs_chat: null, station_intelligence: null },
         });
       }
       return base(cmd);
@@ -357,6 +367,19 @@ describe('<App> popped-surface routing (bd tuxlink-dmwte task 11)', () => {
     render(<App />);
     await waitFor(() =>
       expect(screen.getByTestId('pop-aprschat-surface-mock')).toBeInTheDocument(),
+    );
+    expect(screen.getByRole('button', { name: /dock back into main window/i })).toBeInTheDocument();
+    expect(screen.queryByTestId('error-boundary-fallback')).not.toBeInTheDocument();
+  });
+
+  // bd tuxlink-9obx2: the fourth surface's pop route, same shape as the
+  // other three.
+  it('renders <PoppedSurfaceHost> for /pop/station-intelligence without throwing', async () => {
+    currentLabel = 'pop-station-intelligence';
+    setPath('/pop/station-intelligence');
+    render(<App />);
+    await waitFor(() =>
+      expect(screen.getByTestId('pop-station-intelligence-surface-mock')).toBeInTheDocument(),
     );
     expect(screen.getByRole('button', { name: /dock back into main window/i })).toBeInTheDocument();
     expect(screen.queryByTestId('error-boundary-fallback')).not.toBeInTheDocument();

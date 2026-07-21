@@ -29,7 +29,17 @@ use std::sync::Mutex;
 /// Bumped 7 → 8 (tuxlink-dmwte): added the always-serialized top-level 'dock'
 /// section (dockable-surfaces popped/docked persistence, spec §3). Runtime
 /// context tokens are NOT persisted.
-pub const CONFIG_SCHEMA_VERSION: u32 = 8;
+///
+/// Bumped 8 → 9 (tuxlink-9obx2): added `station_intelligence` to the nested
+/// `dock.surfaces` map (Station Intelligence joins Routines/TacMap/AprsChat/
+/// Elmer as a fifth poppable surface; Elmer's own `dock.surfaces.elmer`
+/// field landed at v8 without its own bump, an already-shipped gap this PR
+/// does not re-litigate). `DockSurfaces` is `deny_unknown_fields` (config.rs
+/// `dock: crate::dock::DockSurfaces` is always-serialized), so a pre-9
+/// binary would otherwise fail outright (not merely ignore the field) on
+/// a config a v9+ build wrote. Same additive-field discipline as the
+/// top-level bumps above, applied one level down.
+pub const CONFIG_SCHEMA_VERSION: u32 = 9;
 
 /// What to do with an on-disk config of a given `schema_version` (Phase 2,
 /// tuxlink-7iy2). A v1 file is a breaking migration candidate; a version ≥2 but
@@ -1982,7 +1992,28 @@ mod tests {
             .expect("v7 file must load additively");
         assert_eq!(cfg.dock, crate::dock::DockSurfaces::default());
         assert_eq!(detect_schema_action(7), SchemaAction::MigrateAdditive);
-        assert_eq!(detect_schema_action(8), SchemaAction::Current);
+        // v8 predates `dock.station_intelligence` (bd tuxlink-9obx2, v8 → v9) and
+        // is now itself additively migratable, not Current; CONFIG_SCHEMA_VERSION
+        // moved past it.
+        assert_eq!(detect_schema_action(8), SchemaAction::MigrateAdditive);
+        assert_eq!(detect_schema_action(CONFIG_SCHEMA_VERSION), SchemaAction::Current);
+    }
+
+    // bd tuxlink-9obx2: a v8 fixture's "dock" section (present, since v8
+    // shipped it) naturally lacks the "station_intelligence" key inside it
+    // (the field did not exist until v9), so serde default must fill it
+    // Docked WITHOUT disturbing the other three surfaces' persisted modes,
+    // mirroring the v7-lacks-"dock"-entirely case above one level down.
+    #[test]
+    fn v8_dock_section_loads_with_default_station_intelligence_mode() {
+        let cfg: Config = serde_json::from_str(&config_json(
+            8,
+            r#", "dock": { "routines": "popped", "tac_map": "docked", "aprs_chat": "docked" }"#,
+        ))
+        .expect("a v8 dock section lacking station_intelligence must load additively");
+        assert_eq!(cfg.dock.routines, crate::dock::DockMode::Popped);
+        assert_eq!(cfg.dock.station_intelligence, crate::dock::DockMode::Docked);
+        assert_eq!(detect_schema_action(8), SchemaAction::MigrateAdditive);
     }
 
     // tuxlink-dmwte Task 2: dock state set on the Rust side round-trips
@@ -1991,10 +2022,16 @@ mod tests {
     fn dock_section_persists_popped_state() {
         let mut cfg: Config = serde_json::from_str(&config_json(CONFIG_SCHEMA_VERSION, "")).unwrap();
         cfg.dock.set(crate::dock::SurfaceId::TacMap, crate::dock::DockMode::Popped);
+        cfg.dock.set(
+            crate::dock::SurfaceId::StationIntelligence,
+            crate::dock::DockMode::Popped,
+        );
         let v: serde_json::Value = serde_json::to_value(&cfg).unwrap();
-        // Spec §3 JSON literal: {"routines":"docked","tac_map":"popped","aprs_chat":"docked"}
+        // Spec §3 JSON literal, extended by bd tuxlink-9obx2:
+        // {"routines":"docked","tac_map":"popped","aprs_chat":"docked","station_intelligence":"popped"}
         assert_eq!(v["dock"]["tac_map"], "popped");
         assert_eq!(v["dock"]["routines"], "docked");
+        assert_eq!(v["dock"]["station_intelligence"], "popped");
     }
 
     // tuxlink-7ppfq Contract 2: a config written before `active_connection`

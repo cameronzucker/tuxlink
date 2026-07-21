@@ -91,11 +91,14 @@ pub fn caller_is_authorized(caller_label: &str) -> bool {
 
 /// Build the [`SecondaryWindowSpec`] for a dockable surface's pop-out window
 /// (spec §3 sizes: TacMap 1100×750, Routines 960×680, AprsChat 440×640,
-/// Elmer 520×720 (tuxlink-mfssz); all
-/// three share the 420×360 floor, custom chrome (`decorations: false`), and
-/// [`ClosePolicy::DockBack`] since popping a surface out is a dock-state
-/// transition, not window destruction). Labels/routes/titles come from
-/// [`crate::dock::SurfaceId`]'s own methods — never re-typed here.
+/// Elmer 520×720 (tuxlink-mfssz), StationIntelligence 1400×900 (bd
+/// tuxlink-9obx2: a situational map surface like Tac Map, sized larger
+/// since it composes a map, a filter bar, AND a station rail in one
+/// window)); all five share the 420×360 floor, custom chrome
+/// (`decorations: false`), and [`ClosePolicy::DockBack`] since popping a
+/// surface out is a dock-state transition, not window destruction). Labels/
+/// routes/titles come from [`crate::dock::SurfaceId`]'s own methods — never
+/// re-typed here.
 pub fn pop_window_spec(surface: crate::dock::SurfaceId) -> SecondaryWindowSpec {
     let inner_size = match surface {
         crate::dock::SurfaceId::TacMap => (1100.0, 750.0),
@@ -104,6 +107,7 @@ pub fn pop_window_spec(surface: crate::dock::SurfaceId) -> SecondaryWindowSpec {
         // tuxlink-mfssz: chat-column proportions, a shade wider than APRS
         // Chat for the tool chips + model form.
         crate::dock::SurfaceId::Elmer => (520.0, 720.0),
+        crate::dock::SurfaceId::StationIntelligence => (1400.0, 900.0),
     };
     SecondaryWindowSpec {
         label: surface.window_label().to_string(),
@@ -209,5 +213,16 @@ mod tests {
         assert_eq!(routines.inner_size, (960.0, 680.0));
         let chat = pop_window_spec(SurfaceId::AprsChat);
         assert_eq!(chat.inner_size, (440.0, 640.0));
+        // bd tuxlink-9obx2: Station Intelligence is a situational map surface
+        // like Tac Map, with a LARGE default (bigger than Tac Map's, since it
+        // also composes the filter bar + station rail in the same window).
+        let station_intel = pop_window_spec(SurfaceId::StationIntelligence);
+        assert_eq!(station_intel.label, "pop-station-intelligence");
+        assert_eq!(station_intel.route, "/pop/station-intelligence");
+        assert_eq!(station_intel.inner_size, (1400.0, 900.0));
+        assert_eq!(station_intel.min_inner_size, (420.0, 360.0));
+        assert!(matches!(station_intel.close_policy, ClosePolicy::DockBack));
+        assert!(!station_intel.decorations);
+        assert!(!station_intel.centered);
     }
 }

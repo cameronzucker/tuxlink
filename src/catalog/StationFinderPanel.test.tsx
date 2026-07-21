@@ -114,6 +114,43 @@ describe('StationFinderPanel', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  // bd tuxlink-9obx2 (Station Intelligence pop-out).
+  describe('pop-out affordance + popped-mode chrome', () => {
+    it('does not render ↗ Pop out when onPopOut is omitted (the popped wrapper never self-pops)', async () => {
+      renderPanel(<StationFinderPanel onClose={() => {}} />);
+      await screen.findByRole('dialog');
+      expect(screen.queryByRole('button', { name: /pop out/i })).not.toBeInTheDocument();
+    });
+
+    it('renders a text-labeled ↗ Pop out button next to × when onPopOut is provided, and it fires on click', async () => {
+      const onPopOut = vi.fn();
+      renderPanel(<StationFinderPanel onClose={() => {}} onPopOut={onPopOut} />);
+      const popout = await screen.findByRole('button', { name: /pop out station intelligence/i });
+      expect(popout).toHaveTextContent(/↗\s*Pop out/);
+      fireEvent.click(popout);
+      expect(onPopOut).toHaveBeenCalled();
+    });
+
+    it('popped=true suppresses the backdrop click-to-close (there is no "outside" in a popped window)', async () => {
+      const onClose = vi.fn();
+      renderPanel(<StationFinderPanel onClose={onClose} popped />);
+      const overlay = await screen.findByTestId('station-finder-overlay');
+      fireEvent.click(overlay);
+      expect(onClose).not.toHaveBeenCalled();
+      // The × control (dock-back in the popped wrapper) still works.
+      fireEvent.click(screen.getByRole('button', { name: /close/i }));
+      expect(onClose).toHaveBeenCalled();
+    });
+
+    it('popped=false (default) keeps the docked backdrop click-to-close behavior', async () => {
+      const onClose = vi.fn();
+      renderPanel(<StationFinderPanel onClose={onClose} />);
+      const overlay = await screen.findByTestId('station-finder-overlay');
+      fireEvent.click(overlay);
+      expect(onClose).toHaveBeenCalled();
+    });
+  });
+
   // tuxlink-q1tm regression: a GPS operator has NO manual grid
   // (config.identity.grid = null, position_source = Gps); the live grid comes
   // from the PositionArbiter via `position_current_fix`. Find a Station must use
