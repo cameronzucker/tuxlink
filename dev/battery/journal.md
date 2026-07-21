@@ -68,7 +68,39 @@ commits 4838c600 + c32ab4db.]
 | openai/gpt-5.5 | **BLOCKED (402)** | — | $0.5283 partial | OpenRouter refused pre-auth: provider requests max_tokens=65536; balance below the hold. |
 | anthropic/claude-fable-5 | **BLOCKED (402)** | — | $0.0000 | Same, before any generation. |
 
-**BUDGET STOP.** Account: 100.0 lifetime credits, 98.40 used → ~$1.60
+## 2026-07-21 — Stage P1 completion + Stage S1, sweep smoke-1 (4-model roster)
+
+- gpt-5.5 P1 re-run: completed (def to be spot-judged; measured delta $0.00 —
+  billing lag).
+- **STAGE S1: 4/4 FAIL — attribution: TUXLINK-DESIGN-DEFECT (all-fail rule).**
+
+| model | outcome | turns | spend | failure shape |
+|---|---|---|---|---|
+| qwen 122b | completed | 18 | $0.6206 | Dodged Branch entirely: linear def, APRS "no gateway" fires UNCONDITIONALLY every cycle. Also emitted embedded `$refs` inside a log sentence → EMBEDDED_REF_IGNORED (absorption candidate: embedded interpolation). |
+| glm-5.2 | cancelled @ turn cap 40 | 40 | $0.6056 | Thrashed 7+ branch dialects (`if:`/`when:`/`expr:`/`test:`/`condition:"$ref"`/params.if), all invalid_args; def frozen at find→connect→end. |
+| sonnet-5 | cancelled @ $2.21 (live-credits gate worked) | 29 | $2.2070 | Thrashed ELEVEN branch dialects (`condition:{field,op,value}`, JSONLogic `{eq:[...]}`, `when`, `if`, bare probes) + 9 docs_search/3 docs_read hunting the shape; all invalid_args; same frozen def. |
+| gpt-5.5 | completed (falsely) | 22 | $1.0300 | Declared done on a branchless stub with no APRS and no logging. |
+
+**THE FINDING (feeds bd tuxlink-6epl8, battery-driven):** no model — frontier
+included — can author `Control::Branch` through the MCP verbs. The real shape
+(flat `on/op/value`, bare ref path, then/else id-lists) was guessed by NOBODY;
+the `invalid_args` refusal does not teach it; the docs don't reach it. The
+natural emissions form a small closed dialect set:
+- condition-carrier keys: `condition` | `if` | `when` | `expr` | `test`
+  (top-level or nested in `params`)
+- condition value shapes: bare `"$sN.key"` string (strict-boolean),
+  `{field,op,value}`, op-keyed `{eq:[ref,value]}`
+- refs always `$`-prefixed where the schema wants bare paths
+- arms: `then`/`else` arrays (the real shape — models got THIS right)
+
+FIX (compat-first): absorption at the sq72z coercion site normalizing all
+observed carriers/shapes → `on/op/value` + `$`-strip, kind-precise transcript
+markers, table-driven tests from the actual thrash transcripts; schema+refusal
+honesty as suspenders. Second absorption: embedded-`$ref` string interpolation
+(qwen). Then re-run S1.
+
+**BUDGET STOP (RESOLVED same day — account re-upped $50, Fable dropped).**
+Historical record of the stop: account was at 100.0 lifetime credits, 98.40 used → ~$1.60
 remaining. Recorded cell deltas total $5.13; account moved $8.82 since the
 first cell — discrepancy ~$3.69, most plausibly OpenRouter billing lag
 posting between per-cell snapshots. All sweeps STOPPED pending operator
