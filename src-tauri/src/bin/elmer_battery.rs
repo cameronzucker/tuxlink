@@ -118,6 +118,14 @@ const ALLOWED_TOOLS: &[&str] = &[
     "routines_meta_set",
     "routines_rename",
     "routines_dry_run",
+    // Enable/disable are part of the authoring arc — an un-enabled scheduled
+    // routine never fires, so "make it run hourly" is incomplete without
+    // enabling. Safe here: enabling an attended routine only ever parks, an
+    // automatic one is refused by the consent gate (acks are UI-only), and
+    // the scratch profile has no rig. Stage-P2 evidence: gpt-5.5 AND fable-5
+    // both (correctly) reached for routines_enable and were falsely denied.
+    "routines_enable",
+    "routines_disable",
 ];
 
 /// Teaching refusal returned for a call outside the allowlist. Names the
@@ -930,6 +938,13 @@ fn real_main() -> Result<(), String> {
     app.manage(tuxlink_lib::app_backend::BackendState::new());
     app.manage(Arc::new(tuxlink_lib::session_log::SessionLogState::unbounded()));
     app.manage(Arc::new(tuxlink_lib::modem_status::ModemSession::new()));
+    // Listen/APRS states: fetched by MonolithAbortPort::ardop_disconnect
+    // (mcp_ports.rs ~:1566) on the cancel path — the stage-P2 fable cell
+    // panicked a worker thread here (state() before manage()). Managed as
+    // production does (lib.rs:1757/:1772/:1777); all default-idle, no radio.
+    app.manage(Arc::new(tuxlink_lib::ui_commands::ArdopListenState::default()));
+    app.manage(Arc::new(tuxlink_lib::ui_commands::VaraListenState::default()));
+    app.manage(tuxlink_lib::winlink::aprs::engine::AprsState::default());
     app.manage(Arc::new(tuxlink_lib::winlink::modem::vara::VaraSession::new()));
     // PositionArbiter from the scratch config — Manual + DM33 by construction.
     {
@@ -1340,12 +1355,32 @@ async fn run_cell(args: RunCellArgs<'_>) -> Result<CellResult, String> {
         let stop = watchdog_stop.clone();
         let turn_cap = cli.turn_cap;
         let ceiling = cli.cell_ceiling_usd;
+        // Live-spend poll inputs: the credits endpoint is the ONLY honest
+        // mid-run meter. Stage-P2 evidence: the token estimate overshot the
+        // real credits delta 4× on anthropic models (provider-side prompt
+        // caching bills cached input at a fraction of list price) and
+        // cancelled a healthy fable-5 cell at $0.52 actual spend. The token
+        // estimate survives only as a 3×-ceiling belt for the window where a
+        // credits poll has not yet succeeded.
+        let http_wd = http.clone();
+        let origin_wd = origin.to_string();
+        let key_wd = api_key.to_string();
+        let usage_before = credits_before.total_usage;
         tokio::spawn(async move {
+            let mut ticks: u64 = 0;
+            let mut live_spend: Option<f64> = None;
             loop {
                 tokio::select! {
                     biased;
                     _ = stop.cancelled() => return,
                     _ = tokio::time::sleep(Duration::from_millis(500)) => {}
+                }
+                ticks += 1;
+                // Poll credits every 15 s (30 ticks) — cheap GET, honest meter.
+                if ticks % 30 == 0 {
+                    if let Ok(now) = fetch_credits(&http_wd, &origin_wd, &key_wd).await {
+                        live_spend = Some((now.total_usage - usage_before).max(0.0));
+                    }
                 }
                 let turns = meters.provider_turns.load(Ordering::SeqCst);
                 let calls = meters.tool_calls.load(Ordering::SeqCst);
@@ -1356,9 +1391,14 @@ async fn run_cell(args: RunCellArgs<'_>) -> Result<CellResult, String> {
                     Some(format!(
                         "tool-call belt reached ({calls} calls ≥ {turn_cap}×{TOOL_CALL_CAP_FACTOR})"
                     ))
-                } else if est.is_some_and(|c| c >= ceiling) {
+                } else if live_spend.is_some_and(|c| c >= ceiling) {
                     Some(format!(
-                        "cell cost ceiling reached (est ${:.4} ≥ ${ceiling:.2})",
+                        "cell cost ceiling reached (live ${:.4} ≥ ${ceiling:.2})",
+                        live_spend.unwrap_or(0.0)
+                    ))
+                } else if live_spend.is_none() && est.is_some_and(|c| c >= ceiling * 3.0) {
+                    Some(format!(
+                        "cell cost belt reached (est ${:.4} ≥ 3×${ceiling:.2}, no live poll yet)",
                         est.unwrap_or(0.0)
                     ))
                 } else {
@@ -1444,12 +1484,23 @@ mod tests {
     }
 
     #[test]
-    fn allowlist_denies_run_enable_and_all_egress() {
+    fn allowlist_admits_enable_disable() {
+        // Enable/disable joined the allowlist after stage P2: two frontier
+        // models correctly finished the authoring arc with routines_enable
+        // and were falsely denied. Safety unchanged (consent gate + no rig).
+        for tool in ["routines_enable", "routines_disable"] {
+            assert!(
+                ALLOWED_TOOLS.contains(&tool),
+                "{tool} must be admitted (authoring arc completion)"
+            );
+        }
+    }
+
+    #[test]
+    fn allowlist_denies_run_and_all_egress() {
         for tool in [
-            // routines execution/lifecycle — authoring only, never running
+            // routines execution — authoring only, never running
             "routines_run",
-            "routines_enable",
-            "routines_disable",
             "routines_run_status",
             "routines_journal_get",
             // radio / egress / compose-send
