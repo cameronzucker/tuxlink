@@ -291,13 +291,37 @@ fn looks_like_amateur_callsign(s: &str) -> bool {
     }
 }
 
+/// A deliberate, narrow carve-out for the Winlink CMS onboarding acceptance flow
+/// (bd `tuxlink-fhr4g`): the checklist's Test 1 targets are the sanctioned
+/// TEST-prefixed pseudo-accounts (`TEST1`, `TEST123`, or an operator's own
+/// `TEST`-prefixed account) that the strict [`looks_like_amateur_callsign`]
+/// grammar correctly rejects as non-calls. This accepts EXACTLY the literal
+/// `TEST` followed by 1–8 ASCII alphanumerics and nothing else, so the flow can
+/// exercise account CRUD against these accounts without loosening the general
+/// callsign grammar. The carve-out is itself strict on purpose (the string is
+/// still sent verbatim as `Callsign` on create/remove): a fixed literal prefix +
+/// a bounded uppercase-alnum tail, no separators — not a "starts-with-TEST"
+/// substring rule. Input is already uppercased + SSID-stripped by the caller, so
+/// `TEST-1` arrives as `TEST` (empty tail) and is rejected.
+fn is_acceptance_test_account(s: &str) -> bool {
+    match s.strip_prefix("TEST") {
+        Some(tail) => {
+            !tail.is_empty()
+                && tail.len() <= 8
+                && tail.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+        }
+        None => false,
+    }
+}
+
 /// Reject tactical/hyphenated identifiers on these full-account-only ops, and
 /// return the base account callsign (SSID-stripped, uppercased) otherwise. The
 /// base-callsign strip is destructive for tactical addresses (`EOC-1` -> `EOC`),
-/// so these commands accept only real callsigns (see `looks_like_amateur_callsign`).
+/// so these commands accept only real callsigns (see `looks_like_amateur_callsign`)
+/// plus the sanctioned acceptance-test accounts (see `is_acceptance_test_account`).
 fn normalize_account_callsign(raw: &str) -> Result<String, AccountApiError> {
     let base = account_callsign(raw);
-    if looks_like_amateur_callsign(&base) {
+    if looks_like_amateur_callsign(&base) || is_acceptance_test_account(&base) {
         Ok(base)
     } else {
         Err(AccountApiError::InvalidInput {
@@ -668,15 +692,45 @@ mod tests {
     #[test]
     fn normalize_rejects_tactical_and_word_identifiers() {
         // Tactical/word labels → InvalidInput, never a silently-mangled callsign sent
-        // to a full-account op. RELAY1/EOC1/TEST123 are the cases the old has-a-digit
+        // to a full-account op. RELAY1/EOC1 are the cases the old has-a-digit
         // heuristic wrongly accepted (Codex adrev 2026-06-17 P2): their digits trail
-        // the letters with no letter suffix after the area digit.
+        // the letters with no letter suffix after the area digit. (`TEST123` moved to
+        // the acceptance-test carve-out below, bd tuxlink-fhr4g.)
         for raw in [
-            "EOC-1", "ARES", "EOC", "BAOFENG-FM", "RELAY1", "EOC1", "TEST123", "RELAY-1",
+            "EOC-1", "ARES", "EOC", "BAOFENG-FM", "RELAY1", "EOC1", "RELAY-1",
         ] {
             assert!(
                 matches!(normalize_account_callsign(raw), Err(AccountApiError::InvalidInput { .. })),
                 "should reject tactical/word input: {raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn normalize_accepts_sanctioned_test_accounts_but_not_lookalikes() {
+        // bd tuxlink-fhr4g: the Winlink onboarding checklist's Test 1 targets are
+        // TEST-prefixed accounts; they must pass the account-op gate.
+        for (raw, want) in [
+            ("test1", "TEST1"),
+            ("TEST123", "TEST123"),
+            ("testn7cpz", "TESTN7CPZ"),
+            ("TEST1-10", "TEST1"), // SSID stripped, tail still non-empty
+        ] {
+            assert_eq!(normalize_account_callsign(raw), Ok(want.to_string()), "raw={raw}");
+        }
+        // The carve-out is a fixed literal + bounded alnum tail, NOT a substring rule.
+        // Bare TEST (empty tail), separators, over-long tails, and merely
+        // TEST-containing words must still be rejected.
+        for raw in [
+            "TEST",             // empty tail
+            "TEST-1",           // hyphen → SSID-stripped to bare TEST
+            "TESTLONGACCOUNT",  // tail "LONGACCOUNT" > 8 chars
+            "CONTEST1",         // does not start with the literal TEST
+            "ATTEST9",          // ditto
+        ] {
+            assert!(
+                matches!(normalize_account_callsign(raw), Err(AccountApiError::InvalidInput { .. })),
+                "should reject TEST-lookalike: {raw}"
             );
         }
     }
