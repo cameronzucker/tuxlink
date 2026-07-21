@@ -52,3 +52,23 @@ from the battery allowlist per adrev disposition 3, but that diverges from the
 production agent surface without a safety need (enable of attended parks; of
 automatic needs un-grantable acks; scratch profile has no rig). Candidate:
 add it next harness iteration so enablement dialect is observable.
+[RESOLVED same day: routines_enable/disable + journal_get/run_status admitted,
+commits 4838c600 + c32ab4db.]
+
+## 2026-07-21 — Stage P1, sweep smoke-1 (PARTIAL: budget-blocked)
+
+| model | verdict | turns | spend | notes |
+|---|---|---|---|---|
+| qwen/qwen3.5-122b-a10b | **PASS** | 21 | $0.1402 | Correct final artifact (find-5 run-time walk → `$s2.station` winner log, 30m). Chose `transmit_mode: automatic` (defensible; gate blocks until operator ack). Heavy edit-verb thrash (16 add/update/remove before converging) — efficiency dialect note, zero denials. |
+| z-ai/glm-5.2 | **PASS** | 13 | $0.2632 | Clean run-time walk, winner logged, attended. THE HEADLINE: identical prompt to the 2026-07-21 real-world empty-def failure (transcript 1784664175708-1) now one-shots. Battery pins temperature=0.2; the GUI ran provider defaults — the real-world failure likely had a stochastic component. 6epl8 evidence updated. |
+| anthropic/claude-sonnet-5 | **PASS** | 8 | $1.4458 | Reproduced its GUI reference def exactly (baked nearest-first 5, `$s1.station` log, 30m). |
+| openai/gpt-5.5 | **BLOCKED (402)** | — | $0.5283 partial | OpenRouter refused pre-auth: provider requests max_tokens=65536; balance below the hold. |
+| anthropic/claude-fable-5 | **BLOCKED (402)** | — | $0.0000 | Same, before any generation. |
+
+**BUDGET STOP.** Account: 100.0 lifetime credits, 98.40 used → ~$1.60
+remaining. Recorded cell deltas total $5.13; account moved $8.82 since the
+first cell — discrepancy ~$3.69, most plausibly OpenRouter billing lag
+posting between per-cell snapshots. All sweeps STOPPED pending operator
+direction. Harness note: the provider's max_tokens=65536 drives the 402
+pre-auth hold (a configurable cap would let cheap-model cells run a thin
+balance: qwen hold ≈ $0.14, fable ≈ $3.28).
