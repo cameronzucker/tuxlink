@@ -126,6 +126,12 @@ const ALLOWED_TOOLS: &[&str] = &[
     // both (correctly) reached for routines_enable and were falsely denied.
     "routines_enable",
     "routines_disable",
+    // Read-only run introspection: routines_dry_run is admitted, and the
+    // fable-5 P2 cell showed the natural verification arc is dry_run →
+    // journal_get to read the scripted result — denying the read makes the
+    // allowed dry run half-useful. Both are read-only.
+    "routines_journal_get",
+    "routines_run_status",
 ];
 
 /// Teaching refusal returned for a call outside the allowlist. Names the
@@ -1501,8 +1507,6 @@ mod tests {
         for tool in [
             // routines execution — authoring only, never running
             "routines_run",
-            "routines_run_status",
-            "routines_journal_get",
             // radio / egress / compose-send
             "cms_connect",
             "ardop_connect",
