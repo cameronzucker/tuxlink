@@ -63,10 +63,13 @@ struct TranscriptLine<'a> {
     session_id: &'a str,
     seq: u64,
     ts_unix_ms: u64,
-    /// Per-call telemetry (tuxlink-sq72z): which of a ToolCall's
-    /// composite-typed params arrived as strings of JSON, e.g.
-    /// `{"patch": "string-coerced"}`. Absent on well-shaped calls and
-    /// non-ToolCall lines. See [`arg_shape_marker`].
+    /// Per-call telemetry (tuxlink-sq72z, kind-precise since tuxlink-hq3e2):
+    /// which of a ToolCall's composite-typed params arrived as strings of
+    /// JSON and what their content parsed to, e.g.
+    /// `{"patch": "string-to-object"}` / `{"triggers": "string-to-array"}`.
+    /// Transcripts from the first corpus day (2026-07-20) carry the legacy
+    /// flat literal `"string-coerced"` instead. Absent on well-shaped calls
+    /// and non-ToolCall lines. See [`arg_shape_marker`].
     #[serde(skip_serializing_if = "Option::is_none")]
     arg_shape: Option<serde_json::Map<String, serde_json::Value>>,
     message: &'a Message,
@@ -79,6 +82,7 @@ struct TranscriptLine<'a> {
 /// "fixed" here; this marker only makes the coercion countable, so a run's
 /// string-coercion rate (the regression metric, target 0) is one grep.
 fn arg_shape_marker(message: &Message) -> Option<serde_json::Map<String, serde_json::Value>> {
+    use tuxlink_mcp_core::arg_shape::CompositeKind;
     let Message::ToolCall(tc) = message else {
         return None;
     };
@@ -89,11 +93,17 @@ fn arg_shape_marker(message: &Message) -> Option<serde_json::Map<String, serde_j
     Some(
         coerced
             .into_iter()
-            .map(|p| {
-                (
-                    p.to_string(),
-                    serde_json::Value::String("string-coerced".into()),
-                )
+            .map(|(p, kind)| {
+                // Kind-precise vocabulary (tuxlink-hq3e2, supersedes the
+                // flat "string-coerced" of the first corpus day): the kind
+                // is what the string's content PARSED to, so a wrong-kind
+                // emission is visible as e.g. string-to-array on an
+                // object-declared param.
+                let v = match kind {
+                    CompositeKind::Object => "string-to-object",
+                    CompositeKind::Array => "string-to-array",
+                };
+                (p.to_string(), serde_json::Value::String(v.into()))
             })
             .collect(),
     )
@@ -688,7 +698,7 @@ mod tests {
 
         let files = read_session_lines(tmp.path());
         let coerced = &files[0].1[0];
-        assert_eq!(coerced["arg_shape"]["patch"], "string-coerced");
+        assert_eq!(coerced["arg_shape"]["patch"], "string-to-object");
         assert!(
             coerced["message"]["ToolCall"]["args"]["patch"].is_string(),
             "raw stringified emission must stay verbatim: {coerced}"
