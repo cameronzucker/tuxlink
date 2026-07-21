@@ -1,0 +1,95 @@
+{
+  "_doc": "Elmer battery corpus (bd tuxlink-hwgdi, operator-approved 2026-07-21). STAGE-GATED LADDER (operator directive 2026-07-21): difficulty order P2,P1,S1,S2,S4,S3,P3 — run each stage across ALL 5 models and fully address it (Tuxlink fixes merged, every failure attributed) BEFORE advancing to the next stage, so each defect surfaces at the lowest difficulty that can express it and capability is never conflated with compatibility. P4 parked until capable. Predicates are judge criteria over the AUTHORED ARTIFACT (scratch profile routines/*.json + validate output + transcript); the judge attributes failures per bd tuxlink-6zkb6 (tuxlink-design-defect | model-family-trend | ambiguous). Prompt text is FROZEN — do not edit wording without operator approval.",
+  "global_predicates": [
+    "ENGINE REACHABILITY: every step in the def is reachable from its track start under the engine's jump semantics (linear flow + branch then/else step-id lists, nesting included). Judge walks the def; unreachable steps are a finding regardless of validation output.",
+    "CANVAS PLACEMENT: simulate canvasModel's single-level-fan rule (rows doc canvasModel.ts:86-94) — any step that would land in the 'unplaced' row is a finding EVEN IF engine-reachable (operator-perceived brokenness counts; the 2026-07-21 Fable 5 cms-window-2h run put 7 nested-branch arm steps in the unplaced row — bd tuxlink for the canvas bug filed from that evidence). Record engine-truth and canvas-truth SEPARATELY: they attribute differently (model dialect vs tuxlink-design-defect).",
+    "VALIDATION HONESTY: if either check above fails while routines_validate returned no related finding, record a validator-gap finding (defs must never look broken without a finding saying why)."
+  ],
+  "prompts": [
+    {
+      "id": "P2",
+      "title": "hourly closest-gateway connect",
+      "prompt": "Build a routine which connects to the closest 20m VARA CMS Gateway station every hour at the top of the hour.",
+      "predicates": [
+        "a routine is saved and passes validation with no blocking errors",
+        "it has a radio.connect step targeting the closest 20m VARA gateway (station chosen from find_stations distance data)",
+        "bands include 20m",
+        "schedule trigger: every 1h aligned to top of hour"
+      ]
+    },
+    {
+      "id": "P1",
+      "title": "nearest-5 dial with winner recording",
+      "prompt": "1. Find the closest 5 VARA stations to me operating on the 40m band.\n2. Based on distance, created a routine which dials them in nearest-farthest order, stopping when it successfully connects to one.\n3. The routine should run every 30 minutes.\n4. The routine should record which station it successfully connected to.",
+      "predicates": [
+        "routine saved, validation clean",
+        "radio.connect step carries ALL 5 nearest 40m stations in nearest-first order (native walk; per-station branching is a FAIL-quality signal even if functional)",
+        "schedule every 30m",
+        "winning station recorded (e.g. local.log referencing the connect step's station output)"
+      ],
+      "reference": "Sonnet 5 transcript 1784665223064-2 (R2) — skeleton-then-edit-verbs, radio.connect walk"
+    },
+    {
+      "id": "S1",
+      "title": "dial with fallback alert (Branch rung)",
+      "prompt": "Every 4 hours, call the 3 closest 20m VARA gateways until one connects. If none connect, send an APRS message on the main channel saying no gateway was reachable this cycle. Log the outcome either way.",
+      "predicates": [
+        "routine saved, validation clean",
+        "radio.connect walk over the 3 closest 20m gateways",
+        "a Branch control on the connect outcome (strict-boolean or op form), with radio.aprs_send reachable ONLY on the no-connect arm",
+        "log step(s) covering both arms",
+        "schedule every 4h"
+      ]
+    },
+    {
+      "id": "S2",
+      "title": "edit an existing routine",
+      "prompt": "Modify my nearest-40m-dial routine: run every 15 minutes instead of 30, add 80m as a fallback band after 40m, and also record which band succeeded, not just the station.",
+      "preseed": "nearest-40m-dial (Sonnet reference def) installed in the scratch profile before send",
+      "predicates": [
+        "the EXISTING routine is modified (not a new sibling routine created)",
+        "edit performed via routines_get + edit verbs (whole-def blind resave is a quality FAIL signal)",
+        "trigger now every 15m",
+        "connect step bands are [40m, 80m] in that order",
+        "winning band recorded in addition to station"
+      ]
+    },
+    {
+      "id": "S4",
+      "title": "daily check-in: rig setup + dual Winlink/APRS",
+      "prompt": "Build a daily check-in routine: apply my 40m-digital rig preset and tune the ATU, compose a Winlink check-in message to W7EOC with my current grid square, call the closest 40m gateway to send it, then send an APRS message confirming the check-in went out.",
+      "predicates": [
+        "routine saved, validation clean (or blocked ONLY by the missing '40m-digital' preset — judge notes whether the model handled the absent preset sanely, e.g. rig.validate_preset or a clear assumption)",
+        "step order: rig.apply_preset -> rig.tune_atu -> local.compose (to W7EOC, grid included) -> radio.connect (closest 40m gateway) -> radio.aprs_send confirmation",
+        "daily schedule"
+      ]
+    },
+    {
+      "id": "S3",
+      "title": "catalog request round-trip + APRS notify (operator example)",
+      "prompt": "Build a routine which does the following:\n* Every 6 hours, call the closest 5 VARA gateway stations operating on 20m with a catalog request for local NWS tabulars.\n* Wait 5 minutes, then call that same station again to receive the catalog request response.\n* Send a message over APRS stating that updated weather is available and to call EOC-1 on phone if details are required.",
+      "predicates": [
+        "routine saved, validation clean",
+        "catalog request composed (local.compose_catalog_request for NWS tabulars) and sent via a radio.connect walk over the 5 closest 20m gateways",
+        "a Delay control of 5m between the two connects",
+        "the SECOND connect targets the station that succeeded in the first (cross-step output reference), not a fresh walk",
+        "radio.aprs_send with the updated-weather + call-EOC-1 message",
+        "schedule every 6h"
+      ]
+    },
+    {
+      "id": "P3",
+      "title": "full fallback chain with propagation prediction",
+      "prompt": "Please create a routine which does the following:\n* Updates space weather using WWV.\n* Calls the closest 20 VARA CMS gateway stations on 20, 40, and 80m every 2 hour at the top of the hour until one is successful.\n* If no stations calls are successful, predict the 20 most likely candidate stations using FT-8 station intelligence and current propagation prediction overlaps, then call those stations in descending order of probability of connection on 20, 40, and 80m until all stations are exhausted.\n* Logs which station is successful, if any, and which were dialed in total, along with their connection estimates and which stations were in the closest group and which were in the prediction group.\n* If no station is successful, sends an APRS message stating a CMS gateway connection window was missed on the main channel to all stations.",
+      "predicates": [
+        "routine saved (validation findings judged individually)",
+        "data.spacewx_wwv step present",
+        "closest-20 walk across 20/40/80m, every 2h aligned",
+        "fallback leg attempts the FT8-intelligence + propagation prediction ranking (EXPECTED CAPABILITY GAP as of 2026-07-21 — judge records exactly what the model reached for; this cell's purpose is gap cartography, not pass/fail)",
+        "logging covers success/dialed/estimates/group membership as available",
+        "APRS miss-notice on total failure"
+      ],
+      "expected_gap": "no catalog action currently surfaces FT8 station intel or propagation predictions as routine-consumable ranking data"
+    }
+  ]
+}

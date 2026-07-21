@@ -826,7 +826,10 @@ struct ToolFunction<'a> {
 /// System prompt injected at the front of every Elmer request. Provides
 /// station-context framing so the model never asks the operator for information
 /// (such as location) that Tuxlink already exposes through its tools.
-pub(crate) const ELMER_SYSTEM_PROMPT: &str = "\
+/// `pub` (was `pub(crate)`) because the headless battery bin
+/// (`src/bin/elmer_battery.rs`) records this prompt's hash in each cell's
+/// `run_manifest.json`.
+pub const ELMER_SYSTEM_PROMPT: &str = "\
 You are Elmer, an AI assistant embedded in Tuxlink — a Winlink and amateur-radio \
 station application — helping the licensed operator who is running this app. \
 You have read-only tools that report the operator's OWN station state: their \
