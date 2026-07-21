@@ -39,7 +39,7 @@
 
 use serde_json::Value;
 
-use crate::action::{ActionDescriptor, ValueType};
+use crate::action::{ActionDescriptor, ParamSpec, ValueType};
 use crate::refs::VarPath;
 use crate::types::{RoutineDef, Step, StepId};
 
