@@ -209,6 +209,10 @@ working abort. Canonical: ADR 0018 +
 [docs/live-cms-testing-policy.md](docs/live-cms-testing-policy.md); rationale in
 RADIO-1 at [docs/pitfalls/implementation-pitfalls.md](docs/pitfalls/implementation-pitfalls.md).
 
+## Parity manifest (ADR 0027)
+
+Agent/human parity is CI-enforced: every Tauri command is classified in `docs/parity/parity-manifest.json`; capability entries need an agent path (tool | tool result field | validation finding | tracked bd gap); operator-authority commands must NEVER gain one; the MCP tool count is budgeted. See docs/adr/0027-parity-manifest-ci.md.
+
 ## Commit and release discipline
 
 Conventional commit types (`feat:`, `fix:`, `docs:`, etc.). Breaking changes get `!` + `BREAKING CHANGE:` footer. Update `dev/implementation-log.md` (once created) after any significant work item. **Squash-merge is banned** ([ADR 0010](docs/adr/0010-no-squash-merge.md)); feature PRs into integration branches merge as merge-commit (no-ff) via `gh pr merge <#> --merge --delete-branch`. **Exception — never merge or promote a release** (two-channel model): the `chore: release X.Y.Z` PR (release-please, branch `release-please--branches--main`) opens as a **draft** so `gh pr merge` on it fails. Nightly pre-releases are cut by `release-merge.yml` (daily cron; off-cadence `gh workflow run release-merge.yml`) and marked GitHub pre-release (never "Latest"). Stable, end-user-facing releases are promoted only by the **operator** via `promote-release.yml` (`gh workflow run promote-release.yml -f tag=vX.Y.Z`); agents never promote. Pause with `.github/RELEASE_FREEZE`. See [CLAUDE.md](CLAUDE.md#commit-and-release-discipline). **Polish before push:** clean up WIP commits via non-interactive `git rebase <base>` on local un-pushed commits; once pushed, commits are immutable.

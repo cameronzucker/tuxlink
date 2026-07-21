@@ -1,4 +1,6 @@
 pub mod app_backend;
+#[cfg(test)]
+mod parity_check;
 pub mod basemap;
 pub mod bootstrap;
 pub mod tiles;
