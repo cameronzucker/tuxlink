@@ -8,6 +8,7 @@
 // favorite_star (the only writer of `starred`).
 
 import type { Favorite, FavoriteDial } from './types';
+import { freqStringToCanonicalMhz } from '../radio/modes/freq';
 
 export function dialToNewFavorite(dial: FavoriteDial): Favorite {
   return {
@@ -39,9 +40,18 @@ export function dialToNewFavorite(dial: FavoriteDial): Favorite {
  *  sbf03-era rejection of a per-freq key: the claimed "backend unit" was the
  *  per-mode reading, not anything the store enforces.
  *
- *  The freq segment is canonicalized numerically ("7.1030" and "7.103" are
- *  the same channel) so cross-surface formatting drift can never split or
- *  hide a star; unparseable strings pass through raw. */
+ *  The freq segment is canonicalized through freqStringToCanonicalMhz — the
+ *  SAME magnitude heuristic the radio panels use (adrev 2026-07-20, both
+ *  rounds P1): persisted favorites may carry the older kHz shape
+ *  ("14105.0") while Finder/Contacts dials carry MHz ("14.105"); they are
+ *  one physical channel and must produce one key. Unparseable strings pass
+ *  through raw rather than keying on null.
+ *
+ *  Legacy freq-less RF records (older ribbon/observation writers) key as
+ *  `mode|GATEWAY|` — DELIBERATE: they name no channel, so they light no
+ *  channel row (the old per-mode key lit EVERY row, the reported bug). They
+ *  remain visible and dialable in the Favorites panel; starring a real row
+ *  creates a proper per-channel record alongside. No data is lost. */
 export function favoriteKey(unit: {
   mode: string;
   gateway: string;
@@ -51,8 +61,7 @@ export function favoriteKey(unit: {
   const raw = unit.freq?.trim();
   let channel: string;
   if (raw) {
-    const n = parseFloat(raw);
-    channel = Number.isNaN(n) ? raw : String(n);
+    channel = freqStringToCanonicalMhz(raw) ?? raw;
   } else {
     channel = unit.transport ?? '';
   }

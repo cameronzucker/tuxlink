@@ -49,6 +49,25 @@ describe('favoriteKey (tuxlink-ixasg: per-CHANNEL identity)', () => {
     );
   });
 
+  it('adrev 2026-07-20 P1: a legacy kHz record and a MHz dial are ONE channel — one key', () => {
+    // Persisted favorites may carry the older kHz shape ("14105.0"); Finder
+    // and Contacts dials carry MHz ("14.105"). The key runs both through the
+    // radio panels' magnitude heuristic (freqStringToCanonicalMhz).
+    expect(favoriteKey({ mode: 'vara-hf', gateway: 'W7DXG', freq: '14105.0' })).toBe(
+      favoriteKey({ mode: 'vara-hf', gateway: 'W7DXG', freq: '14.105' }),
+    );
+    expect(favoriteKey({ mode: 'vara-hf', gateway: 'W7DXG', freq: '14105.0 kHz' })).toBe(
+      'vara-hf|W7DXG|14.105',
+    );
+  });
+
+  it('a legacy freq-less RF record deliberately matches NO channel row (documented orphan, not the old light-every-row bug)', () => {
+    const legacyRecord = favoriteKey({ mode: 'vara-hf', gateway: 'N0DAJ' });
+    const channelDial = favoriteKey({ mode: 'vara-hf', gateway: 'N0DAJ', freq: '7.103' });
+    expect(legacyRecord).toBe('vara-hf|N0DAJ|');
+    expect(legacyRecord).not.toBe(channelDial);
+  });
+
   it('freq-less dials fall back to transport, then empty', () => {
     expect(favoriteKey({ mode: 'telnet', gateway: 'N0DAJ', transport: 'CmsSsl' })).toBe('telnet|N0DAJ|CmsSsl');
     expect(favoriteKey({ mode: 'telnet', gateway: 'N0DAJ' })).toBe('telnet|N0DAJ|');
