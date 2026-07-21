@@ -27,8 +27,34 @@ export function dialToNewFavorite(dial: FavoriteDial): Favorite {
   };
 }
 
-/** Stable lookup key for a dial/favorite — mode + case-folded gateway. The same
- *  callsign in two modes is two distinct units (favorites are per-mode). */
-export function favoriteKey(modeAndGateway: { mode: string; gateway: string }): string {
-  return `${modeAndGateway.mode}|${modeAndGateway.gateway.trim().toUpperCase()}`;
+/** Stable lookup key for a dial/favorite — mode + case-folded gateway +
+ *  channel (freq, falling back to transport for freq-less telnet dials).
+ *
+ *  tuxlink-ixasg (operator decision 2026-07-20): a favorite is a CHANNEL, not
+ *  a station+mode. The earlier per-mode key made starring one KO0OOO VARA row
+ *  paint the star on every KO0OOO VARA row — a misleading affordance sitting
+ *  on per-channel data (the record stores ONE freq; the backend keys by id
+ *  and the store's natural recents identity is (mode, gateway,
+ *  freq|transport), which this key now mirrors). This REVERSES the
+ *  sbf03-era rejection of a per-freq key: the claimed "backend unit" was the
+ *  per-mode reading, not anything the store enforces.
+ *
+ *  The freq segment is canonicalized numerically ("7.1030" and "7.103" are
+ *  the same channel) so cross-surface formatting drift can never split or
+ *  hide a star; unparseable strings pass through raw. */
+export function favoriteKey(unit: {
+  mode: string;
+  gateway: string;
+  freq?: string;
+  transport?: string;
+}): string {
+  const raw = unit.freq?.trim();
+  let channel: string;
+  if (raw) {
+    const n = parseFloat(raw);
+    channel = Number.isNaN(n) ? raw : String(n);
+  } else {
+    channel = unit.transport ?? '';
+  }
+  return `${unit.mode}|${unit.gateway.trim().toUpperCase()}|${channel}`;
 }

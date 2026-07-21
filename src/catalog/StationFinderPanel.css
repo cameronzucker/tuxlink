@@ -1222,12 +1222,17 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  /* tuxlink-ixasg (operator, 2026-07-20): 6px read as one undifferentiated
+     run — a chip's ☆ nearly touched the next chip's Use button. 12px keeps
+     the compact rhythm while making each channel chip a distinct unit. */
+  gap: 12px;
 }
 .station-finder__bmchip {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  /* tuxlink-ixasg: 3px left the freq label, bandwidth badge, and ☆ nearly
+     touching. 7px separates the elements without loosening the chip. */
+  gap: 7px;
 }
 .station-finder__chipuse {
   font: inherit;
