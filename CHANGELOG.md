@@ -31,6 +31,48 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.97.0](https://github.com/cameronzucker/tuxlink/compare/v0.96.0...v0.97.0) (2026-07-21)
+
+
+### Features
+
+* **dock:** Elmer becomes a dockable surface — Rust core, window spec, wire fixture + both parity suites (tuxlink-mfssz, backend half) ([efa6596](https://github.com/cameronzucker/tuxlink/commit/efa65963688ca23e3a5a18431b738e26b9a9ea2a))
+* **dock:** Elmer pop-out frontend — ElmerPopped surface, conversation continuity token, AppShell + menu wiring (tuxlink-mfssz) ([744be11](https://github.com/cameronzucker/tuxlink/commit/744be112b8c2c59073148baf282b8f649b0e47ff))
+* **dock:** Station Intelligence pop-out window (tuxlink-9obx2) ([cce7ccf](https://github.com/cameronzucker/tuxlink/commit/cce7ccf4fb95ea65f47d3d285c6feb8f7d0a64e9))
+* **mcp:** composite params advertise honest object/array schemas; coercion goes kind-exact (tuxlink-hq3e2) ([68d9d17](https://github.com/cameronzucker/tuxlink/commit/68d9d17ac2695ac0b9230966bb6b7b171cb4898b))
+* **parity:** ADR 0027 — agent/human parity is CI-enforced via a classified command manifest (tuxlink-ybf9f) ([1dd9c8b](https://github.com/cameronzucker/tuxlink/commit/1dd9c8b19a88b087ea8a0e4fb76b8ee2f4e198b5))
+* **routines:** radio.connect gets a real radio entry — stations/bands pickers over finder+favorites (tuxlink-fg0em) ([e9d20a4](https://github.com/cameronzucker/tuxlink/commit/e9d20a462e69fcd54d6d0c9c978191b2c4d46e54))
+
+
+### Bug Fixes
+
+* **aprs:** disposition dual-adrev findings on the single-row dock header (tuxlink-w68mb) ([e4051fd](https://github.com/cameronzucker/tuxlink/commit/e4051fd31da21e898717811ad88cb441340f9ee0))
+* **aprs:** dock header is ONE row in every state — pop-out moves onto the map surface (tuxlink-w68mb) ([4984fd9](https://github.com/cameronzucker/tuxlink/commit/4984fd9d647a26c51a9239964df4440f7a8ed146))
+* **aprs:** dock header splits into a designed surface bar + tab row (tuxlink-mxqjp) ([5b609ff](https://github.com/cameronzucker/tuxlink/commit/5b609ffd2c89e8b539e32bda13f528544eb7da1b))
+* **catalog:** SI panel scales with the viewport; surplus width flows to the map (tuxlink-qldzn) ([c761395](https://github.com/cameronzucker/tuxlink/commit/c7613951f5d510017354f43473055763bbf6a86d))
+* **chrome:** sweep em-dash separators from all window-title chrome (tuxlink-h790k) ([41d7589](https://github.com/cameronzucker/tuxlink/commit/41d7589fa1dafa31901b4bb50f16ec11c0580be8))
+* **dock:** disposition dual-adrev findings on the Elmer pop-out (tuxlink-mfssz) ([d841a78](https://github.com/cameronzucker/tuxlink/commit/d841a782d03778812f57357116165c191515fa5c))
+* **dock:** popped-window title bars drag again — the centered title blanketed the drag region (tuxlink-y6whc) ([4274854](https://github.com/cameronzucker/tuxlink/commit/4274854b9fe7a446676aa441c020c102cac728f3))
+* **elmer:** harden provider drafts per adrev — credential-URL refusal, session-memory fallback, foreign-bucket rejection, honest regression tests (tuxlink-inasr) ([335e0b0](https://github.com/cameronzucker/tuxlink/commit/335e0b0314789df9fb25ea5a0a92999e0353e8c7))
+* **elmer:** remember endpoint+model per provider — Custom values survive preset switches (tuxlink-inasr) ([0b144b9](https://github.com/cameronzucker/tuxlink/commit/0b144b96c4569ee4cc965984da1474982a165e16))
+* **favorites:** a favorite is a CHANNEL — key includes freq|transport; SI chip spacing opened up (tuxlink-ixasg) ([0e11b94](https://github.com/cameronzucker/tuxlink/commit/0e11b94980454f66d9174399d2be75357ee1e78d))
+* **favorites:** key legacy kHz records and MHz dials to ONE channel — canonicalize through the panels' magnitude heuristic (tuxlink-ixasg adrev) ([2bf74da](https://github.com/cameronzucker/tuxlink/commit/2bf74da803fabd0d4e6dcdd8005e9b8b397084d6))
+* **harness:** honor the ?w= width override — it was silently ignored (tuxlink-g9h4j) ([76d0a13](https://github.com/cameronzucker/tuxlink/commit/76d0a13b6a20a0e67da4aa666fd84f4fecdf0a89))
+* **harness:** mount the map-popout route — the view gate only matched header-* prefixes (tuxlink-g9h4j) ([5c1d5f6](https://github.com/cameronzucker/tuxlink/commit/5c1d5f6c20834acacbe09e4f4c9f500863617590))
+* **mcp:** accept stringified composite params across the routines verb family (tuxlink-sq72z) ([5b416c3](https://github.com/cameronzucker/tuxlink/commit/5b416c383039b030b6ec64a4c09cde08d35a03a2))
+* **mcp:** disposition hq3e2 adrev — root-strict validator tolerance + wrong-kind diagnostic ([d59a861](https://github.com/cameronzucker/tuxlink/commit/d59a861280b738f4b5801edb6a7e56bbedb8cca4))
+* **parity:** disposition adrev — uninstall pair is operator-authority; terminal classes cannot shadow live tools; registry-literal scan ([7be8ef5](https://github.com/cameronzucker/tuxlink/commit/7be8ef5aeaa08ad8fd1f3394eed3e328bf7711d1))
+* **routines:** accept stringified def objects + teach template-then-verbs in the system prompt (tuxlink-8fcbh) ([b727124](https://github.com/cameronzucker/tuxlink/commit/b727124d7ea4d6a82528289dbc3f2119768052e3))
+* **routines:** disposition dual-adrev findings on the radio entry (tuxlink-fg0em) ([a7f5582](https://github.com/cameronzucker/tuxlink/commit/a7f55824a7bb84df39516d94b30ba36c5d4e5db2))
+* **routines:** disposition round-3 adrev — append lands before a trailing end, honest error steering, mock envelope parity, trigger-only-when-asked prompt (tuxlink-8fcbh) ([bc12f9e](https://github.com/cameronzucker/tuxlink/commit/bc12f9e109a47340ab035865b35ecd23b960297c))
+* **shell:** handlers memo tracks stationIntelPopped; report-issue controller memoized ([18a5928](https://github.com/cameronzucker/tuxlink/commit/18a5928452501d98d6e903cbf7e826c7a5d46209))
+* **test:** direwolf lifecycle tests use OS-allocated ports — hardcoded ports collided in the ephemeral range (tuxlink-mddgd) ([622aa89](https://github.com/cameronzucker/tuxlink/commit/622aa89267b4d812e9fae3d58ff239d4cb79ec14))
+
+
+### Refactors
+
+* **vocabulary:** purge "bundle" from product surfaces; run export becomes Run Artifact (tuxlink-lfrzq) ([7be07ef](https://github.com/cameronzucker/tuxlink/commit/7be07ef574359c143fbdd91db9af0c9eb12d5da2))
+
 ## [0.96.0](https://github.com/cameronzucker/tuxlink/compare/v0.95.0...v0.96.0) (2026-07-20)
 
 
