@@ -4280,10 +4280,21 @@ fn resolve_save_def(
 }
 
 /// Curate the wire op DTO into the command layer's typed [`EditOp`].
+///
+/// Every composite-typed field crossing here gets the ONE parse-if-string
+/// rule ([`tuxlink_mcp_core::arg_shape`], tuxlink-sq72z): a stringified JSON
+/// composite is parsed once, then flows into the normal validation, so the
+/// small-model emission habit that #1205 taught `routines_save.def` per-tool
+/// is accepted uniformly by the whole verb family — `step_add.step`,
+/// `step_update.patch`, `trigger_set.triggers`, `meta_set.patch`. Strings
+/// that do not parse to a composite pass through untouched and the existing
+/// instructive errors ([INVALID_STEP]/[INVALID_PATCH]/[INVALID_TRIGGERS]/
+/// [INVALID_META]) fire exactly as before.
 fn map_edit_op(
     op: RoutineEditOpDto,
 ) -> Result<crate::routines::commands::EditOp, PortError> {
     use crate::routines::commands::EditOp;
+    use tuxlink_mcp_core::arg_shape::parse_if_string;
     Ok(match op {
         RoutineEditOpDto::StepAdd {
             step,
@@ -4293,7 +4304,7 @@ fn map_edit_op(
             branch_arm,
             branch_after_step_id,
         } => EditOp::StepAdd {
-            step,
+            step: parse_if_string(step),
             placement: build_placement(
                 "routines_step_add",
                 track,
@@ -4303,7 +4314,10 @@ fn map_edit_op(
                 branch_after_step_id,
             )?,
         },
-        RoutineEditOpDto::StepUpdate { step_id, patch } => EditOp::StepUpdate { step_id, patch },
+        RoutineEditOpDto::StepUpdate { step_id, patch } => EditOp::StepUpdate {
+            step_id,
+            patch: parse_if_string(patch),
+        },
         RoutineEditOpDto::StepRemove { step_id } => EditOp::StepRemove { step_id },
         RoutineEditOpDto::StepMove {
             step_id,
@@ -4325,8 +4339,12 @@ fn map_edit_op(
         },
         RoutineEditOpDto::TrackAdd { track } => EditOp::TrackAdd { track },
         RoutineEditOpDto::TrackRemove { track } => EditOp::TrackRemove { track },
-        RoutineEditOpDto::TriggerSet { triggers } => EditOp::TriggerSet { triggers },
-        RoutineEditOpDto::MetaSet { patch } => EditOp::MetaSet { patch },
+        RoutineEditOpDto::TriggerSet { triggers } => EditOp::TriggerSet {
+            triggers: parse_if_string(triggers),
+        },
+        RoutineEditOpDto::MetaSet { patch } => EditOp::MetaSet {
+            patch: parse_if_string(patch),
+        },
     })
 }
 
@@ -4708,7 +4726,7 @@ mod tests {
     use super::minimize_bt_mac;
     use super::{
         any_freq_in_bands, curate_gateway, curate_peer, is_plausible_callsign, khz_to_band,
-        resolve_save_def, sanitize_channel, sort_gateways_by_distance,
+        map_edit_op, resolve_save_def, sanitize_channel, sort_gateways_by_distance,
     };
 
     /// tuxlink-8fcbh: the routines_save def-resolution matrix, including the
@@ -4753,6 +4771,94 @@ mod tests {
             }
             other => panic!("expected InvalidInput, got {other:?}"),
         }
+    }
+
+    /// tuxlink-sq72z: the ONE parse-if-string rule at the DTO funnel — the
+    /// exact stringified shapes the 122b (exam 1784598978430-0) and GLM-5.2
+    /// (run 1784601559419-1) emitted against the verb family, coerced once;
+    /// strings that do not parse to a composite pass through untouched so
+    /// the instructive [INVALID_*] errors downstream fire as before.
+    #[test]
+    fn map_edit_op_coerces_stringified_composites() {
+        use crate::routines::commands::EditOp;
+        use tuxlink_mcp_core::ports::RoutineEditOpDto;
+
+        // Exam seq 5: the patch routines_step_update rejected 11x.
+        let op = map_edit_op(RoutineEditOpDto::StepUpdate {
+            step_id: "s1".into(),
+            patch: serde_json::Value::String(
+                r#"{"params": {"message": "Finding closest 20m VARA CMS gateways"}}"#.into(),
+            ),
+        })
+        .unwrap();
+        assert_eq!(
+            op,
+            EditOp::StepUpdate {
+                step_id: "s1".into(),
+                patch: serde_json::json!(
+                    {"params": {"message": "Finding closest 20m VARA CMS gateways"}}
+                ),
+            }
+        );
+
+        // Exam seq 33: the MetaPatch routines_meta_set rejected.
+        let op = map_edit_op(RoutineEditOpDto::MetaSet {
+            patch: serde_json::Value::String(r#"{"transmit_mode": "automatic"}"#.into()),
+        })
+        .unwrap();
+        assert_eq!(
+            op,
+            EditOp::MetaSet {
+                patch: serde_json::json!({"transmit_mode": "automatic"}),
+            }
+        );
+
+        // triggers is array-typed: a stringified ARRAY coerces.
+        let op = map_edit_op(RoutineEditOpDto::TriggerSet {
+            triggers: serde_json::Value::String(r#"[{"type": "manual"}]"#.into()),
+        })
+        .unwrap();
+        assert_eq!(
+            op,
+            EditOp::TriggerSet {
+                triggers: serde_json::json!([{"type": "manual"}]),
+            }
+        );
+
+        // step_add.step coerces; placement resolution is unchanged.
+        let op = map_edit_op(RoutineEditOpDto::StepAdd {
+            step: serde_json::Value::String(
+                r#"{"action": "local.log", "params": {"message": "hi"}}"#.into(),
+            ),
+            track: Some("track-1".into()),
+            after_step_id: None,
+            branch_step_id: None,
+            branch_arm: None,
+            branch_after_step_id: None,
+        })
+        .unwrap();
+        match op {
+            EditOp::StepAdd { step, .. } => assert_eq!(
+                step,
+                serde_json::json!({"action": "local.log", "params": {"message": "hi"}})
+            ),
+            other => panic!("expected StepAdd, got {other:?}"),
+        }
+
+        // A string that does NOT parse to a composite passes through
+        // untouched — [INVALID_PATCH] downstream stays instructive.
+        let op = map_edit_op(RoutineEditOpDto::StepUpdate {
+            step_id: "s1".into(),
+            patch: serde_json::Value::String("not json".into()),
+        })
+        .unwrap();
+        assert_eq!(
+            op,
+            EditOp::StepUpdate {
+                step_id: "s1".into(),
+                patch: serde_json::Value::String("not json".into()),
+            }
+        );
     }
 
     // ── tuxlink-dngvs: trigger docs locked to the real serde shape ──

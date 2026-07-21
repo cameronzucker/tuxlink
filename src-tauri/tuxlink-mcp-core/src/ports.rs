@@ -1575,9 +1575,11 @@ pub struct RoutineGetDto {
 
 /// [`RoutinesPort::save`]'s request. EXACTLY ONE of `def` (a JSON object —
 /// the preferred form) or `def_json` (deprecated string form) must be
-/// present: both or neither is invalid input, and a string supplied as `def`
-/// is invalid input too — it is never parsed as JSON (the double-encoding
-/// trap must not survive under a new name, adrev A7).
+/// present: both or neither is invalid input. A string supplied as `def`
+/// that parses as one JSON OBJECT is tolerated and parsed (tuxlink-8fcbh,
+/// amending adrev A7's never-auto-parse rule; see [`crate::arg_shape`] for
+/// the boundary-wide rule tuxlink-sq72z extended to every verb tool); any
+/// other string in `def` stays invalid input.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct SaveRoutineRequestDto {
     #[serde(default)]
