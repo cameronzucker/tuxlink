@@ -1578,13 +1578,22 @@ function PopSurfaceFixtureView({ surface }: { surface: SurfaceId }) {
 // (spec §10) only reproduce at that bounded width. 400px mirrors the shipped
 // dock column (AprsDockTabs.css documents the "~400px dock width"); the border
 // makes the bound visible in the shot.
+// ?w=NNN overrides the column width so floor-width crush cases render at the
+// width the acceptance notes name (?w=300 dock floor, ?w=240 map cluster —
+// tuxlink-w68mb). Before tuxlink-g9h4j the param was silently ignored and
+// every fixture rendered at 400 regardless.
+const fixtureWidth = (() => {
+  const n = Number(params.get('w'));
+  return Number.isFinite(n) && n > 0 ? n : 400;
+})();
+
 function DockColumn({ children, label }: { children: React.ReactNode; label: string }) {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)', padding: 24, boxSizing: 'border-box' }}>
       <div style={{ fontSize: 12, color: 'var(--text-faint)', marginBottom: 8, fontFamily: 'sans-serif' }}>{label}</div>
       <div
         style={{
-          width: 400,
+          width: fixtureWidth,
           border: '1px solid var(--border)',
           borderRadius: 8,
           overflow: 'hidden',
@@ -1782,7 +1791,7 @@ createRoot(document.getElementById('root')!).render(
       <PopSurfaceFixtureView surface="aprs_chat" />
     ) : view.startsWith('vacated-') ? (
       <VacatedFixtureView />
-    ) : view.startsWith('header-') ? (
+    ) : view.startsWith('header-') || view === 'map-popout' ? (
       <HeaderFixtureView />
     ) : view === 'onboarding' ? (
       <OnboardingFixtureView />

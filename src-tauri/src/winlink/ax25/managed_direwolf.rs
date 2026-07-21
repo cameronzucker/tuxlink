@@ -657,19 +657,26 @@ pub fn arbitrate(requested_card: &CardId, holder: Option<&CardId>) -> Arbitratio
 mod tests {
     use super::*;
 
-    /// A KISS port for tests. Chosen high to avoid privileged-port issues and
-    /// unlikely-to-collide with a real service. Each test uses a distinct port so
-    /// concurrent test threads do not fight over the same listener.
-    const TEST_KISS_PORT_CLEAN: u16 = 58921;
-    const TEST_KISS_PORT_SIGKILL: u16 = 58922;
-    const TEST_KISS_PORT_BUSY: u16 = 58924;
-    /// The KISS port spawn waits on in the bind-timeout test — nothing ever binds
-    /// it, so bind-wait times out.
-    const TEST_KISS_PORT_TIMEOUT: u16 = 58925;
-    /// A SEPARATE port the bind-timeout stub binds + holds. It is NOT the KISS port
-    /// spawn waits on, so its release is observable: it frees only if the child the
-    /// stop-on-timeout path reaped actually died (a leaked child would still hold it).
-    const TEST_SENTINEL_PORT: u16 = 58926;
+    /// Reserve free loopback ports by binding `:0`, dropping the listeners only
+    /// after ALL requested ports are held (so the returned ports are distinct).
+    /// Hardcoded test ports were the tuxlink-mddgd flake: the old 5892x
+    /// constants sat inside Linux's ephemeral range (32768–60999), so any
+    /// transient socket on a loaded shared runner could already hold one at
+    /// stub start — the sentinel stub died with EADDRINUSE, and a third-party
+    /// holder is indistinguishable from a leaked child in the no-leak assert.
+    /// OS-assigned ports leave only the tiny drop→rebind window, and the
+    /// stubs' SO_REUSEADDR covers TIME_WAIT remnants.
+    fn free_ports<const N: usize>() -> [u16; N] {
+        let listeners: [std::net::TcpListener; N] = std::array::from_fn(|_| {
+            std::net::TcpListener::bind("127.0.0.1:0").expect("bind 127.0.0.1:0 must succeed")
+        });
+        listeners.map(|l| l.local_addr().expect("local_addr must resolve").port())
+    }
+
+    fn free_port() -> u16 {
+        let [p] = free_ports::<1>();
+        p
+    }
 
     /// Build a test config pointing at a card index that is (almost certainly) not
     /// present on the CI runner, so the pre-spawn `probe_device_busy` reads "not
@@ -776,12 +783,13 @@ mod tests {
             eprintln!("python3 absent — skipping managed_direwolf lifecycle test");
             return;
         }
-        let cfg = test_cfg(TEST_KISS_PORT_CLEAN);
-        let script = stub_binds_and_handles_sigint(TEST_KISS_PORT_CLEAN);
+        let kiss_port = free_port();
+        let cfg = test_cfg(kiss_port);
+        let script = stub_binds_and_handles_sigint(kiss_port);
         let mut dw = spawn_stub(cfg, &script, Duration::from_secs(3))
             .expect("spawn against a binding stub must succeed");
 
-        assert_eq!(dw.endpoint(), ("127.0.0.1", TEST_KISS_PORT_CLEAN));
+        assert_eq!(dw.endpoint(), ("127.0.0.1", kiss_port));
         assert!(dw.is_running(), "stub must be running after spawn");
 
         dw.shutdown().expect("clean shutdown must return Ok");
@@ -800,8 +808,9 @@ mod tests {
             eprintln!("python3 absent — skipping managed_direwolf SIGKILL test");
             return;
         }
-        let cfg = test_cfg(TEST_KISS_PORT_SIGKILL);
-        let script = stub_binds_and_ignores_sigint(TEST_KISS_PORT_SIGKILL);
+        let kiss_port = free_port();
+        let cfg = test_cfg(kiss_port);
+        let script = stub_binds_and_ignores_sigint(kiss_port);
         let mut dw = spawn_stub(cfg, &script, Duration::from_secs(3))
             .expect("spawn against a binding stub must succeed");
         assert!(dw.is_running(), "stub must be running after spawn");
@@ -830,26 +839,40 @@ mod tests {
         }
         // The child binds the sentinel port; spawn waits on the (different) KISS
         // port that nothing ever binds.
-        let cfg = test_cfg(TEST_KISS_PORT_TIMEOUT);
-        let script = stub_binds_sentinel(TEST_SENTINEL_PORT);
+        // Both ports held simultaneously before either listener drops ⇒ distinct.
+        let [kiss_port, sentinel_port] = free_ports::<2>();
+        let cfg = test_cfg(kiss_port);
+        let script = stub_binds_sentinel(sentinel_port);
         // Short bind-wait so the timeout fires fast.
         let err = spawn_stub(cfg, &script, Duration::from_millis(400))
             .expect_err("spawn must time out when the stub never binds the KISS port");
         match err {
             DwLifecycleError::BindTimeout { port, .. } => {
                 assert_eq!(
-                    port, TEST_KISS_PORT_TIMEOUT,
+                    port, kiss_port,
                     "timeout must name the KISS port spawn waited on"
                 );
             }
             other => panic!("expected BindTimeout, got {other:?}"),
         }
 
-        // The SENTINEL port — which the child HELD — must be bindable now. This is
+        // The SENTINEL port — which the child HELD — must become bindable. This is
         // only possible if the child was reaped on the timeout path; a leaked child
         // would still hold its LISTEN socket on the sentinel and EADDRINUSE us here.
+        // Condition-based wait, not a single probe: on a loaded runner the kernel's
+        // socket teardown can trail spawn's error return briefly.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let sentinel_free = loop {
+            if std::net::TcpListener::bind(format!("127.0.0.1:{sentinel_port}")).is_ok() {
+                break true;
+            }
+            if std::time::Instant::now() >= deadline {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
         assert!(
-            std::net::TcpListener::bind(format!("127.0.0.1:{TEST_SENTINEL_PORT}")).is_ok(),
+            sentinel_free,
             "sentinel port must be free after bind-timeout — proves the child was reaped (no leak)"
         );
     }
@@ -864,7 +887,8 @@ mod tests {
     /// depend on a real held card.
     #[test]
     fn spawn_device_busy_short_circuits_without_spawning() {
-        let cfg = test_cfg(TEST_KISS_PORT_BUSY);
+        let kiss_port = free_port();
+        let cfg = test_cfg(kiss_port);
         // Inject a probe that reports the card busy. spawn must return DeviceBusy
         // and must NOT spawn (the script is a bind-the-port stub that, if spawned,
         // would make the port unbindable — we assert the port stays free).
@@ -883,7 +907,7 @@ mod tests {
         }
         // Never spawned ⇒ the KISS port is still bindable.
         assert!(
-            std::net::TcpListener::bind(format!("127.0.0.1:{TEST_KISS_PORT_BUSY}")).is_ok(),
+            std::net::TcpListener::bind(format!("127.0.0.1:{kiss_port}")).is_ok(),
             "device-busy short-circuit must not have spawned anything"
         );
     }
