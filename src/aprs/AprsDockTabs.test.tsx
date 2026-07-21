@@ -63,10 +63,10 @@ describe('AprsDockTabs', () => {
     expect(onPopOut).toHaveBeenCalledTimes(1);
   });
 
-  // tuxlink-dmwte task 9 (spec §5, behavior 1): a ↗ pop-out control sits beside
-  // the Map toggle when NOT popped, and invokes onPopOutMap.
-  it('shows a Tac Map pop-out control beside the Map toggle when onPopOutMap is provided, and invokes it', () => {
-    const onPopOutMap = vi.fn();
+  // tuxlink-w68mb: the ↗ pop-out entry point lives ON the map surface
+  // (AprsPositionsMap), NOT in this row — the ~85px text button is exactly
+  // what broke the single-row width budget and forced mxqjp's two-row bar.
+  it('never renders a pop-out control in the dock row (moved to the map surface)', () => {
     render(
       <AprsDockTabs
         active="aprs"
@@ -76,38 +76,16 @@ describe('AprsDockTabs', () => {
         onClose={() => {}}
         mapOpen={false}
         onToggleMap={() => {}}
-        onPopOutMap={onPopOutMap}
       />,
     );
     expect(screen.getByTestId('aprs-map-toggle')).toBeInTheDocument();
-    // Text-labeled, never icon-only (spec §1/§5): the control carries a visible
-    // "Pop out" label and an accessible name including it.
-    const popout = screen.getByTestId('aprs-map-popout');
-    expect(popout).toHaveTextContent('Pop out');
-    expect(popout).toHaveAccessibleName(/pop out/i);
-    fireEvent.click(popout);
-    expect(onPopOutMap).toHaveBeenCalledTimes(1);
-  });
-
-  it('omits the Tac Map pop-out control when onPopOutMap is not provided', () => {
-    render(
-      <AprsDockTabs
-        active="aprs"
-        unread={0}
-        modemEnabled
-        onSelect={() => {}}
-        onClose={() => {}}
-        mapOpen={false}
-        onToggleMap={() => {}}
-      />,
-    );
     expect(screen.queryByTestId('aprs-map-popout')).not.toBeInTheDocument();
   });
 
-  // Behavior 2 (spec §5): while popped, the Map toggle + pop-out slot SWAPS to
-  // the "Tac Map ↗ — in window" focus pathway + an adjacent "⇤ dock back"
-  // action — the Map toggle and pop-out button are both gone.
-  it('while mapPopped, renders the "in window" pathway + dock-back INSTEAD of the Map toggle/pop-out', () => {
+  // Behavior 2 (spec §5, AMD-3): while popped, the Map slot SWAPS to the
+  // compact "Map ↗" focus pathway (text-labeled — the §1 rule) + an adjacent
+  // ⇤ dock-back glyph with an accessible name.
+  it('while mapPopped, renders the compact "Map ↗" pathway + accessible ⇤ dock-back INSTEAD of the Map toggle', () => {
     const onFocusMap = vi.fn();
     const onDockBackMap = vi.fn();
     render(
@@ -119,34 +97,35 @@ describe('AprsDockTabs', () => {
         onClose={() => {}}
         mapOpen={false}
         onToggleMap={() => {}}
-        onPopOutMap={() => {}}
         mapPopped
         onFocusMap={onFocusMap}
         onDockBackMap={onDockBackMap}
       />,
     );
     expect(screen.queryByTestId('aprs-map-toggle')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('aprs-map-popout')).not.toBeInTheDocument();
     const focus = screen.getByTestId('aprs-map-focus');
-    expect(focus).toHaveTextContent('Tac Map ↗ — in window');
+    expect(focus).toHaveTextContent('Map ↗');
     fireEvent.click(focus);
     expect(onFocusMap).toHaveBeenCalledTimes(1);
 
     const dockBack = screen.getByTestId('aprs-map-dockback');
-    expect(dockBack).toHaveTextContent('⇤ dock back');
+    expect(dockBack).toHaveAccessibleName(/dock the tac map back/i);
     fireEvent.click(dockBack);
     expect(onDockBackMap).toHaveBeenCalledTimes(1);
   });
 });
 
-// tuxlink-mxqjp: the map companion controls + tab strip + close previously
-// shared ONE flex-wrap row; at the dock's ~400px floor the wrap point was
-// arbitrary, rendering Map/Pop out as an orphaned tab-shaped row above the
-// real tabs (R2 operator report 2026-07-20). The split is now INTENTIONAL:
-// a surface bar (map controls + close) above a clean tab row; callers
-// without map controls keep the original single row.
-describe('two-row dock header (tuxlink-mxqjp)', () => {
-  it('map controls and close live in a surface bar above the tab row', () => {
+// tuxlink-w68mb (supersedes the mxqjp two-row surface bar, operator-rejected
+// as restyled jank): the dock header is ONE row in EVERY state. All controls —
+// map slot, tabs, station-data pop-out, close — are direct children of the
+// single .aprs-dock-tabs flex row; no surface bar, no tab-row wrapper.
+describe('single-row dock header (tuxlink-w68mb)', () => {
+  const directChildren = () =>
+    Array.from(screen.getByTestId('aprs-dock-tabs').children).map(
+      (el) => el.getAttribute('data-testid') ?? el.className,
+    );
+
+  it('docked with map controls: one row holds [Map toggle][tabs][x]', () => {
     render(
       <AprsDockTabs
         active="aprs"
@@ -156,19 +135,14 @@ describe('two-row dock header (tuxlink-mxqjp)', () => {
         onClose={() => {}}
         mapOpen={false}
         onToggleMap={() => {}}
-        onPopOutMap={() => {}}
       />,
     );
-    const bar = screen.getByTestId('aprs-dock-surfacebar');
-    expect(bar).toContainElement(screen.getByTestId('aprs-map-toggle'));
-    expect(bar).toContainElement(screen.getByTestId('aprs-map-popout'));
-    expect(bar).toContainElement(screen.getByTestId('aprs-dock-close'));
-    const tabrow = screen.getByTestId('aprs-dock-tabrow');
-    expect(tabrow).toContainElement(screen.getByTestId('aprs-dock-tab-modem'));
-    expect(tabrow).not.toContainElement(screen.getByTestId('aprs-dock-close'));
+    expect(screen.queryByTestId('aprs-dock-surfacebar')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('aprs-dock-tabrow')).not.toBeInTheDocument();
+    expect(directChildren()).toEqual(['aprs-map-toggle', expect.any(String), 'aprs-dock-close']);
   });
 
-  it('the popped pathway owns the surface bar (the widest state gets a full row)', () => {
+  it('popped: one row holds [pathway][tabs][x] (the widest state still fits the single row)', () => {
     render(
       <AprsDockTabs
         active="aprs"
@@ -182,13 +156,15 @@ describe('two-row dock header (tuxlink-mxqjp)', () => {
         onDockBackMap={() => {}}
       />,
     );
-    const bar = screen.getByTestId('aprs-dock-surfacebar');
-    expect(bar).toContainElement(screen.getByTestId('aprs-map-focus'));
-    expect(bar).toContainElement(screen.getByTestId('aprs-map-dockback'));
-    expect(bar).toContainElement(screen.getByTestId('aprs-dock-close'));
+    expect(screen.queryByTestId('aprs-dock-surfacebar')).not.toBeInTheDocument();
+    expect(directChildren()).toEqual([
+      'aprs-map-popped-controls',
+      expect.any(String),
+      'aprs-dock-close',
+    ]);
   });
 
-  it('renders no surface bar for callers without map controls (single legacy row)', () => {
+  it('callers without map controls keep the same single row', () => {
     render(<AprsDockTabs active="aprs" unread={0} modemEnabled onSelect={() => {}} onClose={() => {}} />);
     expect(screen.queryByTestId('aprs-dock-surfacebar')).not.toBeInTheDocument();
     expect(screen.getByTestId('aprs-dock-close')).toBeInTheDocument();

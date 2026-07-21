@@ -121,12 +121,11 @@
 .aprs-wx-card__close:hover { color: #dcebf6; }
 
 /* tuxlink-hepq: Weather SITREP compose button. Operator layout (tuxlink-8kki):
-   top-LEFT corner (topmost), with the Layers panel directly beneath it. */
+   top-LEFT corner (topmost), with the Layers panel directly beneath it.
+   tuxlink-w68mb: placed by the .aprs-map-topleft cluster (one flex row with
+   the ↗ Pop out chip — two independent absolutes overlapped at narrow pane
+   widths); visual style unchanged. */
 .aprs-wx-sitrep {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  z-index: 1100; /* above Leaflet panes (200-700) AND its control container (1000) so app controls/popups are never covered (impl review) */
   background: #11283b;
   color: #dcebf6;
   border: 1px solid #2c4a63;
@@ -245,4 +244,46 @@
   background: rgba(15, 24, 34, 0.7);
   color: var(--text, #eaf3fb);
   border-color: var(--border, #2c3a47);
+}
+
+/* tuxlink-w68mb: the top-left action cluster — Weather SITREP then the ↗ Pop
+   out chip in ONE flex row (overlap-proof by construction; adrev 2026-07-20).
+   1100 clears Leaflet panes (200-700) + its control container (1000). The
+   Layers panel sits directly beneath at top:44 (tuxlink-8kki order kept). */
+.aprs-map-topleft {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ↗ Pop out — the map's own pop-out entry point. Text-labeled (spec §1
+   visual-pathway rule); same dark map-control treatment as the WX card. */
+.aprs-map-popout {
+  height: 29px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  background: #0e1a24f2;
+  border: 1px solid #2c4a63;
+  border-radius: 6px;
+  color: var(--text-faint, #94a3b8);
+  cursor: pointer;
+  box-shadow: 0 0 0 1px rgba(12, 22, 32, 0.8);
+}
+.aprs-map-popout:hover {
+  color: var(--text, #cbd5e1);
+  background: #14283af2;
+}
+.aprs-map-popout-glyph {
+  font-size: 13px;
+  line-height: 1;
 }
