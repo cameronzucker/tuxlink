@@ -37,7 +37,7 @@ for MODEL in "${MODELS[@]}"; do
   mkdir -p "$OUT"
   echo "=== CELL $MODEL x $PROMPT_ID ==="
   # Per-cell failure must not kill the stage: a crashed cell is itself data.
-  if ! "$BIN" \
+  if ! xvfb-run -a "$BIN" \
     --corpus "$CORPUS" \
     --model "$MODEL" \
     --prompt "$PROMPT_ID" \
