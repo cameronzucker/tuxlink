@@ -94,11 +94,24 @@ export function validateAccountPassword(input: string): string | null {
  * digit, then a 1–4 letter suffix. The SSID/qualifier is stripped first (matching the
  * backend's base-callsign normalization).
  */
+/**
+ * The sanctioned Winlink CMS acceptance-test accounts (bd tuxlink-fhr4g): the
+ * literal `TEST` + a 1–8 char uppercase-alnum tail, no separators. Mirrors the
+ * backend `is_acceptance_test_account` carve-out exactly so the wizard's
+ * AccountCreate submit path is reachable for Test 1's TEST1/TEST123 targets.
+ * `base` is already SSID-stripped + uppercased by the caller, so `TEST-1`
+ * arrives as bare `TEST` (empty tail) and is rejected.
+ */
+function isAcceptanceTestAccount(base: string): boolean {
+  const tail = base.startsWith('TEST') ? base.slice(4) : null;
+  return tail !== null && tail.length >= 1 && tail.length <= 8 && /^[A-Z0-9]+$/.test(tail);
+}
+
 export function validateAmateurCallsign(input: string): string | null {
   if (!input.trim()) return 'Callsign is required.';
   // Mirror the backend: strip the SSID/qualifier, then uppercase, then grammar-check.
   const base = input.trim().split(/[-.]/)[0].toUpperCase();
-  if (!/^([A-Z]{1,2}|[0-9][A-Z])[0-9][A-Z]{1,4}$/.test(base)) {
+  if (!/^([A-Z]{1,2}|[0-9][A-Z])[0-9][A-Z]{1,4}$/.test(base) && !isAcceptanceTestAccount(base)) {
     return 'Enter your licensed amateur callsign (e.g. KK7ABC). A tactical address cannot hold a CMS account.';
   }
   return null;
