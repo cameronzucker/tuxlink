@@ -1828,7 +1828,8 @@ pub struct RoutineValidateParams {
 pub struct RoutineSaveParams {
     /// The routine definition as a JSON OBJECT (the same shape `routines_get`
     /// returns in its `def` field). Preferred — give exactly one of `def` or
-    /// `def_json`, never both, and never a string here.
+    /// `def_json`, never both, and give the object itself, not a string
+    /// containing it.
     #[serde(default)]
     pub def: Option<serde_json::Value>,
     /// DEPRECATED string form of `def` (JSON-in-a-string). Accepted for one

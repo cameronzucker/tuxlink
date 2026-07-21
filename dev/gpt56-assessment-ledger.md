@@ -44,6 +44,48 @@ with one sentence of justification tied to the findings themselves.
 
 ## Entries
 
+### 2026-07-20 — sq72z Routines situation review (design + evidence + path, pre-PR) — pair 12, matched
+
+- Scope: NOT a diff review — a situation-level second opinion on the Routines
+  tool-surface design, the cross-model stringified-composite evidence (122b +
+  GLM-5.2 + operator-reported Qwen), and the sq72z parse-if-string fix, run
+  while the fix sat uncommitted/committed-at-5b416c38 in the worktree. Same
+  prompt both rounds, same worktree state (matched).
+- 5.5 transcript: dev/adversarial/2026-07-20-routines-stringify-situation-codex.md
+- 5.6 transcript: dev/adversarial/2026-07-20-routines-stringify-situation-codex-gpt56.md
+- Convergent verdicts: interface defect confirmed (operator's hypothesis
+  endorsed by both); ship parse-if-string as-is; typed schemas are the P1
+  follow-up (composite params are `Value`, prose carries the contract); do
+  NOT move to whole-document-only editing; skip the unfocused overnight
+  battery; don't advertise string tolerance.
+- 5.5 findings: 1 P1, 3 P2, 2 P3. Unique real catch: `data.find_stations`
+  omits "vara-fm" from allowed modes while the type supports it
+  (find_stations.rs:112 — VERIFIED against source). Also supplied the
+  post-fix re-run rubric (loop count, coercion count, per-verb success,
+  AUTO_TX ack scored as success) adopted into the exam gate.
+- 5.6 findings: 4 P1, 6 P2, 2 P3. Unique real catch: the in-house "narrow
+  defect" claim contradicted the supplied aggregate (30/34 early rejections
+  had no stringification) — forced a classification that CONFIRMED the early
+  wall was the since-fixed def-composition class (29x missing `routine`
+  field, 1x kebab-case; zero recurrence in 4 later runs). Also uniquely
+  proposed the kind-aware registry (string-to-object vs string-to-array),
+  the edit-session/was_enabled lifecycle mechanism, and the placement
+  pseudo-union discriminator.
+- Quality delta: 5.6 broader and more structural (placement union, lifecycle
+  P1, dialect migration); 5.5 more precise on evidence discipline (refused
+  quantitative "family trend" claims, unique concrete parity catch). Both
+  grounded every claim in real file:line refs; both read the uncommitted fix
+  correctly.
+- Deception/cheating indicators: **none observed** either round. 5.6 obeyed
+  the read-only instruction (no cargo attempts this time); cited refs
+  spot-verified real; no praise-without-reading.
+- Disposition: wording fixes applied in-branch (stale `def` doc, "verbatim"
+  → redacted/shape-preserved); structural findings filed as bd issues
+  (typed schemas + kind registry, shallow-patch semantics, optional CAS,
+  disable/re-enable stranding, placement discriminator, args_json/script_json
+  dialect migration, vara-fm catalog drift); battery deferred to the
+  distill-track regression gate per both rounds.
+
 ### 2026-07-20 — ixasg favorites per-channel key (PR #1216, commit 0e11b949) — pair 11, matched
 
 - 5.5 transcript: dev/adversarial/2026-07-20-ixasg-fav-per-channel-codex.md

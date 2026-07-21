@@ -63,7 +63,40 @@ struct TranscriptLine<'a> {
     session_id: &'a str,
     seq: u64,
     ts_unix_ms: u64,
+    /// Per-call telemetry (tuxlink-sq72z): which of a ToolCall's
+    /// composite-typed params arrived as strings of JSON, e.g.
+    /// `{"patch": "string-coerced"}`. Absent on well-shaped calls and
+    /// non-ToolCall lines. See [`arg_shape_marker`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    arg_shape: Option<serde_json::Map<String, serde_json::Value>>,
     message: &'a Message,
+}
+
+/// The `arg_shape` marker (tuxlink-sq72z): which of this tool call's
+/// composite-typed params arrived string-coerced. The emission stays
+/// shape-preserved (post-redaction — nothing unredacted reaches disk) in
+/// `message.ToolCall.args`: it is the fine-tune corpus and must not be
+/// "fixed" here; this marker only makes the coercion countable, so a run's
+/// string-coercion rate (the regression metric, target 0) is one grep.
+fn arg_shape_marker(message: &Message) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let Message::ToolCall(tc) = message else {
+        return None;
+    };
+    let coerced = tuxlink_mcp_core::arg_shape::string_coerced_params(&tc.name, &tc.args);
+    if coerced.is_empty() {
+        return None;
+    }
+    Some(
+        coerced
+            .into_iter()
+            .map(|p| {
+                (
+                    p.to_string(),
+                    serde_json::Value::String("string-coerced".into()),
+                )
+            })
+            .collect(),
+    )
 }
 
 /// The terminal outcome line (tuxlink-93lzx): one synthetic line recorded by
@@ -351,6 +384,7 @@ impl TranscriptSink for ElmerTranscriptSink {
             session_id: &session_id,
             seq,
             ts_unix_ms: unix_ms(),
+            arg_shape: arg_shape_marker(&redacted),
             message: &redacted,
         };
         match serde_json::to_string(&line) {
@@ -620,6 +654,49 @@ mod tests {
                 .unwrap()
                 .contains("am-capture"),
             "args must survive verbatim: {line}"
+        );
+    }
+
+    /// tuxlink-sq72z: a composite-typed param arriving as a string of JSON
+    /// gets the per-call `arg_shape` marker while the stringified emission
+    /// stays shape-preserved (redacted, never re-encoded) in args — the
+    /// transcript is the fine-tune corpus; "fixing" it here would destroy
+    /// the training signal.
+    #[test]
+    fn stringified_composite_param_gets_arg_shape_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sink = ElmerTranscriptSink::new(tmp.path().to_path_buf());
+        // Exam transcript 1784598978430-0 seq 5, verbatim (the shape
+        // routines_step_update rejected 11x pre-fix).
+        sink.record(&Message::ToolCall(ToolCall::new(
+            "routines_step_update",
+            json!({
+                "patch": "{\"params\": {\"message\": \"Finding closest 20m VARA CMS gateways\"}}",
+                "routine": "hourly-20m-vara-cms",
+                "step_id": "s1"
+            }),
+        )));
+        // Well-shaped call: no marker key at all.
+        sink.record(&Message::ToolCall(ToolCall::new(
+            "routines_meta_set",
+            json!({
+                "patch": {"transmit_mode": "automatic"},
+                "routine": "hourly-20m-vara-cms"
+            }),
+        )));
+        assert!(sink.flush(FLUSH));
+
+        let files = read_session_lines(tmp.path());
+        let coerced = &files[0].1[0];
+        assert_eq!(coerced["arg_shape"]["patch"], "string-coerced");
+        assert!(
+            coerced["message"]["ToolCall"]["args"]["patch"].is_string(),
+            "raw stringified emission must stay verbatim: {coerced}"
+        );
+        let clean = &files[0].1[1];
+        assert!(
+            clean.get("arg_shape").is_none(),
+            "well-shaped call must not be flagged: {clean}"
         );
     }
 
