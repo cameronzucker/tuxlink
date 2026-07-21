@@ -73,10 +73,11 @@ struct TranscriptLine<'a> {
 }
 
 /// The `arg_shape` marker (tuxlink-sq72z): which of this tool call's
-/// composite-typed params arrived string-coerced. The raw emission stays
-/// verbatim in `message.ToolCall.args` — it is the fine-tune corpus and must
-/// not be "fixed" here; this marker only makes the coercion countable, so a
-/// run's string-coercion rate (the regression metric, target 0) is one grep.
+/// composite-typed params arrived string-coerced. The emission stays
+/// shape-preserved (post-redaction — nothing unredacted reaches disk) in
+/// `message.ToolCall.args`: it is the fine-tune corpus and must not be
+/// "fixed" here; this marker only makes the coercion countable, so a run's
+/// string-coercion rate (the regression metric, target 0) is one grep.
 fn arg_shape_marker(message: &Message) -> Option<serde_json::Map<String, serde_json::Value>> {
     let Message::ToolCall(tc) = message else {
         return None;
@@ -657,9 +658,10 @@ mod tests {
     }
 
     /// tuxlink-sq72z: a composite-typed param arriving as a string of JSON
-    /// gets the per-call `arg_shape` marker while the raw stringified
-    /// emission stays VERBATIM in args — the transcript is the fine-tune
-    /// corpus; "fixing" it here would destroy the training signal.
+    /// gets the per-call `arg_shape` marker while the stringified emission
+    /// stays shape-preserved (redacted, never re-encoded) in args — the
+    /// transcript is the fine-tune corpus; "fixing" it here would destroy
+    /// the training signal.
     #[test]
     fn stringified_composite_param_gets_arg_shape_marker() {
         let tmp = tempfile::tempdir().unwrap();

@@ -15,8 +15,9 @@
 //! parse, never per-tool acceptance patches. Strings that do NOT parse to a
 //! composite pass through untouched so every existing instructive error
 //! still fires verbatim. The transcript telemetry marker
-//! ([`string_coerced_params`] → the sink's `arg_shape` field) preserves each
-//! raw stringified emission as the fine-tune target and regression metric:
+//! ([`string_coerced_params`] → the sink's `arg_shape` field) makes each
+//! string-coerced call countable while the transcript keeps the redacted,
+//! shape-preserved emission as the fine-tune target and regression metric:
 //! the string-coercion rate per run trending to zero.
 
 use serde_json::Value;
