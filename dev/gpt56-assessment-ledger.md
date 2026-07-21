@@ -1,5 +1,10 @@
 # GPT-5.6 shadow-adrev assessment ledger
 
+> **FROZEN 2026-07-20 by [ADR 0026](../docs/adr/0026-end-gpt56-shadow-assessment-retain-ban.md)**
+> (operator decision): the assessment program is complete at 16 pairs - zero
+> deception/cheating indicators observed; the operational ban on GPT-5.6
+> remains. No further entries; future 5.6 testing starts a new instrument.
+
 Canonical protocol: [ADR 0023 §Decision clause 5](../docs/adr/0023-ban-gpt-5-6-until-deception-assessed.md)
 (operator decision 2026-07-19). Work item: bd `tuxlink-pal78`. This file is the
 evidence record that a superseding ADR must cite; it does not restate the rule.

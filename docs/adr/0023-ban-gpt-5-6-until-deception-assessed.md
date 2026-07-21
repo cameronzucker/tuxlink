@@ -1,7 +1,7 @@
 # 23. Ban GPT-5.6 for adversarial review and all Tuxlink tasks; GPT-5.5 is the ceiling
 
 Date: 2026-07-15
-Status: Accepted
+Status: Accepted; clause 5 (shadow-assessment protocol) superseded by [ADR 0026](0026-end-gpt56-shadow-assessment-retain-ban.md) - clauses 1-4 remain in force
 Deciders: cameronzucker (N7CPZ), granite-lupine-fen (authoring session)
 
 ## Context
