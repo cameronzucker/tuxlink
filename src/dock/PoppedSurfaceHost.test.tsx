@@ -52,9 +52,9 @@ vi.mock('./surfaceRegistry', () => {
   }
   return {
     SURFACE_REGISTRY: {
-      routines: { id: 'routines', title: 'Routines — Tuxlink', Component: makeComponent('routines'), StatusStrip: makeStrip('routines') },
-      tac_map: { id: 'tac_map', title: 'Tac Map — Tuxlink', Component: makeComponent('tac_map'), StatusStrip: makeStrip('tac_map') },
-      aprs_chat: { id: 'aprs_chat', title: 'APRS Chat — Tuxlink', Component: makeComponent('aprs_chat'), StatusStrip: makeStrip('aprs_chat') },
+      routines: { id: 'routines', title: 'Routines - Tuxlink', Component: makeComponent('routines'), StatusStrip: makeStrip('routines') },
+      tac_map: { id: 'tac_map', title: 'Tac Map - Tuxlink', Component: makeComponent('tac_map'), StatusStrip: makeStrip('tac_map') },
+      aprs_chat: { id: 'aprs_chat', title: 'APRS Chat - Tuxlink', Component: makeComponent('aprs_chat'), StatusStrip: makeStrip('aprs_chat') },
       // bd tuxlink-9obx2: the fourth surface, same fake-registry treatment.
       station_intelligence: {
         id: 'station_intelligence',
@@ -129,7 +129,7 @@ describe('PoppedSurfaceHost — title bar (behavior 1)', () => {
     expect(screen.getByRole('button', { name: /^minimize$/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^maximize$/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^close$/i })).toBeInTheDocument();
-    expect(screen.getByText('Tac Map — Tuxlink')).toBeInTheDocument();
+    expect(screen.getByText('Tac Map - Tuxlink')).toBeInTheDocument();
   });
 
   it('mounts the 8 edge/corner resize handles — borderless pop windows have no native grips (tuxlink-dwcqx)', () => {

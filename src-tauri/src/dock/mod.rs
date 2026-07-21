@@ -59,10 +59,10 @@ impl SurfaceId {
 
     pub fn title(self) -> &'static str {
         match self {
-            SurfaceId::Routines => "Routines — Tuxlink",
-            SurfaceId::TacMap => "Tac Map — Tuxlink",
-            SurfaceId::AprsChat => "APRS Chat — Tuxlink",
-            SurfaceId::Elmer => "Elmer — Tuxlink",
+            SurfaceId::Routines => "Routines - Tuxlink",
+            SurfaceId::TacMap => "Tac Map - Tuxlink",
+            SurfaceId::AprsChat => "APRS Chat - Tuxlink",
+            SurfaceId::Elmer => "Elmer - Tuxlink",
             SurfaceId::StationIntelligence => "Station Intelligence - Tuxlink",
         }
     }
@@ -213,8 +213,8 @@ mod tests {
         assert_eq!(serde_json::to_string(&SurfaceId::Elmer).unwrap(), "\"elmer\"");
         assert_eq!(SurfaceId::Elmer.window_label(), "pop-elmer");
         assert_eq!(SurfaceId::Elmer.route(), "/pop/elmer");
-        assert_eq!(SurfaceId::Elmer.title(), "Elmer — Tuxlink");
-        assert_eq!(SurfaceId::Routines.title(), "Routines — Tuxlink");
+        assert_eq!(SurfaceId::Elmer.title(), "Elmer - Tuxlink");
+        assert_eq!(SurfaceId::Routines.title(), "Routines - Tuxlink");
         assert_eq!(SurfaceId::StationIntelligence.window_label(), "pop-station-intelligence");
         assert_eq!(SurfaceId::StationIntelligence.route(), "/pop/station-intelligence");
         assert_eq!(SurfaceId::StationIntelligence.title(), "Station Intelligence - Tuxlink");

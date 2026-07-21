@@ -18,7 +18,7 @@ export function TitleBar({ folderLabel }: TitleBarProps) {
       <span className="tux-drag" data-tauri-drag-region />
       <img className="tux-app-icon" src={iconUrl} alt="" />
       <span className="tux-app-name">Tuxlink</span>
-      <span className="tux-app-sub">— {folderLabel}</span>
+      <span className="tux-app-sub">- {folderLabel}</span>
       <span className="tux-controls">
         <button className="tux-ctrl tux-min" title="Minimize" aria-label="Minimize"
           onClick={() => void win.minimize()}>−</button>

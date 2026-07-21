@@ -392,25 +392,25 @@ function ElmerPopped({ context, registerGetContext }: SurfaceComponentProps) {
 export const SURFACE_REGISTRY: Record<SurfaceId, SurfaceRegistryEntry> = {
   routines: {
     id: 'routines',
-    title: 'Routines — Tuxlink',
+    title: 'Routines - Tuxlink',
     Component: RoutinesPopped,
     StatusStrip: RoutinesStrip,
   },
   tac_map: {
     id: 'tac_map',
-    title: 'Tac Map — Tuxlink',
+    title: 'Tac Map - Tuxlink',
     Component: TacMapSurface,
     StatusStrip: TacMapStrip,
   },
   aprs_chat: {
     id: 'aprs_chat',
-    title: 'APRS Chat — Tuxlink',
+    title: 'APRS Chat - Tuxlink',
     Component: AprsChatSurface,
     StatusStrip: ChatStrip,
   },
   elmer: {
     id: 'elmer',
-    title: 'Elmer — Tuxlink',
+    title: 'Elmer - Tuxlink',
     Component: ElmerPopped,
     StatusStrip: ElmerStrip,
   },
