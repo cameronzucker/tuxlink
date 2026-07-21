@@ -46,6 +46,14 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* tuxlink-y6whc: this centered title is flex:1 at z-index:1 — it blankets
+     the ENTIRE middle of the bar ABOVE the .tux-drag inset:0 drag region, so
+     no draggable pixel remained and popped windows could not be moved by
+     their title bar (operator report 2026-07-20, popped Tac Map; affected
+     every pop window). The main/help/compose bars never hit this because
+     their labels are content-sized. The title is inert text: let mousedowns
+     fall through to the drag region beneath. */
+  pointer-events: none;
 }
 
 /* AprsChatSurface's wrapper — gives AprsConnectStrip + AprsChatPanel a

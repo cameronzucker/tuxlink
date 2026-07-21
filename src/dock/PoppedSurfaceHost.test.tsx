@@ -363,3 +363,22 @@ describe('PoppedSurfaceHost — strips + consent (behaviors 5 + 6)', () => {
     expect(lastComponentContext).toEqual({ view: { view: 'dashboard' } });
   });
 });
+
+// tuxlink-y6whc: the centered .pop-title (flex:1, z-index:1) sat ABOVE the
+// .tux-drag inset:0 drag region and blanketed every draggable pixel — popped
+// windows could not be moved by their title bar. The title is inert text;
+// pointer-events:none lets mousedowns fall through to the drag region.
+// CSS-source assertion (the jsdom render can't exercise wry's drag hit-test).
+const HOST_CSS_MODULES = import.meta.glob('./PoppedSurfaceHost.css', {
+  eager: true,
+  query: '?raw',
+  import: 'default',
+}) as Record<string, string>;
+
+describe('pop title bar drag region (tuxlink-y6whc)', () => {
+  it('.pop-title is pointer-transparent so the drag region beneath receives mousedown', () => {
+    const css = HOST_CSS_MODULES['./PoppedSurfaceHost.css'];
+    const block = css.match(/\.pop-titlebar \.pop-title \{[^}]*\}/)?.[0] ?? '';
+    expect(block).toContain('pointer-events: none');
+  });
+});
