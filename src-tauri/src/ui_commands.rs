@@ -3536,9 +3536,15 @@ pub struct ConfigViewDto {
 /// (`{"kind":"vara","bandwidth_hz":2300}`) — the `rename_all` lowercases the
 /// VARIANT tags only; the field name is already snake_case (see the shape
 /// test `routine_hf_modem_view_wire_shape`).
+///
+/// `Packet` mirrors the runtime's transport precedence (adrev 5.6 P1 on
+/// tuxlink-fg0em): a configured packet KISS link is dialed FIRST by
+/// `radio.connect` — bands are inert — so the designer must say so instead
+/// of claiming an HF modem that will not be used.
 #[derive(Debug, Serialize, Clone, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RoutineHfModemView {
+    Packet,
     Vara { bandwidth_hz: Option<u32> },
     Ardop,
     Both,
@@ -3576,13 +3582,19 @@ impl From<&config::Config> for ConfigViewDto {
                 .as_ref()
                 .map(|o| o.tips_seen.clone())
                 .unwrap_or_default(),
-            routine_hf_modem: match (&c.modem_ardop, &c.modem_vara) {
-                (Some(_), None) => RoutineHfModemView::Ardop,
-                (None, Some(v)) => RoutineHfModemView::Vara {
-                    bandwidth_hz: v.bandwidth_hz,
-                },
-                (Some(_), Some(_)) => RoutineHfModemView::Both,
-                (None, None) => RoutineHfModemView::None,
+            routine_hf_modem: if c.packet.link.is_some() {
+                // Runtime precedence: `radio.connect` dials a configured
+                // packet link before ever consulting the HF modems.
+                RoutineHfModemView::Packet
+            } else {
+                match (&c.modem_ardop, &c.modem_vara) {
+                    (Some(_), None) => RoutineHfModemView::Ardop,
+                    (None, Some(v)) => RoutineHfModemView::Vara {
+                        bandwidth_hz: v.bandwidth_hz,
+                    },
+                    (Some(_), Some(_)) => RoutineHfModemView::Both,
+                    (None, None) => RoutineHfModemView::None,
+                }
             },
         }
     }
@@ -10834,11 +10846,31 @@ hw:CARD=Device,DEV=0
     }
 
     // tuxlink-fg0em: the designer's "Runs on" line mirrors the runtime's
-    // exactly-one HF modem rule — all four states map through the From impl.
+    // transport rule — packet precedence first (adrev 5.6 P1), then the
+    // exactly-one HF modem states.
     #[test]
     fn config_view_dto_maps_routine_hf_modem_states() {
         let mut cfg = cms_config_fixture();
         cfg.modem_ardop = None;
+        cfg.modem_vara = None;
+
+        // Packet link configured wins over EVERYTHING — mirrors
+        // radio.rs's `cfg.packet.link.is_some()` early return.
+        cfg.packet.link = Some(crate::winlink::ax25::KissLinkConfig::Tcp {
+            host: "127.0.0.1".into(),
+            port: 8001,
+        });
+        cfg.modem_vara = Some(crate::config::VaraUiConfig {
+            host: "127.0.0.1".into(),
+            cmd_port: 8300,
+            data_port: 8301,
+            bandwidth_hz: Some(2300),
+        });
+        assert_eq!(
+            ConfigViewDto::from(&cfg).routine_hf_modem,
+            RoutineHfModemView::Packet
+        );
+        cfg.packet.link = None;
         cfg.modem_vara = None;
         assert_eq!(
             ConfigViewDto::from(&cfg).routine_hf_modem,
@@ -10887,6 +10919,10 @@ hw:CARD=Device,DEV=0
         assert_eq!(
             serde_json::to_value(RoutineHfModemView::None).unwrap(),
             serde_json::json!({"kind": "none"})
+        );
+        assert_eq!(
+            serde_json::to_value(RoutineHfModemView::Packet).unwrap(),
+            serde_json::json!({"kind": "packet"})
         );
     }
 

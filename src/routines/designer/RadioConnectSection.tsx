@@ -5,25 +5,27 @@
  * strings the runtime resolver rejects.
  *
  * Grounded in how the action actually works (`routines/actions/radio.rs`):
- * the step's ONLY radio params are `stations` (gateway callsigns, tried in
- * order) and optional `bands` (closed vocabulary walked per station) —
- * mode and dial frequency are DERIVED at run time from Settings → Modem and
- * the station cache. This section states that instead of hiding it:
  *
- *  - "Runs on" line: the configured HF modem, mirrored from
- *    `config_read.routine_hf_modem` (the runtime's exactly-one rule, incl.
- *    the both/none refusal states surfaced at authoring time).
- *  - Stations: ordered chips + an inline picker over the REAL selection
- *    surfaces — the station-finder cache and the per-mode favorites — never
- *    blind free text. A whole-value step ref (`"$s2.callsigns"`) renders as
- *    a read-only ref chip (edit as JSON to change).
- *  - Bands: toggle chips over `HF_BANDS` (the same vocabulary the backend
- *    ParamSpec now enforces at save time).
+ *  - Transport precedence: a configured packet KISS link is dialed FIRST —
+ *    bands are inert there. Otherwise exactly one of ARDOP/VARA must be
+ *    configured, and an HF dial REQUIRES at least one band (empty bands is
+ *    the packet-dial shape, not "any band"). The "Runs on" line states all
+ *    of this from `config_read.routine_hf_modem` instead of letting the
+ *    first run fail.
+ *  - Stations: ordered chips (duplicates legal — the runtime walks the
+ *    exact sequence; rows are keyed and removed BY INDEX) + an inline
+ *    picker over the station-finder cache and per-mode favorites.
+ *  - Bands: toggle chips over `HF_BANDS`, the same vocabulary the backend
+ *    ParamSpec enforces at save time (case-insensitively, matching the
+ *    runtime's lookup).
  *
- * Params this section does not own (`rig`, unknown keys) are preserved
- * verbatim on every commit and disclosed in a muted note — nothing is
- * silently hidden; "edit as JSON" (the StepInspector toggle) remains the
- * escape hatch for every shape this surface cannot express.
+ * Ownership rule (adrev 5.5/5.6 P1): any owned param whose shape this
+ * surface cannot express — a whole-value step ref (`"$s2.callsigns"`) in
+ * `stations` OR `bands`, a non-number `listen_before_tx_s` — is rendered
+ * read-only or disclosed, and PRESERVED VERBATIM by every commit unless the
+ * operator explicitly replaces that specific param. Unknown keys (`rig`, …)
+ * are always preserved and disclosed. "Edit as JSON" (the StepInspector
+ * toggle) remains the escape hatch for every such shape.
  *
  * C4 distance source: operator grid comes from `position_current_fix`
  * (full precision), never the precision-reduced status surfaces.
@@ -47,13 +49,10 @@ export interface RadioConnectSectionProps {
   onChange: (params: Record<string, unknown>) => void;
 }
 
-/** The keys this section owns; everything else is preserved verbatim. */
-const OWNED_KEYS = ['stations', 'bands', 'listen_before_tx_s'] as const;
-
 /** `config_read`'s slice this section consumes (wire shape pinned by the
  *  Rust test `routine_hf_modem_view_wire_shape`). */
 interface HfModemView {
-  kind: 'vara' | 'ardop' | 'both' | 'none';
+  kind: 'packet' | 'vara' | 'ardop' | 'both' | 'none';
   bandwidth_hz?: number | null;
 }
 
@@ -61,8 +60,8 @@ function asStringArray(v: unknown): string[] | null {
   return Array.isArray(v) && v.every((e) => typeof e === 'string') ? (v as string[]) : null;
 }
 
-/** Finder listing modes for the configured modem; both/none fall back to
- *  both HF modes so the picker still works while Settings is unresolved. */
+/** Finder listing modes for the configured modem; both/none/packet fall back
+ *  to both HF modes so the picker still works while Settings is unresolved. */
 function finderModes(modem: HfModemView | undefined): ListingMode[] {
   if (modem?.kind === 'vara') return ['vara-hf'];
   if (modem?.kind === 'ardop') return ['ardop-hf'];
@@ -74,55 +73,94 @@ export function RadioConnectSection({ params, onChange }: RadioConnectSectionPro
   const stations = asStringArray(stationsRaw) ?? [];
   /** `"$s2.callsigns"` whole-value ref — render, don't edit. */
   const stationsRef = typeof stationsRaw === 'string' ? stationsRaw : null;
-  const bands = asStringArray(params['bands']) ?? [];
+  const bandsRaw = params['bands'];
+  const bands = asStringArray(bandsRaw) ?? [];
+  /** Whole-value ref in bands is just as legal (validator permits `$` refs
+   *  for list params) — render read-only, preserve on every commit. */
+  const bandsRef = typeof bandsRaw === 'string' ? bandsRaw : null;
   const listenRaw = params['listen_before_tx_s'];
-  const listen = typeof listenRaw === 'number' ? listenRaw : undefined;
+  const listen = typeof listenRaw === 'number' && Number.isInteger(listenRaw) ? listenRaw : undefined;
+  /** A malformed (non-integer) listen value this surface can't express —
+   *  preserved until the operator explicitly replaces it via the field. */
+  const listenUneditable = listenRaw !== undefined && listen === undefined;
 
-  /** Keys preserved verbatim (incl. owned keys whose shape this surface
-   *  cannot express, e.g. a non-number listen value). */
+  /** Keys this section never owns — preserved verbatim and disclosed. */
   const extraKeys = Object.keys(params).filter(
-    (k) =>
-      !(OWNED_KEYS as readonly string[]).includes(k) ||
-      (k === 'listen_before_tx_s' && listenRaw !== undefined && listen === undefined),
+    (k) => !['stations', 'bands', 'listen_before_tx_s'].includes(k),
   );
 
   const [listenText, setListenText] = useState(listen === undefined ? '' : String(listen));
+  // Same-step external updates (JSON-mode roundtrip, model edits) must
+  // resync the local text — this component is NOT remounted for same-step
+  // prop changes (adrev 5.6 P2).
+  useEffect(() => {
+    setListenText(listen === undefined ? '' : String(listen));
+  }, [listen]);
 
+  /**
+   * Build + commit the full replacement params object. Every owned param
+   * not explicitly replaced by `next` keeps its CURRENT raw value (refs and
+   * malformed shapes included); unknown keys always carry over verbatim.
+   * `next.listen === null` means "explicitly clear the key".
+   */
   function commit(next: {
-    stations?: string[] | string;
+    stations?: string[];
     bands?: string[];
-    listen?: number | undefined;
+    listen?: number | null;
   }) {
     const out: Record<string, unknown> = {};
-    const outStations = next.stations ?? stationsRef ?? stations;
-    out['stations'] = outStations;
-    const outBands = next.bands ?? bands;
-    if (outBands.length > 0) out['bands'] = outBands;
-    const outListen = 'listen' in next ? next.listen : listen;
-    if (outListen !== undefined) out['listen_before_tx_s'] = outListen;
+    out['stations'] = next.stations ?? stationsRaw ?? [];
+    const bandsOut = next.bands ?? bandsRaw;
+    if (bandsRef !== null && next.bands === undefined) {
+      out['bands'] = bandsRef;
+    } else if (Array.isArray(bandsOut) ? bandsOut.length > 0 : bandsOut !== undefined) {
+      if (Array.isArray(bandsOut) && bandsOut.length === 0) {
+        // omit empty array
+      } else {
+        out['bands'] = bandsOut;
+      }
+    }
+    if ('listen' in next) {
+      if (next.listen !== null && next.listen !== undefined) {
+        out['listen_before_tx_s'] = next.listen;
+      }
+      // explicit clear/replace: the old raw value (malformed included) is
+      // NOT preserved — the operator acted on this exact param.
+    } else if (listenRaw !== undefined) {
+      out['listen_before_tx_s'] = listenRaw;
+    }
     for (const k of extraKeys) out[k] = params[k];
     onChange(out);
   }
 
-  // ---- "Runs on" — the modem the run will actually dial ----
+  // ---- "Runs on" — the transport the run will actually use ----
   const modemQuery = useQuery({
     queryKey: ['config_read'],
     queryFn: () => invoke<{ routine_hf_modem?: HfModemView }>('config_read'),
   });
   const modem = modemQuery.data?.routine_hf_modem;
+  /** Config settled = success or error (older backend without the field
+   *  degrades to the fallback modes, but only ONCE it's settled). */
+  const modemSettled = modemQuery.isSuccess || modemQuery.isError;
 
   // ---- picker state + data ----
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerTab, setPickerTab] = useState<'finder' | 'favorites'>('finder');
   const [search, setSearch] = useState('');
   const { listings, loading, error, fetch } = useStations();
-  const fetchedRef = useRef(false);
+  /** Fetch guard keyed by the EFFECTIVE mode set (adrev consensus P2): an
+   *  early open with config unresolved must not permanently pin the wrong
+   *  modes — the fetch waits for config to settle, and a later mode change
+   *  refetches. */
+  const fetchedForRef = useRef<string | null>(null);
   useEffect(() => {
-    if (pickerOpen && pickerTab === 'finder' && !fetchedRef.current) {
-      fetchedRef.current = true;
-      fetch(finderModes(modem));
-    }
-  }, [pickerOpen, pickerTab, fetch, modem]);
+    if (!pickerOpen || pickerTab !== 'finder' || !modemSettled) return;
+    const modes = finderModes(modem);
+    const key = modes.join('|');
+    if (fetchedForRef.current === key) return;
+    fetchedForRef.current = key;
+    fetch(modes);
+  }, [pickerOpen, pickerTab, modemSettled, modem, fetch]);
 
   const fixQuery = useQuery({
     queryKey: ['position_current_fix'],
@@ -149,7 +187,9 @@ export function RadioConnectSection({ params, onChange }: RadioConnectSectionPro
     const withMeta = all
       .map((s: Station) => {
         const stationBands = [
-          ...new Set(s.channels.map((c) => c.band).filter((b): b is Band => b != null && b !== 'vhf-uhf')),
+          ...new Set(
+            s.channels.map((c) => c.band).filter((b): b is Band => b != null && b !== 'vhf-uhf'),
+          ),
         ];
         const km = operatorGrid ? distanceFromGrids(operatorGrid, s.grid) : null;
         return { station: s, stationBands, mi: km == null ? null : Math.round(kmToMi(km)) };
@@ -158,8 +198,8 @@ export function RadioConnectSection({ params, onChange }: RadioConnectSectionPro
         if (q && !station.baseCallsign.includes(q) && !station.grid.toUpperCase().startsWith(q)) {
           return false;
         }
-        // Only gateways with a cached dial on a selected band (mock footer
-        // rule); no bands selected = no band filter.
+        // Only gateways with a cached dial on a selected band; no bands
+        // selected (or a bands ref) = no band filter.
         if (bands.length > 0 && !stationBands.some((b) => bands.includes(b))) return false;
         return true;
       })
@@ -174,6 +214,10 @@ export function RadioConnectSection({ params, onChange }: RadioConnectSectionPro
     commit({ stations: [...stations, c] });
   }
 
+  function removeStationAt(index: number) {
+    commit({ stations: stations.filter((_, i) => i !== index) });
+  }
+
   return (
     <div className="rc-section" data-testid="radio-connect-section">
       {modem && (
@@ -181,6 +225,13 @@ export function RadioConnectSection({ params, onChange }: RadioConnectSectionPro
           className={`rc-runson ${modem.kind === 'both' || modem.kind === 'none' ? 'rc-runson-warn' : ''}`}
           data-testid="rc-runson"
         >
+          {modem.kind === 'packet' && (
+            <>
+              <span className="rc-dot" />
+              <span className="mono">Packet (KISS)</span>
+              <span className="rc-src">takes precedence · bands unused</span>
+            </>
+          )}
           {modem.kind === 'vara' && (
             <>
               <span className="rc-dot" />
@@ -205,7 +256,7 @@ export function RadioConnectSection({ params, onChange }: RadioConnectSectionPro
           )}
           {modem.kind === 'none' && (
             <span className="rc-warntext">
-              No HF modem configured (Settings → Modem) — HF dials cannot run.
+              No transport configured (Settings → Modem) — this step has nothing to dial.
             </span>
           )}
         </div>
@@ -223,14 +274,14 @@ export function RadioConnectSection({ params, onChange }: RadioConnectSectionPro
           </span>
         ) : (
           stations.map((s, i) => (
-            <span className="rc-chip mono" data-testid={`rc-station-${s}`} key={s}>
+            <span className="rc-chip mono" data-testid={`rc-station-${i}-${s}`} key={`${i}|${s}`}>
               <span className="rc-ord">{i + 1}</span>
               {s}
               <button
                 type="button"
                 className="rc-x"
-                aria-label={`Remove station ${s}`}
-                onClick={() => commit({ stations: stations.filter((x) => x !== s) })}
+                aria-label={`Remove station ${i + 1} (${s})`}
+                onClick={() => removeStationAt(i)}
               >
                 ✕
               </button>
@@ -355,26 +406,35 @@ export function RadioConnectSection({ params, onChange }: RadioConnectSectionPro
       )}
 
       <div className="rc-label">
-        BANDS <span className="rc-hint">empty = any cached band</span>
+        BANDS <span className="rc-hint">HF dials need at least one · empty = packet-dial shape</span>
       </div>
-      <div className="rc-bands" data-testid="rc-bands">
-        {HF_BANDS.map((b) => (
-          <button
-            type="button"
-            key={b}
-            className={`rc-band mono ${bands.includes(b) ? 'rc-band-on' : ''}`}
-            data-testid={`rc-band-${b}`}
-            aria-pressed={bands.includes(b)}
-            onClick={() =>
-              commit({
-                bands: bands.includes(b) ? bands.filter((x) => x !== b) : [...bands, b],
-              })
-            }
-          >
-            {b}
-          </button>
-        ))}
-      </div>
+      {bandsRef ? (
+        <div className="rc-chips">
+          <span className="rc-chip rc-chip-ref mono" data-testid="rc-bands-ref">
+            {bandsRef}
+            <span className="rc-refnote">step output — edit as JSON to change</span>
+          </span>
+        </div>
+      ) : (
+        <div className="rc-bands" data-testid="rc-bands">
+          {HF_BANDS.map((b) => (
+            <button
+              type="button"
+              key={b}
+              className={`rc-band mono ${bands.includes(b) ? 'rc-band-on' : ''}`}
+              data-testid={`rc-band-${b}`}
+              aria-pressed={bands.includes(b)}
+              onClick={() =>
+                commit({
+                  bands: bands.includes(b) ? bands.filter((x) => x !== b) : [...bands, b],
+                })
+              }
+            >
+              {b}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="rc-numrow">
         <span className="rc-label rc-numlabel">listen_before_tx_s</span>
@@ -387,17 +447,23 @@ export function RadioConnectSection({ params, onChange }: RadioConnectSectionPro
           onBlur={() => {
             const t = listenText.trim();
             if (t === '') {
-              commit({ listen: undefined });
+              commit({ listen: null });
               return;
             }
             const n = Number(t);
-            if (Number.isFinite(n) && n >= 0) {
+            // Backend contract is Option<u64> — integers only (adrev 5.6 P2).
+            if (Number.isInteger(n) && n >= 0) {
               commit({ listen: n });
             } else {
               setListenText(listen === undefined ? '' : String(listen));
             }
           }}
         />
+        {listenUneditable && (
+          <span className="rc-hint" data-testid="rc-listen-uneditable">
+            current value is not an integer — kept as-is until replaced
+          </span>
+        )}
       </div>
 
       {extraKeys.length > 0 && (
