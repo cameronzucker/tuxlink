@@ -125,16 +125,36 @@ fn check_type(path: &str, ty: &Value, instance: &Value) -> Result<(), String> {
     // whose content parses to the DECLARED composite type passes validation;
     // the instance is NOT mutated — the transcript keeps the raw emission
     // (the fine-tune corpus) and the server performs the actual parse.
-    let ok = ok || string_coerces_to_declared(ty, instance);
+    // Root exclusion (Codex adrev 2026-07-21 P2): the tolerance applies to
+    // FIELD-level composites only — the server's decode boundary parses
+    // those. The ROOT args object is forwarded via `as_object()` by the
+    // invoker, so a validation-passed root string would dispatch as an
+    // EMPTY call; strict root typing keeps that impossible.
+    let ok = ok || (!path.is_empty() && string_coerces_to_declared(ty, instance));
 
     if ok {
         Ok(())
     } else {
+        // Wrong-kind stringified composite (adrev P3): tell the model what
+        // its string actually CONTAINS — "expected array, got string" hides
+        // that the string held a JSON object, which is the actionable fact.
+        let contained = instance.as_str().and_then(|s| {
+            match serde_json::from_str::<Value>(s) {
+                Ok(Value::Object(_)) => Some("a JSON object"),
+                Ok(Value::Array(_)) => Some("a JSON array"),
+                _ => None,
+            }
+        });
+        let hint = match contained {
+            Some(kind) => format!(" (the string contains {kind} — give the declared composite type directly)"),
+            None => String::new(),
+        };
         Err(format!(
-            "{}: expected type {}, got {}",
+            "{}: expected type {}, got {}{}",
             loc(path),
             compact(ty),
             json_type_name(instance),
+            hint,
         ))
     }
 }
@@ -364,6 +384,27 @@ mod tests {
                 "{s:?} must not pass a declared object"
             );
         }
+    }
+
+    #[test]
+    fn root_args_string_never_coerces() {
+        // Adrev P2: dispatch forwards root args via as_object(), so a
+        // validation-passed root STRING would execute as an empty call.
+        // The tolerance is field-level only; the root stays strict.
+        let schema = json!({ "type": "object", "properties": {} });
+        assert!(validate(&schema, &json!("{\"x\": 1}")).is_err());
+    }
+
+    #[test]
+    fn wrong_kind_string_error_names_the_contained_kind() {
+        let schema = json!({ "type": "object", "properties": {
+            "patch": { "type": "object" }
+        }});
+        let err = validate(&schema, &json!({ "patch": "[1, 2]" })).unwrap_err();
+        assert!(
+            err.contains("a JSON array"),
+            "error must name the contained kind: {err}"
+        );
     }
 
     #[test]

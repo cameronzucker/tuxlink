@@ -63,10 +63,13 @@ struct TranscriptLine<'a> {
     session_id: &'a str,
     seq: u64,
     ts_unix_ms: u64,
-    /// Per-call telemetry (tuxlink-sq72z): which of a ToolCall's
-    /// composite-typed params arrived as strings of JSON, e.g.
-    /// `{"patch": "string-coerced"}`. Absent on well-shaped calls and
-    /// non-ToolCall lines. See [`arg_shape_marker`].
+    /// Per-call telemetry (tuxlink-sq72z, kind-precise since tuxlink-hq3e2):
+    /// which of a ToolCall's composite-typed params arrived as strings of
+    /// JSON and what their content parsed to, e.g.
+    /// `{"patch": "string-to-object"}` / `{"triggers": "string-to-array"}`.
+    /// Transcripts from the first corpus day (2026-07-20) carry the legacy
+    /// flat literal `"string-coerced"` instead. Absent on well-shaped calls
+    /// and non-ToolCall lines. See [`arg_shape_marker`].
     #[serde(skip_serializing_if = "Option::is_none")]
     arg_shape: Option<serde_json::Map<String, serde_json::Value>>,
     message: &'a Message,
