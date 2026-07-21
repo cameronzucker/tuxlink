@@ -1775,7 +1775,7 @@ createRoot(document.getElementById('root')!).render(
       <PopSurfaceFixtureView surface="aprs_chat" />
     ) : view.startsWith('vacated-') ? (
       <VacatedFixtureView />
-    ) : view.startsWith('header-') ? (
+    ) : view.startsWith('header-') || view === 'map-popout' ? (
       <HeaderFixtureView />
     ) : view === 'onboarding' ? (
       <OnboardingFixtureView />
