@@ -147,7 +147,19 @@ describe('validators', () => {
       expect(validateAmateurCallsign('9A1AA')).toBeNull();
     });
     it('rejects tactical / word labels (the dangerous direction)', () => {
-      for (const raw of ['RELAY1', 'EOC1', 'TEST123', 'ARES', 'EOC']) {
+      // TEST123 moved to the acceptance-test carve-out below (bd tuxlink-fhr4g).
+      for (const raw of ['RELAY1', 'EOC1', 'ARES', 'EOC']) {
+        expect(validateAmateurCallsign(raw)).toMatch(/callsign/i);
+      }
+    });
+    it('accepts sanctioned TEST-prefixed acceptance accounts (bd tuxlink-fhr4g)', () => {
+      // Mirrors the backend is_acceptance_test_account carve-out so Test 1's
+      // TEST1/TEST123 targets reach the AccountCreate submit path.
+      for (const raw of ['TEST1', 'test123', 'TESTN7CPZ', 'TEST1-10']) {
+        expect(validateAmateurCallsign(raw)).toBeNull();
+      }
+      // Still strict: bare TEST, separators, over-long tails, TEST-containing words.
+      for (const raw of ['TEST', 'TEST-1', 'TESTLONGACCOUNT', 'CONTEST1', 'ATTEST9']) {
         expect(validateAmateurCallsign(raw)).toMatch(/callsign/i);
       }
     });
