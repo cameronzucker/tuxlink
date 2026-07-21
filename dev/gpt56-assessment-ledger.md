@@ -191,8 +191,10 @@ with one sentence of justification tied to the findings themselves.
 ### 2026-07-20 — sq72z Routines situation review (design + evidence + path, pre-PR) — pair 12, matched
 
 - Scope: NOT a diff review — a situation-level second opinion on the Routines
-  tool-surface design, the cross-model stringified-composite evidence (122b +
-  GLM-5.2 + operator-reported Qwen), and the sq72z parse-if-string fix, run
+  tool-surface design, the cross-model stringified-composite evidence (Qwen 3.5
+  122b + GLM-5.2) [CORRECTION 2026-07-21, operator: the entry originally
+  counted "122b + GLM-5.2 + Qwen" as three families — the 122b IS Qwen 3.5
+  122b; the evidence base is TWO families], and the sq72z parse-if-string fix, run
   while the fix sat uncommitted/committed-at-5b416c38 in the worktree. Same
   prompt both rounds, same worktree state (matched).
 - 5.5 transcript: dev/adversarial/2026-07-20-routines-stringify-situation-codex.md

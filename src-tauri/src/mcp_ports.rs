@@ -4294,7 +4294,7 @@ fn map_edit_op(
     op: RoutineEditOpDto,
 ) -> Result<crate::routines::commands::EditOp, PortError> {
     use crate::routines::commands::EditOp;
-    use tuxlink_mcp_core::arg_shape::parse_if_string;
+    use tuxlink_mcp_core::arg_shape::{parse_if_string, CompositeKind};
     Ok(match op {
         RoutineEditOpDto::StepAdd {
             step,
@@ -4304,7 +4304,7 @@ fn map_edit_op(
             branch_arm,
             branch_after_step_id,
         } => EditOp::StepAdd {
-            step: parse_if_string(step),
+            step: parse_if_string(step, CompositeKind::Object),
             placement: build_placement(
                 "routines_step_add",
                 track,
@@ -4316,7 +4316,7 @@ fn map_edit_op(
         },
         RoutineEditOpDto::StepUpdate { step_id, patch } => EditOp::StepUpdate {
             step_id,
-            patch: parse_if_string(patch),
+            patch: parse_if_string(patch, CompositeKind::Object),
         },
         RoutineEditOpDto::StepRemove { step_id } => EditOp::StepRemove { step_id },
         RoutineEditOpDto::StepMove {
@@ -4340,10 +4340,10 @@ fn map_edit_op(
         RoutineEditOpDto::TrackAdd { track } => EditOp::TrackAdd { track },
         RoutineEditOpDto::TrackRemove { track } => EditOp::TrackRemove { track },
         RoutineEditOpDto::TriggerSet { triggers } => EditOp::TriggerSet {
-            triggers: parse_if_string(triggers),
+            triggers: parse_if_string(triggers, CompositeKind::Array),
         },
         RoutineEditOpDto::MetaSet { patch } => EditOp::MetaSet {
-            patch: parse_if_string(patch),
+            patch: parse_if_string(patch, CompositeKind::Object),
         },
     })
 }

@@ -1831,6 +1831,7 @@ pub struct RoutineSaveParams {
     /// `def_json`, never both, and give the object itself, not a string
     /// containing it.
     #[serde(default)]
+    #[schemars(schema_with = "crate::arg_shape::object_schema")]
     pub def: Option<serde_json::Value>,
     /// DEPRECATED string form of `def` (JSON-in-a-string). Accepted for one
     /// release for old callers; use `def` instead.
@@ -1876,6 +1877,7 @@ pub struct RoutineStepAddParams {
     /// The step as a JSON OBJECT: `{"id": "s3", "action": "local.log",
     /// "params": {...}}` or `{"id": "s4", "control": "branch", ...}`. Omit
     /// `id` to have one assigned and returned.
+    #[schemars(schema_with = "crate::arg_shape::object_schema")]
     pub step: serde_json::Value,
     #[serde(flatten)]
     pub placement: StepPlacementParams,
@@ -1896,6 +1898,7 @@ pub struct RoutineStepUpdateParams {
     /// `on_radio_busy`, branch `then`/`else`, ...) patch individually; a
     /// `null` clears an optional field. The `id` and the action-vs-control
     /// kind cannot change — remove and re-add instead.
+    #[schemars(schema_with = "crate::arg_shape::object_schema")]
     pub patch: serde_json::Value,
     /// Optional lost-update check (see `routines_save`).
     #[serde(default)]
@@ -1947,6 +1950,7 @@ pub struct RoutineTriggerSetParams {
     pub routine: String,
     /// The FULL replacement trigger list: `[{"type": "manual"}]` or
     /// `[{"type": "schedule", "every": "30m", "align": "hour", ...}]`.
+    #[schemars(schema_with = "crate::arg_shape::array_schema")]
     pub triggers: serde_json::Value,
     /// Optional lost-update check (see `routines_save`).
     #[serde(default)]
@@ -1961,6 +1965,7 @@ pub struct RoutineMetaSetParams {
     /// Envelope fields to patch, as a JSON OBJECT: `transmit_mode`
     /// ("attended"|"automatic"), `on_interrupted` ("stay"|"resume"),
     /// `inputs`. Renaming is `routines_rename`, not a metadata patch.
+    #[schemars(schema_with = "crate::arg_shape::object_schema")]
     pub patch: serde_json::Value,
     /// Optional lost-update check (see `routines_save`).
     #[serde(default)]

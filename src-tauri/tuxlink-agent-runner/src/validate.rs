@@ -116,6 +116,17 @@ fn check_type(path: &str, ty: &Value, instance: &Value) -> Result<(), String> {
         _ => true,
     };
 
+    // The ONE parse-if-string rule, validation-time half (tuxlink-hq3e2,
+    // completing tuxlink-sq72z): models across families emit composite
+    // params as strings of JSON and cannot perceive the difference when
+    // rejected — the server's decode boundary parses them, so a schema that
+    // now honestly declares `object`/`array` must not re-reject the same
+    // emission HERE, client-side, before dispatch ever happens. A string
+    // whose content parses to the DECLARED composite type passes validation;
+    // the instance is NOT mutated — the transcript keeps the raw emission
+    // (the fine-tune corpus) and the server performs the actual parse.
+    let ok = ok || string_coerces_to_declared(ty, instance);
+
     if ok {
         Ok(())
     } else {
@@ -125,6 +136,31 @@ fn check_type(path: &str, ty: &Value, instance: &Value) -> Result<(), String> {
             compact(ty),
             json_type_name(instance),
         ))
+    }
+}
+
+/// See the call site in [`check_type`]: a STRING instance whose content
+/// parses to exactly the declared composite type (`object`/`array`) counts as
+/// valid. Scalar-JSON strings ("null", "42"), non-JSON strings, and
+/// kind mismatches (a string parsing to an array against a declared object)
+/// all still fail — the tolerance is one parse to the declared kind, nothing
+/// wider.
+fn string_coerces_to_declared(ty: &Value, instance: &Value) -> bool {
+    let Some(s) = instance.as_str() else {
+        return false;
+    };
+    let declared = |name: &str| match ty {
+        Value::String(n) => n == name,
+        Value::Array(names) => names.iter().filter_map(Value::as_str).any(|n| n == name),
+        _ => false,
+    };
+    if !(declared("object") || declared("array")) {
+        return false;
+    }
+    match serde_json::from_str::<Value>(s) {
+        Ok(Value::Object(_)) => declared("object"),
+        Ok(Value::Array(_)) => declared("array"),
+        _ => false,
     }
 }
 
@@ -283,5 +319,61 @@ mod tests {
     #[test]
     fn non_object_schema_accepts_anything() {
         assert!(validate(&json!(true), &json!({"x": 1})).is_ok());
+    }
+
+    // ── tuxlink-hq3e2: validation-time half of the parse-if-string rule ──
+    // A schema may now honestly declare object/array for composite params;
+    // the model habit of emitting them as strings of JSON must not be
+    // re-rejected client-side (the server's decode boundary parses them).
+
+    #[test]
+    fn stringified_object_passes_declared_object() {
+        let schema = json!({ "type": "object", "properties": {
+            "patch": { "type": "object" }
+        }});
+        // Exam transcript 1784598978430-0 seq 33, verbatim shape.
+        let inst = json!({ "patch": "{\"transmit_mode\": \"automatic\"}" });
+        assert!(validate(&schema, &inst).is_ok());
+    }
+
+    #[test]
+    fn stringified_array_passes_declared_array() {
+        let schema = json!({ "type": "object", "properties": {
+            "triggers": { "type": "array" }
+        }});
+        assert!(validate(&schema, &json!({ "triggers": "[{\"type\": \"manual\"}]" })).is_ok());
+    }
+
+    #[test]
+    fn string_coercion_is_kind_exact() {
+        // A string parsing to an ARRAY does not satisfy a declared OBJECT
+        // (and vice versa) — the tolerance is one parse to the declared
+        // kind, nothing wider.
+        let obj_schema = json!({ "type": "object" });
+        assert!(validate(&obj_schema, &json!("[1, 2]")).is_err());
+        let arr_schema = json!({ "type": "array" });
+        assert!(validate(&arr_schema, &json!("{\"a\": 1}")).is_err());
+    }
+
+    #[test]
+    fn scalar_json_and_garbage_strings_still_fail_composite_types() {
+        let schema = json!({ "type": "object" });
+        for s in ["null", "42", "true", "not json {", ""] {
+            assert!(
+                validate(&schema, &json!(s)).is_err(),
+                "{s:?} must not pass a declared object"
+            );
+        }
+    }
+
+    #[test]
+    fn declared_string_type_never_parses() {
+        // A param that IS a string (def_json class) keeps its string even
+        // when the content happens to be JSON — no coercion for declared
+        // strings.
+        let schema = json!({ "type": "string" });
+        assert!(validate(&schema, &json!("{\"a\": 1}")).is_ok());
+        // And a declared string still rejects a genuine object.
+        assert!(validate(&schema, &json!({"a": 1})).is_err());
     }
 }
