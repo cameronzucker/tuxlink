@@ -204,6 +204,29 @@ fn pending_entries_carry_bd_ids() {
 }
 
 #[test]
+fn terminal_classes_cannot_shadow_live_tools() {
+    // Codex adrev 2026-07-21 P2: a chrome/presentation classification on a
+    // command whose NAME is a live MCP tool hides real agent capability
+    // from the manifest and skips its liveness check — the 2026-07-21
+    // backfill shipped three of these (platform_info, get_wizard_completed,
+    // session_log_snapshot). Terminal classes must not shadow live tools;
+    // operator-authority is exempt HERE because its own anti-mapping test
+    // already fails if someone maps it, and an authority command sharing a
+    // tool name would be caught by review of that louder failure.
+    let m = manifest();
+    let tools = router_tools();
+    for (name, e) in &m.commands {
+        if matches!(e.class.as_str(), "chrome" | "presentation") {
+            assert!(
+                !tools.contains(name),
+                "{name}: classified `{}` but a live MCP tool of the same                  name exists — classify as capability with an mcp path",
+                e.class
+            );
+        }
+    }
+}
+
+#[test]
 fn tool_budget_matches_router() {
     let m = manifest();
     let tools = router_tools();

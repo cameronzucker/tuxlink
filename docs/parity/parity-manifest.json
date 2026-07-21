@@ -513,7 +513,8 @@
       "pending": "tuxlink-to358"
     },
     "get_wizard_completed": {
-      "class": "presentation"
+      "class": "capability",
+      "mcp": "get_wizard_completed"
     },
     "gl_render_confirmed": {
       "class": "chrome"
@@ -807,7 +808,8 @@
       "mcp": "packet_set_listen"
     },
     "platform_info": {
-      "class": "chrome"
+      "class": "capability",
+      "mcp": "platform_info"
     },
     "position_current_fix": {
       "class": "capability",
@@ -982,7 +984,8 @@
       "class": "presentation"
     },
     "session_log_snapshot": {
-      "class": "presentation"
+      "class": "capability",
+      "mcp": "session_log_snapshot"
     },
     "set_close_to_tray": {
       "class": "chrome"
@@ -1125,10 +1128,10 @@
       "pending": "tuxlink-to358"
     },
     "uninstall_cleanup_execute": {
-      "class": "chrome"
+      "class": "operator-authority"
     },
     "uninstall_cleanup_preview": {
-      "class": "chrome"
+      "class": "operator-authority"
     },
     "user_folders_list": {
       "class": "capability",

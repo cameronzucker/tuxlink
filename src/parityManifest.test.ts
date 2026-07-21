@@ -20,6 +20,43 @@ const SOURCES = import.meta.glob(
 ) as Record<string, string>;
 
 const INVOKE_RE = /\binvoke\s*(?:<[^>()]*>)?\s*\(\s*'([a-z0-9_]+)'/g;
+// Command registries and constants (Codex adrev 2026-07-21 P2): production
+// code routes many invokes through maps (`CMD.get: 'routines_get'`) and
+// consts (`const CMD_SUB = 'ft8_waterfall_subscribe'`) — in files that
+// import the Tauri invoke, any assigned snake_case string literal is
+// treated as a candidate command name. Residue this still cannot see:
+// fully dynamic command strings (none known in production).
+const ASSIGNED_LITERAL_RE = /[:=]\s*'([a-z0-9_]+_[a-z0-9_]+)'/g;
+const IMPORTS_INVOKE_RE = /@tauri-apps\/api\/core/;
+// Assigned snake_case literals in invoke-importing files that are NOT
+// commands — reviewed by hand; additions need the same review.
+const NOT_COMMANDS = new Set<string>([
+  // Journal event kinds, auth-diagnostic reasons, config field names, and
+  // UI action ids that live in invoke-importing files (2026-07-21 review).
+  'branch_taken',
+  'call_child',
+  'callsign_rejected',
+  'cat_command',
+  'client_rejected',
+  'cmd_port',
+  'dock_back',
+  'end_reached',
+  'inbound_proposals_offered',
+  'move_to_inbox',
+  'new_routine',
+  'open_model',
+  'password_rejected',
+  'run_finished',
+  'run_started',
+  'serial_rts',
+  'session_dropped_after_auth',
+  'state_changed',
+  'step_err',
+  'step_intent',
+  'step_ok',
+  'step_skipped',
+  'unset_variable',
+]);
 
 describe('parity manifest — frontend consumers (ADR 0027)', () => {
   it('every invoked command is classified', () => {
@@ -30,6 +67,14 @@ describe('parity manifest — frontend consumers (ADR 0027)', () => {
         const cmd = match[1];
         if (!classified.has(cmd)) {
           violations.push(`${file}: invoke('${cmd}')`);
+        }
+      }
+      if (IMPORTS_INVOKE_RE.test(src)) {
+        for (const match of src.matchAll(ASSIGNED_LITERAL_RE)) {
+          const cmd = match[1];
+          if (!classified.has(cmd) && !NOT_COMMANDS.has(cmd)) {
+            violations.push(`${file}: assigned literal '${cmd}' (command registry?)`);
+          }
         }
       }
     }

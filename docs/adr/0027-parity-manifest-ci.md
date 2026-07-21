@@ -45,7 +45,7 @@ terminal by design and never map to an agent path:
   mechanical defense of ADR 0024's authority parity (generalizing the
   routines router's existing pinned-closed guard).
 
-The fourth class, `capability`, requires an agent path in one of three
+The fourth class, `capability`, requires an agent path in one of four
 forms, cheapest-first by design so compliance pressure points toward
 consolidation, not tool minting:
 
