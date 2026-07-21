@@ -362,6 +362,18 @@ Canonical: the skill itself (`.claude/skills/wire-walk/SKILL.md`). This is a poi
 
 **Features are built whole ([ADR 0022](docs/adr/0022-ban-autonomous-agent-issue-splitting-and-deferrals.md)).** A feature — a complete, user-reachable capability — ships whole and wire-walked, or stays in progress until it is. Do NOT carve one feature into a shippable inert slice plus a deferred remainder ("Phase 2 now, Phase 3 later"; "wire the transport now, add connect later"). There is **no authorization escape hatch**: completeness is an invariant, not negotiable scope, for the agent or the operator-in-a-hurry. Distinct, independently-complete capabilities are separate features (that is not splitting). Filing a spec'd, buildable piece as a "follow-up" is the banned deferral. Canonical: ADR 0022; this is a pointer. `wire-walk` gates the work as built; this ADR forbids the split-and-defer that creates the un-revisited stub.
 
+## Parity manifest — agent/human parity is CI-enforced (ADR 0027)
+
+Every registered Tauri command is classified in
+[`docs/parity/parity-manifest.json`](docs/parity/parity-manifest.json)
+(chrome / presentation / operator-authority / capability-with-agent-path);
+CI enforces completeness, mapping liveness, the operator-authority
+no-mapping rule, and the MCP tool-count budget. New commands land
+classified or `verify` fails; new tools debit the operator-owned budget in
+the same PR. Canonical: [ADR 0027](docs/adr/0027-parity-manifest-ci.md);
+enforcement lives in `src-tauri/src/parity_check.rs` +
+`src/parityManifest.test.ts`. This section is a pointer.
+
 ## Commit and release discipline
 
 - Use conventional commit types: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, `perf:`, `ci:`, `build:`. Match the commit `type:` to the actual intent. Never use `fix:` for docs fixes or `feat:` for internal refactors.

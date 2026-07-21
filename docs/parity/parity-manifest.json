@@ -1,0 +1,1263 @@
+{
+  "_doc": "ADR 0027 parity manifest \u2014 every registered Tauri command classified. Classes: chrome/presentation/operator-authority are TERMINAL (never map; an mcp path on operator-authority is a CI failure). capability requires an agent path: {\"mcp\": \"tool\"} | {\"mcp-field\": \"tool.field\"} | {\"finding\": \"CODE\"} | {\"pending\": \"bd-id\"}. Initial backfill gaps cite tuxlink-to358; NEW pending entries must carry their own bd id.",
+  "commands": {
+    "app_quit": {
+      "class": "chrome"
+    },
+    "aprs_abort": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "aprs_config_get": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "aprs_config_set": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "aprs_listen_start": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "aprs_listen_stop": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "aprs_send": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "aprs_status": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "ardop_allowed_stations_add": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "ardop_allowed_stations_get": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "ardop_allowed_stations_remove": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "ardop_allowed_stations_set_allow_all": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "ardop_close_session": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "ardop_list_audio_devices": {
+      "class": "capability",
+      "mcp": "ardop_list_audio_devices"
+    },
+    "ardop_listen": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "ardop_open_session": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "ardop_set_listen": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "ardop_tune_rig": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "auth_diagnostic_clear": {
+      "class": "operator-authority"
+    },
+    "backend_status": {
+      "class": "capability",
+      "mcp": "backend_status"
+    },
+    "basemap_cancel_download": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "basemap_delete_pack": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "basemap_download_pack": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "basemap_get_manifest": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "basemap_list_packs": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "basemap_refresh_manifest": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "catalog_fetch_stations": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "catalog_get_channels_api_key": {
+      "class": "operator-authority"
+    },
+    "catalog_get_service_codes": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "catalog_ingest_listing_reply": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "catalog_list": {
+      "class": "capability",
+      "mcp": "catalog_list"
+    },
+    "catalog_parse_reply": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "catalog_send_inquiry": {
+      "class": "capability",
+      "mcp": "catalog_send_inquiry"
+    },
+    "catalog_set_channels_api_key": {
+      "class": "operator-authority"
+    },
+    "catalog_set_service_codes": {
+      "class": "operator-authority"
+    },
+    "clear_tile_cache": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "close_webview_form_server": {
+      "class": "chrome"
+    },
+    "cms_abort": {
+      "class": "capability",
+      "mcp": "cms_abort"
+    },
+    "cms_account_create": {
+      "class": "operator-authority"
+    },
+    "cms_account_exists": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "cms_account_remove": {
+      "class": "operator-authority"
+    },
+    "cms_account_send_recovery": {
+      "class": "operator-authority"
+    },
+    "cms_account_set_recovery_email": {
+      "class": "operator-authority"
+    },
+    "cms_account_validate_password": {
+      "class": "operator-authority"
+    },
+    "cms_connect": {
+      "class": "capability",
+      "mcp": "cms_connect"
+    },
+    "cms_connect_test": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "cms_disconnect": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "cms_password_change": {
+      "class": "operator-authority"
+    },
+    "cms_password_change_available": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "cms_resolve_inbound_selection": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "compose_close_self": {
+      "class": "chrome"
+    },
+    "compose_window_open": {
+      "class": "chrome"
+    },
+    "config_get_ardop": {
+      "class": "capability",
+      "mcp": "config_get_ardop"
+    },
+    "config_get_rig": {
+      "class": "capability",
+      "mcp": "config_get_rig"
+    },
+    "config_get_vara": {
+      "class": "capability",
+      "mcp": "config_get_vara"
+    },
+    "config_read": {
+      "class": "capability",
+      "mcp": "config_read"
+    },
+    "config_set_active_connection": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "config_set_ardop": {
+      "class": "capability",
+      "mcp": "config_set_ardop"
+    },
+    "config_set_aredn_master_node_host": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "config_set_connect": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "config_set_grid": {
+      "class": "capability",
+      "mcp": "config_set_grid"
+    },
+    "config_set_onboarding": {
+      "class": "presentation"
+    },
+    "config_set_privacy": {
+      "class": "capability",
+      "mcp": "config_set_privacy"
+    },
+    "config_set_review_inbound": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "config_set_rig": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "config_set_trash_auto_purge": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "config_set_vara": {
+      "class": "capability",
+      "mcp": "config_set_vara"
+    },
+    "configure_tile_source": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "contact_confirm": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "contact_delete": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "contact_endpoint_password_clear": {
+      "class": "operator-authority"
+    },
+    "contact_endpoint_password_set": {
+      "class": "operator-authority"
+    },
+    "contact_upsert": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "contacts_connection_record": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "contacts_read": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "contacts_recent_gateways": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "contacts_suggestions": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "credentials_write_password": {
+      "class": "operator-authority"
+    },
+    "dock_state_get": {
+      "class": "chrome"
+    },
+    "docs_search": {
+      "class": "capability",
+      "mcp": "docs_search"
+    },
+    "egress_arm": {
+      "class": "operator-authority"
+    },
+    "egress_disarm": {
+      "class": "operator-authority"
+    },
+    "egress_rearm": {
+      "class": "operator-authority"
+    },
+    "egress_status": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "elmer_config_read": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "elmer_config_set": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "elmer_connect": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "elmer_detect_models": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "elmer_estimate_memory": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "elmer_key_status_for_origins": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "elmer_new_conversation": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "elmer_prepare_outbox_approval": {
+      "class": "operator-authority"
+    },
+    "elmer_run_active": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "elmer_send": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "elmer_stop": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "elmer_transcript_export": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "emit_first_paint_complete": {
+      "class": "chrome"
+    },
+    "favorite_delete": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "favorite_record_attempt": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "favorite_star": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "favorite_tod_hint": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "favorite_upsert": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "favorites_read": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "favorites_recents": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "folder_create": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "folder_delete": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "folder_move": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "folder_rename": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "form_draft_library_delete": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "form_draft_library_list": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "form_draft_library_upsert": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "forms_check_for_update": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "forms_custom_delete": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "forms_export_pdf": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "forms_import_cancel": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "forms_import_commit": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "forms_import_preview": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "forms_list_catalog": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "forms_print": {
+      "class": "chrome"
+    },
+    "forms_refresh": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "forms_sequence_reset": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "forms_sequence_status": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "ft8_cat_probe": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "ft8_device_meter": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "ft8_list_devices": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "ft8_listener_snapshot": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "ft8_listener_start": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "ft8_listener_stop": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "ft8_set_band": {
+      "class": "capability",
+      "mcp": "ft8_set_band"
+    },
+    "ft8_set_device": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "ft8_set_sweep": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "ft8_set_sweep_bands": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "ft8_waterfall_subscribe": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "ft8_waterfall_unsubscribe": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "get_wizard_completed": {
+      "class": "capability",
+      "mcp": "get_wizard_completed"
+    },
+    "gl_render_confirmed": {
+      "class": "chrome"
+    },
+    "gps_pkexec_available": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "gps_pkg_manager": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "gps_probe_dialout": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "gps_probe_gpsd": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "gps_probe_modemmanager": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "gps_probe_serial_devices": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "gps_run_fix": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "gps_setup_gpsd": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "greet": {
+      "class": "chrome"
+    },
+    "grib_send_request": {
+      "class": "capability",
+      "mcp": "grib_send_request"
+    },
+    "group_delete": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "group_upsert": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "help_window_open": {
+      "class": "chrome"
+    },
+    "identity_active": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "identity_add_full": {
+      "class": "operator-authority"
+    },
+    "identity_add_tactical": {
+      "class": "operator-authority"
+    },
+    "identity_authenticate": {
+      "class": "operator-authority"
+    },
+    "identity_list": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "identity_lock": {
+      "class": "operator-authority"
+    },
+    "identity_remove": {
+      "class": "operator-authority"
+    },
+    "log_frontend_error": {
+      "class": "presentation"
+    },
+    "logging_clear_history": {
+      "class": "presentation"
+    },
+    "logging_env_probes_rerun": {
+      "class": "presentation"
+    },
+    "logging_env_probes_snapshot": {
+      "class": "presentation"
+    },
+    "logging_export": {
+      "class": "presentation"
+    },
+    "logging_open_directory": {
+      "class": "chrome"
+    },
+    "logging_set_detailed_mode": {
+      "class": "presentation"
+    },
+    "logging_set_retention": {
+      "class": "presentation"
+    },
+    "logging_status": {
+      "class": "presentation"
+    },
+    "logging_window_open": {
+      "class": "chrome"
+    },
+    "magnetic_declination": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "mailbox_list": {
+      "class": "capability",
+      "mcp": "mailbox_list"
+    },
+    "mailbox_move": {
+      "class": "capability",
+      "mcp": "mailbox_move"
+    },
+    "mcp_connection_info": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "mesh_discover_post_offices": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "message_attachment_preview": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "message_attachment_save": {
+      "class": "capability",
+      "mcp": "message_attachment_save"
+    },
+    "message_delete": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "message_delete_bulk": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "message_move_bulk": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "message_read": {
+      "class": "capability",
+      "mcp": "message_read"
+    },
+    "message_restore": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "message_restore_bulk": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "message_send": {
+      "class": "capability",
+      "mcp": "message_send"
+    },
+    "message_set_read_state": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "message_set_read_state_bulk": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "messages_meta_query_for_log": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "modem_ardop_b2f_exchange": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "modem_ardop_connect": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "modem_ardop_disconnect": {
+      "class": "capability",
+      "mcp": "modem_ardop_disconnect"
+    },
+    "modem_get_status": {
+      "class": "capability",
+      "mcp": "modem_get_status"
+    },
+    "modem_vara_b2f_exchange": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "network_po_favorites_add": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "network_po_favorites_get": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "network_po_favorites_remove": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "network_po_favorites_set": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "onboarding_point_at_ack": {
+      "class": "presentation"
+    },
+    "open_forms_folder": {
+      "class": "chrome"
+    },
+    "open_webview_form": {
+      "class": "chrome"
+    },
+    "open_webview_reply": {
+      "class": "chrome"
+    },
+    "open_webview_viewer": {
+      "class": "chrome"
+    },
+    "outbox_staged_list": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "p2p_capabilities": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "p2p_peer_password_clear": {
+      "class": "operator-authority"
+    },
+    "p2p_peer_password_set": {
+      "class": "operator-authority"
+    },
+    "p2p_peer_password_status": {
+      "class": "capability",
+      "mcp": "p2p_peer_password_status"
+    },
+    "packet_allowed_stations_add": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "packet_allowed_stations_get": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "packet_allowed_stations_remove": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "packet_allowed_stations_set_allow_all": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "packet_config_get": {
+      "class": "capability",
+      "mcp": "packet_config_get"
+    },
+    "packet_config_set": {
+      "class": "capability",
+      "mcp": "packet_config_set"
+    },
+    "packet_connect": {
+      "class": "capability",
+      "mcp": "packet_connect"
+    },
+    "packet_list_audio_devices": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "packet_list_bluetooth_devices": {
+      "class": "capability",
+      "mcp": "packet_list_bluetooth_devices"
+    },
+    "packet_list_serial_devices": {
+      "class": "capability",
+      "mcp": "packet_list_serial_devices"
+    },
+    "packet_listen": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "packet_set_listen": {
+      "class": "capability",
+      "mcp": "packet_set_listen"
+    },
+    "platform_info": {
+      "class": "capability",
+      "mcp": "platform_info"
+    },
+    "position_current_fix": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "position_set_source": {
+      "class": "capability",
+      "mcp": "position_set_source"
+    },
+    "position_status": {
+      "class": "capability",
+      "mcp": "position_status"
+    },
+    "prepare_attachment": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "propagation_predict_path": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "propagation_prefs_read": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "propagation_prefs_write": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "propagation_update_solar": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "render_ics309_pdf": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "report_issue_flow": {
+      "class": "chrome"
+    },
+    "resolve_close_prompt": {
+      "class": "chrome"
+    },
+    "rig_list_models": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "routines_acknowledge_automatic": {
+      "class": "operator-authority"
+    },
+    "routines_acknowledge_write": {
+      "class": "operator-authority"
+    },
+    "routines_actions_list": {
+      "class": "capability",
+      "mcp": "routines_actions_list"
+    },
+    "routines_cancel": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "routines_consent_closure": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "routines_consent_grant": {
+      "class": "operator-authority"
+    },
+    "routines_delete": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "routines_dry_run": {
+      "class": "capability",
+      "mcp": "routines_dry_run"
+    },
+    "routines_export_run_artifact": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "routines_fleet_check": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "routines_get": {
+      "class": "capability",
+      "mcp": "routines_get"
+    },
+    "routines_journal": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "routines_list": {
+      "class": "capability",
+      "mcp": "routines_list"
+    },
+    "routines_missed_fires": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "routines_next_fires": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "routines_presets_delete": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "routines_presets_list": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "routines_presets_save": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "routines_run": {
+      "class": "capability",
+      "mcp": "routines_run"
+    },
+    "routines_run_status": {
+      "class": "capability",
+      "mcp": "routines_run_status"
+    },
+    "routines_runs_list": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "routines_save": {
+      "class": "capability",
+      "mcp": "routines_save"
+    },
+    "routines_set_enabled": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "routines_station_sets_delete": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "routines_station_sets_list": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "routines_station_sets_save": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "routines_take_radio": {
+      "class": "operator-authority"
+    },
+    "routines_validate": {
+      "class": "capability",
+      "mcp": "routines_validate"
+    },
+    "routines_validate_draft": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "send_form": {
+      "class": "capability",
+      "mcp": "send_form"
+    },
+    "send_webview_form": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "session_log_append": {
+      "class": "presentation"
+    },
+    "session_log_clear": {
+      "class": "presentation"
+    },
+    "session_log_snapshot": {
+      "class": "capability",
+      "mcp": "session_log_snapshot"
+    },
+    "set_close_to_tray": {
+      "class": "chrome"
+    },
+    "shell_mounted": {
+      "class": "chrome"
+    },
+    "stations_window_open": {
+      "class": "chrome"
+    },
+    "surface_dock_back": {
+      "class": "chrome"
+    },
+    "surface_focus": {
+      "class": "chrome"
+    },
+    "surface_pop_out": {
+      "class": "chrome"
+    },
+    "tauri_search_clear_recent": {
+      "class": "presentation"
+    },
+    "tauri_search_list_recent": {
+      "class": "presentation"
+    },
+    "tauri_search_list_saved": {
+      "class": "presentation"
+    },
+    "tauri_search_promote_recent": {
+      "class": "presentation"
+    },
+    "tauri_search_rebuild_index": {
+      "class": "presentation"
+    },
+    "tauri_search_record_recent": {
+      "class": "presentation"
+    },
+    "tauri_search_rename": {
+      "class": "presentation"
+    },
+    "tauri_search_reorder": {
+      "class": "presentation"
+    },
+    "tauri_search_run": {
+      "class": "capability",
+      "mcp": "tauri_search_run"
+    },
+    "tauri_search_save": {
+      "class": "presentation"
+    },
+    "tauri_search_unsave": {
+      "class": "presentation"
+    },
+    "telnet_allowed_stations_add_callsign": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "telnet_allowed_stations_add_ip": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "telnet_allowed_stations_get": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "telnet_allowed_stations_remove_callsign": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "telnet_allowed_stations_remove_ip": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "telnet_allowed_stations_set_allow_all": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "telnet_listen": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "telnet_listen_config_get": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "telnet_listen_config_set": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "telnet_p2p_abort": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "telnet_p2p_connect": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "telnet_post_office_abort": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "telnet_post_office_connect": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "telnet_set_listen": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "telnet_station_password_clear": {
+      "class": "operator-authority"
+    },
+    "telnet_station_password_is_set": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "telnet_station_password_set": {
+      "class": "operator-authority"
+    },
+    "test_tile_source": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "theme_broadcast_scheme": {
+      "class": "chrome"
+    },
+    "theme_get_scheme": {
+      "class": "chrome"
+    },
+    "tile_source_status": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "trash_empty": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "trash_purge_one": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "uninstall_cleanup_execute": {
+      "class": "operator-authority"
+    },
+    "uninstall_cleanup_preview": {
+      "class": "operator-authority"
+    },
+    "user_folders_list": {
+      "class": "capability",
+      "mcp": "user_folders_list"
+    },
+    "uvpro_connect": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "uvpro_disconnect": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "uvpro_get_channels": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "uvpro_get_status": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "uvpro_set_channel": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "uvpro_set_frequency": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "uvpro_set_mode": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "vara_allowed_stations_add": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "vara_allowed_stations_get": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "vara_allowed_stations_remove": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "vara_allowed_stations_set_allow_all": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "vara_close_session": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "vara_engine_available": {
+      "class": "capability",
+      "mcp": "vara_engine_available"
+    },
+    "vara_ini_apply": {
+      "class": "capability",
+      "mcp": "vara_ini_apply"
+    },
+    "vara_ini_read": {
+      "class": "capability",
+      "mcp": "vara_ini_read"
+    },
+    "vara_install_start": {
+      "class": "capability",
+      "mcp": "vara_install_start"
+    },
+    "vara_install_status": {
+      "class": "capability",
+      "mcp": "vara_install_status"
+    },
+    "vara_listen": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "vara_open_session": {
+      "class": "capability",
+      "mcp": "vara_open_session"
+    },
+    "vara_set_listen": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "vara_status": {
+      "class": "capability",
+      "mcp": "vara_status"
+    },
+    "verify_cms_connection": {
+      "class": "capability",
+      "mcp": "verify_cms_connection"
+    },
+    "wizard_persist_cms": {
+      "class": "operator-authority"
+    },
+    "wizard_persist_offline": {
+      "class": "operator-authority"
+    },
+    "wizard_reopen": {
+      "class": "chrome"
+    },
+    "wwv_offair_cat_configured": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "wwv_offair_discard_clip": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "wwv_offair_manual_ingest": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "wwv_offair_read_clip": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "wwv_offair_refresh": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
+    "wwv_offair_snapshot_read": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    }
+  },
+  "tool_budget": 92
+}
