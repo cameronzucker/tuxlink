@@ -3522,6 +3522,27 @@ pub struct ConfigViewDto {
     pub onboarding_tour_completed: bool,
     /// Tips seen during onboarding (tuxlink-10bkw). Mirrors `OnboardingConfig.tips_seen`.
     pub onboarding_tips_seen: Vec<String>,
+    /// Which HF modem a `radio.connect` routine step will dial
+    /// (tuxlink-fg0em). Mirrors the runtime's exactly-one rule in
+    /// `routines::actions::radio`: `vara`/`ardop` when exactly one modem is
+    /// configured; `both`/`none` are the run-refusal states, surfaced so the
+    /// designer's "Runs on" line can say so at authoring time instead of
+    /// letting the first run fail. VARA carries its configured bandwidth for
+    /// display.
+    pub routine_hf_modem: RoutineHfModemView,
+}
+
+/// See [`ConfigViewDto::routine_hf_modem`]. Internally tagged
+/// (`{"kind":"vara","bandwidth_hz":2300}`) — the `rename_all` lowercases the
+/// VARIANT tags only; the field name is already snake_case (see the shape
+/// test `routine_hf_modem_view_wire_shape`).
+#[derive(Debug, Serialize, Clone, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RoutineHfModemView {
+    Vara { bandwidth_hz: Option<u32> },
+    Ardop,
+    Both,
+    None,
 }
 
 impl From<&config::Config> for ConfigViewDto {
@@ -3555,6 +3576,14 @@ impl From<&config::Config> for ConfigViewDto {
                 .as_ref()
                 .map(|o| o.tips_seen.clone())
                 .unwrap_or_default(),
+            routine_hf_modem: match (&c.modem_ardop, &c.modem_vara) {
+                (Some(_), None) => RoutineHfModemView::Ardop,
+                (None, Some(v)) => RoutineHfModemView::Vara {
+                    bandwidth_hz: v.bandwidth_hz,
+                },
+                (Some(_), Some(_)) => RoutineHfModemView::Both,
+                (None, None) => RoutineHfModemView::None,
+            },
         }
     }
 }
@@ -10802,6 +10831,63 @@ hw:CARD=Device,DEV=0
         // tuxlink-5rvp / #882: close_to_tray maps through the From impl
         // (default true on the fixture).
         assert!(dto.close_to_tray);
+    }
+
+    // tuxlink-fg0em: the designer's "Runs on" line mirrors the runtime's
+    // exactly-one HF modem rule — all four states map through the From impl.
+    #[test]
+    fn config_view_dto_maps_routine_hf_modem_states() {
+        let mut cfg = cms_config_fixture();
+        cfg.modem_ardop = None;
+        cfg.modem_vara = None;
+        assert_eq!(
+            ConfigViewDto::from(&cfg).routine_hf_modem,
+            RoutineHfModemView::None
+        );
+
+        cfg.modem_vara = Some(crate::config::VaraUiConfig {
+            host: "127.0.0.1".into(),
+            cmd_port: 8300,
+            data_port: 8301,
+            bandwidth_hz: Some(2300),
+        });
+        assert_eq!(
+            ConfigViewDto::from(&cfg).routine_hf_modem,
+            RoutineHfModemView::Vara {
+                bandwidth_hz: Some(2300)
+            }
+        );
+
+        cfg.modem_ardop = Some(crate::config::ArdopUiConfig::default());
+        assert_eq!(
+            ConfigViewDto::from(&cfg).routine_hf_modem,
+            RoutineHfModemView::Both
+        );
+
+        cfg.modem_vara = None;
+        assert_eq!(
+            ConfigViewDto::from(&cfg).routine_hf_modem,
+            RoutineHfModemView::Ardop
+        );
+    }
+
+    // tuxlink-fg0em + serde-rename_all pitfall: variant TAGS lowercase via
+    // rename_all, the field stays snake_case — pin the exact wire shape the
+    // frontend types against.
+    #[test]
+    fn routine_hf_modem_view_wire_shape() {
+        let vara = serde_json::to_value(RoutineHfModemView::Vara {
+            bandwidth_hz: Some(2300),
+        })
+        .unwrap();
+        assert_eq!(
+            vara,
+            serde_json::json!({"kind": "vara", "bandwidth_hz": 2300})
+        );
+        assert_eq!(
+            serde_json::to_value(RoutineHfModemView::None).unwrap(),
+            serde_json::json!({"kind": "none"})
+        );
     }
 
     // tuxlink-bsiy: a config with review_inbound_before_download=true maps to a

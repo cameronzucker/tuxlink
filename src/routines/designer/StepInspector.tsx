@@ -42,6 +42,7 @@ import {
   type Step,
 } from '../routinesApi';
 import type { StepPatch } from './defDraft';
+import { RadioConnectSection } from './RadioConnectSection';
 import './StepInspector.css';
 
 export interface StepInspectorProps {
@@ -183,8 +184,14 @@ export function StepInspector({ step, actions, onChange, onRemove }: StepInspect
     return null;
   }
 
+  // tuxlink-fg0em: radio.connect's kv surface is the RadioConnectSection —
+  // there is no grid field to insert a completion into, so the helper only
+  // offers refs in JSON mode there.
   const showRefHelper =
-    isAction && (paramsMode === 'json' ? AT_REF_RE.test(paramsText) : atRefTargetKey() !== null);
+    isAction &&
+    (paramsMode === 'json'
+      ? AT_REF_RE.test(paramsText)
+      : step.action !== 'radio.connect' && atRefTargetKey() !== null);
 
   function insertRef(ref: string) {
     if (paramsMode === 'kv') {
@@ -285,7 +292,16 @@ export function StepInspector({ step, actions, onChange, onRemove }: StepInspect
                 {paramsMode === 'kv' ? 'edit as JSON' : 'edit as fields'}
               </button>
             </span>
-            {paramsMode === 'kv' ? (
+            {paramsMode === 'kv' && step.action === 'radio.connect' ? (
+              /* tuxlink-fg0em: radio.connect gets its dedicated section over
+                 the REAL selection surfaces instead of the generic grid; the
+                 JSON toggle above stays the escape hatch for any shape the
+                 section cannot express. */
+              <RadioConnectSection
+                params={committedParams}
+                onChange={(p) => onChange({ params: p })}
+              />
+            ) : paramsMode === 'kv' ? (
               <div className="param-grid" data-testid="param-grid">
                 {Object.keys(committedParams).map((key) => (
                   <div className="param-row" data-testid={`param-row-${key}`} key={key}>

@@ -182,6 +182,8 @@ const RESPONSES: Record<string, unknown> = {
     // tour has never completed. Harmless extra fields for every other view.
     onboarding_tour_completed: false,
     onboarding_tips_seen: [] as string[],
+    // tuxlink-fg0em: the designer's radio section "Runs on" line.
+    routine_hf_modem: { kind: 'vara', bandwidth_hz: 2300 },
   },
   // HintProvider's whole-section persistence write (skipTour/declineOffer/
   // dismissSingle) — resolves with no return value, matching the real
@@ -1250,7 +1252,7 @@ if (ROUTINES_FAMILY) {
         name: 'main',
         steps: [
           { id: 's1', action: 'rig.apply_preset', params: { preset: '@preset:40m-vara' }, timeout_s: 30 },
-          { id: 's2', action: 'radio.connect', params: { target: 'N0DAJ', freq_hz: 7103500 }, timeout_s: 180, on_radio_busy: 'wait' },
+          { id: 's2', action: 'radio.connect', params: { stations: ['N0DAJ', 'W7RMS'], bands: ['40m'] }, timeout_s: 180, on_radio_busy: 'wait' },
           { id: 's3', action: 'local.notify', params: { message: 'Morning check complete' } },
         ],
       },
@@ -1283,7 +1285,7 @@ if (ROUTINES_FAMILY) {
         steps: [
           { id: 'p1', action: 'local.compose', params: { template: 'preamble' } },
           { id: 'p2', control: 'branch', on: 'connected', then: ['p3'], else: ['p4', 'p5'] },
-          { id: 'p3', action: 'radio.connect', params: { target: 'W7RMS' }, timeout_s: 120 },
+          { id: 'p3', action: 'radio.connect', params: { stations: ['W7RMS'], bands: ['20m'] }, timeout_s: 120 },
           { id: 'p4', control: 'retry', step: 'p3', attempts: 3, backoff_s: 30 },
           { id: 'p5', control: 'delay', delay: '2m' },
           { id: 'p6', control: 'end', failed: false },
@@ -1419,7 +1421,12 @@ if (ROUTINES_FAMILY) {
   ];
 
   RESPONSES.routines_list = SUMMARIES;
-  RESPONSES.routines_get = (args?: Record<string, unknown>) => DEFS[String(args?.name)] ?? DEF_MORNING;
+  // D7 CAS envelope: routines_get returns { revision, def } — the designer
+  // destructures it (getRoutineWithRevision); a bare def hangs the load.
+  RESPONSES.routines_get = (args?: Record<string, unknown>) => ({
+    revision: 'rev-fixture-1',
+    def: DEFS[String(args?.name)] ?? DEF_MORNING,
+  });
   RESPONSES.routines_validate = (args?: Record<string, unknown>) => FINDINGS_BY_ROUTINE[String(args?.name)] ?? [];
   RESPONSES.routines_validate_draft = [];
   RESPONSES.routines_missed_fires = emptyLibrary

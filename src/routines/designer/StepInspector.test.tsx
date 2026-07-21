@@ -9,6 +9,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ActionInfo, ActionStep, ControlStep, RadioPreset, RoutineSummary, StationSet } from '../routinesApi';
 
 const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
@@ -48,12 +49,12 @@ beforeEach(() => {
 });
 
 const ACTIONS: ActionInfo[] = [
-  { name: 'radio.connect', label: '', description: '', needsRadio: true, needsInternet: false, transmits: true },
+  { name: 'radio.aprs_send', label: '', description: '', needsRadio: true, needsInternet: false, transmits: true },
 ];
 
 const ACTION_STEP: ActionStep = {
   id: 's1',
-  action: 'radio.connect',
+  action: 'radio.aprs_send',
   params: { stations: 'or-gateways', bands: ['40m', '80m'] },
   timeout_s: 30,
   on_radio_busy: 'wait',
@@ -77,8 +78,8 @@ describe('StepInspector — action step basics', () => {
   it('shows the step id read-only, the action name, and its capability flags', () => {
     renderInspector();
     expect(screen.getByTestId('inspector-step-id')).toHaveTextContent('s1');
-    expect(screen.getByText('radio.connect')).toBeInTheDocument();
-    const row = screen.getByText('radio.connect').closest('.insp-row') as HTMLElement;
+    expect(screen.getByText('radio.aprs_send')).toBeInTheDocument();
+    const row = screen.getByText('radio.aprs_send').closest('.insp-row') as HTMLElement;
     expect(row).toHaveTextContent('RIG');
     expect(row).toHaveTextContent('TX');
   });
@@ -120,7 +121,7 @@ describe('StepInspector — E3: description line + WRITES badge', () => {
   });
 
   it('does not render a description line when the action has none', () => {
-    // ACTIONS' radio.connect has an empty description.
+    // ACTIONS' radio.aprs_send has an empty description.
     renderInspector();
     expect(screen.queryByTestId('inspector-description')).not.toBeInTheDocument();
   });
@@ -135,7 +136,7 @@ describe('StepInspector — E3: description line + WRITES badge', () => {
 
   it('does not render a WRITES badge for a non-writes action', () => {
     renderInspector();
-    const row = screen.getByText('radio.connect').closest('.insp-row') as HTMLElement;
+    const row = screen.getByText('radio.aprs_send').closest('.insp-row') as HTMLElement;
     expect(row).not.toHaveTextContent('WRITES');
   });
 });
@@ -221,7 +222,7 @@ describe('StepInspector — params JSON edit (behind the toggle)', () => {
 
 describe('StepInspector — @-reference helper (assistance only)', () => {
   it('KV mode: shows completions when a row value starts with @, and clicking one fills that row without committing', async () => {
-    const step: ActionStep = { id: 's1', action: 'radio.connect', params: { stations: '@or-ga' } };
+    const step: ActionStep = { id: 's1', action: 'radio.aprs_send', params: { stations: '@or-ga' } };
     const { onChange } = renderInspector({ step });
     const helper = await screen.findByTestId('inspector-ref-helper');
     expect(helper).toHaveTextContent('@preset:hf-40m');
@@ -237,7 +238,7 @@ describe('StepInspector — @-reference helper (assistance only)', () => {
   });
 
   it('JSON mode: inserting a completion edits the textarea without committing', async () => {
-    const step: ActionStep = { id: 's1', action: 'radio.connect', params: { stations: '@or-ga' } };
+    const step: ActionStep = { id: 's1', action: 'radio.aprs_send', params: { stations: '@or-ga' } };
     const { onChange } = renderInspector({ step });
     fireEvent.click(screen.getByTestId('params-json-toggle'));
     await screen.findByTestId('inspector-ref-helper');
@@ -318,5 +319,52 @@ describe('StepInspector — end step', () => {
     expect(checkbox.checked).toBe(false);
     fireEvent.click(checkbox);
     expect(onChange).toHaveBeenCalledWith({ failed: true });
+  });
+});
+
+// ── tuxlink-fg0em: radio.connect routes to its dedicated section ──
+// The RadioConnectSection's own behavior is covered in
+// RadioConnectSection.test.tsx; here we pin the ROUTING: radio.connect kv
+// mode renders the section (never the generic grid, never the @-ref helper),
+// and the JSON toggle still reaches the raw textarea escape hatch.
+describe('StepInspector — radio.connect section routing', () => {
+  const RADIO_ACTIONS: ActionInfo[] = [
+    { name: 'radio.connect', label: '', description: '', needsRadio: true, needsInternet: false, transmits: true },
+  ];
+  const RADIO_STEP: ActionStep = {
+    id: 's2',
+    action: 'radio.connect',
+    params: { stations: ['N0DAJ'], bands: ['20m'] },
+    timeout_s: 180,
+    on_radio_busy: 'wait',
+  };
+
+  function renderRadio(step: ActionStep = RADIO_STEP) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const onChange = vi.fn();
+    render(
+      <QueryClientProvider client={qc}>
+        <StepInspector step={step} actions={RADIO_ACTIONS} onChange={onChange} onRemove={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    return onChange;
+  }
+
+  it('kv mode renders the radio section instead of the generic grid', () => {
+    renderRadio();
+    expect(screen.getByTestId('radio-connect-section')).toBeInTheDocument();
+    expect(screen.queryByTestId('param-grid')).not.toBeInTheDocument();
+  });
+
+  it('suppresses the @-ref helper in kv mode even with an @-bearing param', () => {
+    renderRadio({ ...RADIO_STEP, params: { stations: '@or-ga' } });
+    expect(screen.queryByTestId('inspector-ref-helper')).not.toBeInTheDocument();
+  });
+
+  it('edit as JSON still reaches the raw textarea escape hatch', () => {
+    renderRadio();
+    fireEvent.click(screen.getByTestId('params-json-toggle'));
+    expect(screen.getByTestId('inspector-params')).toBeInTheDocument();
+    expect(screen.queryByTestId('radio-connect-section')).not.toBeInTheDocument();
   });
 });
