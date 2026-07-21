@@ -121,12 +121,11 @@
 .aprs-wx-card__close:hover { color: #dcebf6; }
 
 /* tuxlink-hepq: Weather SITREP compose button. Operator layout (tuxlink-8kki):
-   top-LEFT corner (topmost), with the Layers panel directly beneath it. */
+   top-LEFT corner (topmost), with the Layers panel directly beneath it.
+   tuxlink-w68mb: placed by the .aprs-map-topleft cluster (one flex row with
+   the ↗ Pop out chip — two independent absolutes overlapped at narrow pane
+   widths); visual style unchanged. */
 .aprs-wx-sitrep {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  z-index: 1100; /* above Leaflet panes (200-700) AND its control container (1000) so app controls/popups are never covered (impl review) */
   background: #11283b;
   color: #dcebf6;
   border: 1px solid #2c4a63;
@@ -247,15 +246,23 @@
   border-color: var(--border, #2c3a47);
 }
 
-/* tuxlink-w68mb: ↗ Pop out — the map's own pop-out entry point, joining the
-   top-right control cluster: [↗ Pop out] [⌖ at right:48] [zoom at right:10].
-   Text-labeled (spec §1 visual-pathway rule); same dark map-control treatment
-   as the recenter control; 1100 clears Leaflet panes + control container. */
-.aprs-map-popout {
+/* tuxlink-w68mb: the top-left action cluster — Weather SITREP then the ↗ Pop
+   out chip in ONE flex row (overlap-proof by construction; adrev 2026-07-20).
+   1100 clears Leaflet panes (200-700) + its control container (1000). The
+   Layers panel sits directly beneath at top:44 (tuxlink-8kki order kept). */
+.aprs-map-topleft {
   position: absolute;
   top: 10px;
-  right: 86px;
+  left: 10px;
   z-index: 1100;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ↗ Pop out — the map's own pop-out entry point. Text-labeled (spec §1
+   visual-pathway rule); same dark map-control treatment as the WX card. */
+.aprs-map-popout {
   height: 29px;
   padding: 0 10px;
   display: inline-flex;

@@ -20,6 +20,24 @@
 .aprs-dock-tabgroup {
   display: flex;
   align-items: stretch;
+  /* tuxlink-w68mb (adrev 2026-07-20, both rounds): the dock column can shrink
+     to its 300px floor (.panes--with-dock) / 260px (legacy-dock) at the 900px
+     window minimum, where even the tab labels alone exceed the row. The tab
+     GROUP is the one shrinkable segment: it scrolls horizontally under
+     squeeze while the map slot, station pop-out, and × close stay pinned and
+     reachable (flex: 0 0 auto) — no control is ever clipped off the edge,
+     which the pre-existing overflow:hidden on .aprs-dock-surface silently
+     did. Scrollbar hidden: the cut-off tab edge is the scroll affordance. */
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.aprs-dock-tabgroup::-webkit-scrollbar {
+  display: none;
+}
+.aprs-dock-maptoggle,
+.aprs-dock-map-popped {
+  flex: 0 0 auto;
 }
 
 /* tuxlink-sdjd: the global `input,textarea,select,button { border-radius: 6px }`
@@ -42,6 +60,10 @@
 /* Exclusive chat⇄modem tabs — content-sized, hairline-separated, accent
    underline (inset shadow) + surface fill on the active tab. */
 .aprs-dock-tab {
+  /* Inside the scrollable tab group: never crush or wrap a label — the group
+     scrolls instead (tuxlink-w68mb floor policy above). */
+  flex: 0 0 auto;
+  white-space: nowrap;
   padding: 8px 11px;
   font: inherit;
   font-size: 12px;

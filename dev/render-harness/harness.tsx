@@ -104,11 +104,15 @@ import type { MessageMeta } from '../../src/mailbox/types';
 // window shell + the docked-side pathway affordances, smoked on WebKitGTK.
 //   ?view=pop-routines | pop-tacmap | pop-aprschat   — the popped OS window
 //   ?view=vacated-routines | vacated-tacmap | vacated-aprschat — main-shell traces
-//   ?view=header-routines | header-tacmap | header-aprschat — docked ↗ affordances
+//   ?view=header-routines | header-tacmap | header-tacmap-popped | header-aprschat — dock headers
+//   ?view=map-popout — the map-surface ↗ Pop out cluster (tuxlink-w68mb; try ?w=240)
 import { PoppedSurfaceHost } from '../../src/dock/PoppedSurfaceHost';
 import type { SurfaceId } from '../../src/dock/dockState';
 import { MenuBar } from '../../src/shell/chrome/MenuBar';
 import { AprsDockTabs } from '../../src/aprs/AprsDockTabs';
+// tuxlink-w68mb: the map-surface ↗ Pop out fixture mounts the real map (its
+// leaflet CSS import is already above).
+import { AprsPositionsMap } from '../../src/aprs/AprsPositionsMap';
 import { AprsChatPanel } from '../../src/aprs/AprsChatPanel';
 import type { AprsConfigDto, ChannelMessage, HeardPosition } from '../../src/aprs/aprsTypes';
 // AprsPositionsMap (mounted inside the popped Tac Map surface) renders through
@@ -126,7 +130,7 @@ const view = (params.get('view') ?? 'home') as
   | 'contacts' | 'favorites' | 'onboarding' | 'routines'
   | 'pop-routines' | 'pop-tacmap' | 'pop-aprschat'
   | 'vacated-routines' | 'vacated-tacmap' | 'vacated-aprschat'
-  | 'header-routines' | 'header-tacmap' | 'header-aprschat';
+  | 'header-routines' | 'header-tacmap' | 'header-tacmap-popped' | 'map-popout' | 'header-aprschat';
 
 // tuxlink-dmwte task 11: the dockable-surfaces fixture families. `ROUTINES_FAMILY`
 // gates the big routines-data block below (the popped/header/vacated Routines
@@ -1666,10 +1670,11 @@ function HeaderFixtureView() {
     return <HeaderRoutines initial={initial} />;
   }
   if (view === 'header-tacmap') {
-    // The Tac Map header control: the Map toggle + the "↗ Pop out" button
-    // beside it (AprsDockTabs docked, onPopOutMap provided).
+    // tuxlink-w68mb: the dock header is a SINGLE row in every state; the ↗
+    // Pop out entry point lives on the map surface (see 'map-popout' below).
+    // Docked state: [⊞ Map][tabs][⤢][×] in one row.
     return (
-      <DockColumn label="APRS dock — Tac Map docked (↗ Pop out affordance)">
+      <DockColumn label="APRS dock — single row, Tac Map docked (Map toggle; pop-out lives on the map)">
         <AprsDockTabs
           active="aprs"
           unread={3}
@@ -1679,8 +1684,41 @@ function HeaderFixtureView() {
           onClose={() => undefined}
           mapOpen={false}
           onToggleMap={() => undefined}
-          onPopOutMap={() => undefined}
         />
+      </DockColumn>
+    );
+  }
+  if (view === 'header-tacmap-popped') {
+    // tuxlink-w68mb: the widest single-row state — the compact "Map ↗"
+    // pathway + ⇤ dock-back glyph replace the Map toggle (spec §5 AMD-3).
+    // Squeeze this route to the 300px dock floor to eyeball the tab-group
+    // scroll policy (?w=300).
+    return (
+      <DockColumn label="APRS dock — single row, Tac Map POPPED (Map ↗ pathway + ⇤)">
+        <AprsDockTabs
+          active="aprs"
+          unread={3}
+          modemEnabled
+          stationCount={4}
+          onSelect={() => undefined}
+          onClose={() => undefined}
+          mapPopped
+          onFocusMap={() => undefined}
+          onDockBackMap={() => undefined}
+        />
+      </DockColumn>
+    );
+  }
+  if (view === 'map-popout') {
+    // tuxlink-w68mb: the relocated ↗ Pop out entry point on the map surface —
+    // the top-left cluster (Weather SITREP + Pop out chip, one flex row) with
+    // the Layers panel beneath and recenter/zoom top-right. Narrow the route
+    // (?w=240) to verify the cluster cannot overlap (adrev 2026-07-20 P2).
+    return (
+      <DockColumn label="Tac Map surface — top-left cluster (SITREP + ↗ Pop out)">
+        <div style={{ height: 480, display: 'flex', minHeight: 0 }}>
+          <AprsPositionsMap positions={[]} operatorGrid="DM41vv" onPopOut={() => undefined} />
+        </div>
       </DockColumn>
     );
   }

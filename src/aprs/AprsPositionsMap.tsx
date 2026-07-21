@@ -684,22 +684,28 @@ export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocus
 
   return (
     <div className="aprs-positions-map" data-testid="aprs-positions-map">
-      {/* tuxlink-w68mb: ↗ Pop out joins the map's own top-right control
-          cluster (left of recenter ⌖ at right:48 and zoom at right:10) —
-          text-labeled per the spec §1 visual-pathway rule. Rendered only for
-          the inline caller; the popped-window host omits onPopOut. */}
-      {onPopOut && (
-        <button
-          type="button"
-          className="aprs-map-popout"
-          data-testid="aprs-map-popout"
-          title="Open the Tac Map in its own window"
-          onClick={onPopOut}
-        >
-          <span className="aprs-map-popout-glyph" aria-hidden="true">↗</span>
-          Pop out
-        </button>
-      )}
+      {/* tuxlink-w68mb: the top-left action cluster — Weather SITREP (first,
+          per the tuxlink-8kki operator layout) then the ↗ Pop out chip
+          (text-labeled per the spec §1 visual-pathway rule; inline caller
+          only — the popped host omits onPopOut). ONE flex row, so the two
+          controls can never overlap at narrow pane widths (adrev 2026-07-20:
+          two independent absolutes collided below ~420px). The Layers panel
+          stays directly beneath at top:44. */}
+      <div className="aprs-map-topleft">
+        <WxSitrepControl wx={wx} operatorGrid={operatorGrid || undefined} />
+        {onPopOut && (
+          <button
+            type="button"
+            className="aprs-map-popout"
+            data-testid="aprs-map-popout"
+            title="Open the Tac Map in its own window"
+            onClick={onPopOut}
+          >
+            <span className="aprs-map-popout-glyph" aria-hidden="true">↗</span>
+            Pop out
+          </button>
+        )}
+      </div>
       <AprsLayersPanel
         enabled={filter.enabled}
         counts={counts}
@@ -731,7 +737,6 @@ export function AprsPositionsMap({ positions, operatorGrid, envStations, onFocus
           selectedId={selectedPeer?.id ?? null}
           liveAprsCallsigns={liveAprsCallsigns}
         />
-        <WxSitrepControl wx={wx} operatorGrid={operatorGrid || undefined} />
         <LeafletRecenterControl target={me} zoom={OPERATOR_ZOOM} />
       </LeafletMap>
     </div>
