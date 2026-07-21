@@ -12,6 +12,8 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { BandMatrix } from './BandMatrix';
 import { GATEWAY_PREFILL_EVENT } from '../favorites/prefillEvent';
+import { favoriteKey } from '../favorites/dialToFavorite';
+import type { FavoriteDial } from '../favorites/types';
 import type { Station } from './stationModel';
 import type { PathPrediction } from './propagationApi';
 import type { BandDot } from '../ft8ui/ft8Types';
@@ -126,6 +128,29 @@ describe('BandMatrix', () => {
       expect(ardopStar.textContent).toBe('★');
       expect(ardopStar.getAttribute('aria-pressed')).toBe('true');
       expect(screen.getByTestId('save-vara-hf-7103').textContent).toBe('☆');
+    });
+
+    // tuxlink-ixasg (operator repro 2026-07-20): starring ONE vara channel
+    // must not paint the star on every vara channel of the station. Uses the
+    // REAL favoriteKey so this pins the per-CHANNEL identity end to end.
+    it('a starred favorite fills ONLY its own freq row, not every same-mode row', () => {
+      const starredFavorites = new Map([
+        [favoriteKey({ mode: 'vara-hf', gateway: 'N0DAJ', freq: '7.103' }), true],
+      ]);
+      const isSaved = (d: FavoriteDial) => starredFavorites.get(favoriteKey(d)) ?? false;
+      render(
+        <BandMatrix
+          station={station}
+          prediction={prediction}
+          predictionStatus="ok"
+          utcHour={21}
+          onSaveFavorite={vi.fn()}
+          isSaved={isSaved}
+        />,
+      );
+      expect(screen.getByTestId('save-vara-hf-7103').getAttribute('aria-pressed')).toBe('true');
+      expect(screen.getByTestId('save-vara-hf-3590').getAttribute('aria-pressed')).toBe('false');
+      expect(screen.getByTestId('save-ardop-hf-7103').getAttribute('aria-pressed')).toBe('false');
     });
 
     it('renders no ☆ at all when onSaveFavorite is omitted', () => {

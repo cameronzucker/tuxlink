@@ -376,11 +376,12 @@ export function ContactsPanel({ initialScope = 'all', onConnectFavorite }: Conta
   // ★ on a detail-pane dial = that dial is a starred Favorite (it appears in
   // the Favorites scope and the ribbon Connect targets). Find-or-create then
   // toggle — the StationFinderPanel save-favorite pattern, keyed the same way.
-  // NOTE on identity: `favoriteKey` is mode+gateway — the app-wide favorite
-  // unit is per-mode-per-gateway (dialToFavorite.ts), with `freq` an attribute
-  // (the preferred dial), NOT part of the identity. Two same-mode channels to
-  // one gateway therefore share ONE star by design (Codex adrev proposed a
-  // per-freq key; rejected as a data-model mismatch with the backend unit).
+  // NOTE on identity (tuxlink-ixasg, operator decision 2026-07-20): the
+  // app-wide favorite unit is per-CHANNEL — `favoriteKey` is
+  // mode+gateway+freq|transport (dialToFavorite.ts). Two same-mode channels
+  // to one gateway are two stars. This reverses the earlier sbf03-era
+  // rejection of a per-freq key: the record stores one freq and the backend
+  // keys by id, so per-mode was only ever a frontend collapse.
   const starPendingRef = useRef<Set<string>>(new Set());
   const toggleDialStar = async (dial: FavoriteDial) => {
     // Serialize per-dial (Codex adrev P2): a rapid double-click before the

@@ -47,7 +47,17 @@ export function hzToMhzString(hz: number): string {
  * present (the caller then CLEARS the field — the C4 clear-on-empty fix).
  */
 export function dialFreqToMhzString(dial: FavoriteDial): string | null {
-  const raw = dial.freq;
+  return freqStringToCanonicalMhz(dial.freq);
+}
+
+/**
+ * The magnitude heuristic itself, extracted (tuxlink-ixasg) so `favoriteKey`
+ * keys favorites through the SAME canonicalization the panels use — a kHz
+ * record ("14105.0") and a MHz dial ("14.105") are one physical channel and
+ * must produce one key. Any change here changes favorite identity: keep the
+ * two consumers (this file's field normalization + favoriteKey) in mind.
+ */
+export function freqStringToCanonicalMhz(raw: string | undefined): string | null {
   if (!raw) return null;
   // Pull the first numeric token so "7.103 MHz" and "14105.0 kHz" both parse.
   const m = raw.match(/[\d.]+/);
