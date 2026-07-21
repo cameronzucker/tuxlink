@@ -4,9 +4,9 @@
 // arrival. Mock scaffold copied from AppShell.routines.test.tsx (that file
 // knows which backends a real AppShell mount needs).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, within, waitFor, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { ReactNode } from 'react';
+import { useState, useEffect, type ReactNode } from 'react';
 import type { MessageMeta } from '../mailbox/types';
 import type { DockSnapshot, DockMode } from '../dock/dockState';
 
@@ -15,12 +15,42 @@ import type { DockSnapshot, DockMode } from '../dock/dockState';
 // reassigns it to a fresh object and `rerender`s so the shell's `dock:changed`
 // effect (keyed on the snapshot) fires. Spies + the mutable ref go through
 // `vi.hoisted` since the `vi.mock` factory is hoisted above module top-level.
-const { mockFocusSurface, mockPopOut, mockDockBack, dockRef } = vi.hoisted(() => ({
+//
+// `dockListeners` backs a SECOND way to push a dock-state transition: see
+// `pushDockSnapshot` below. Most of this file's arrival tests mutate
+// `dockRef.current` and then force a full-tree `rerender(<AppShell />)`,
+// which re-executes every ancestor in the tree, INCLUDING `<HintProvider>`
+// (AppShell.tsx wraps `AppShellInner` in it). `HintProvider`'s context
+// `value` is a fresh, unmemoized object literal every render, so a full-tree
+// rerender always hands `AppShellInner` a new `hints` reference regardless
+// of the dock transition. That masks any bug in a `useMemo`/`useCallback`
+// dependency array that omits a dock-derived value (like `stationIntelPopped`
+// below): the memo recomputes anyway, for the unrelated reason that `hints`
+// changed too, and a missing dependency test would false-negative. A real
+// `dock:changed` event in production re-renders ONLY `AppShellInner` (it owns
+// the `useDockState()` call), never its `HintProvider` ancestor, so
+// `pushDockSnapshot` reproduces that: it notifies the reactive `useDockState`
+// mock's subscribers directly, inside `act()`, without touching RTL's
+// `rerender` or the ancestor tree.
+const { mockFocusSurface, mockPopOut, mockDockBack, dockRef, dockListeners } = vi.hoisted(() => ({
   mockFocusSurface: vi.fn(async () => {}),
   mockPopOut: vi.fn(async () => {}),
   mockDockBack: vi.fn(async () => {}),
   dockRef: { current: null as DockSnapshot | null },
+  dockListeners: new Set<() => void>(),
 }));
+
+/** Push a new dock snapshot the way a real `dock:changed` event would land:
+ *  ONLY the component(s) subscribed via `useDockState()` re-render, not the
+ *  whole tree. See the mock's header comment above for why this differs from
+ *  the `dockRef.current = X; rerender(<AppShell />)` pattern used elsewhere
+ *  in this file. */
+function pushDockSnapshot(snap: DockSnapshot) {
+  act(() => {
+    dockRef.current = snap;
+    dockListeners.forEach((listener) => listener());
+  });
+}
 
 function snapshot(routines: DockMode, context: unknown = null): DockSnapshot {
   return {
@@ -131,7 +161,23 @@ vi.mock('../dock/dockState', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../dock/dockState')>();
   return {
     ...actual, // keep the real consentHostWindow + SURFACE_WINDOW_LABEL
-    useDockState: () => dockRef.current,
+    // Reactive: subscribes to `dockListeners` so `pushDockSnapshot` (above)
+    // can trigger a re-render of ONLY the calling component (AppShellInner),
+    // matching how the real `dock:changed` listener drives `useDockState`.
+    // Still returns the plain `dockRef.current` value at every render, so
+    // every OTHER test in this file that sets `dockRef.current` directly
+    // (at initial mount, or via a full-tree `rerender`) is unaffected.
+    useDockState: () => {
+      const [, forceRender] = useState(0);
+      useEffect(() => {
+        const listener = () => forceRender((n) => n + 1);
+        dockListeners.add(listener);
+        return () => {
+          dockListeners.delete(listener);
+        };
+      }, []);
+      return dockRef.current;
+    },
     focusSurface: mockFocusSurface,
     popOut: mockPopOut,
     dockBack: mockDockBack,
@@ -673,6 +719,34 @@ describe('AppShell dock wiring (task 8)', () => {
       </QueryClientProvider>,
     );
 
+    expect(screen.queryByRole('dialog', { name: /station intelligence/i })).not.toBeInTheDocument();
+  });
+
+  // Reviewer finding (Important, post-tuxlink-9obx2 review): the pre-mount-
+  // popped test above ("while station_intelligence is popped, Tools ->
+  // Station Intelligence focuses...") cannot discriminate a stale-closure
+  // bug, since `handlers` is freshly built on the FIRST render and already
+  // captures the right `stationIntelPopped` value with no prior render to go
+  // stale relative to. This test starts DOCKED, renders, and only THEN
+  // transitions to popped via `pushDockSnapshot` (a re-render of ONLY
+  // AppShellInner, mirroring a real `dock:changed` event; see that helper's
+  // doc comment for why the OTHER arrival tests' `rerender(<AppShell />)`
+  // pattern cannot be reused here without masking the bug), so firing the
+  // Tools menu action afterward exercises whatever closure the `handlers`
+  // useMemo held across that transition. It would have caught the bug where
+  // `stationIntelPopped` was missing from that memo's dependency array: the
+  // memo never recomputed, so the menu action kept calling
+  // `setCatalogBuilderOpen(true)` against a render guard that had already
+  // flipped to false; a silent dead action.
+  it('regression: popping station_intelligence mid-session (after mount) still makes Tools -> Station Intelligence focus the window, not a dead action', async () => {
+    dockRef.current = snapshot('docked'); // station_intelligence docked (default)
+    renderShell();
+    await screen.findByTestId('folder-sidebar');
+
+    pushDockSnapshot(stationIntelSnapshot('popped'));
+
+    clickMenu('Tools', /station intelligence/i);
+    await waitFor(() => expect(mockFocusSurface).toHaveBeenCalledWith('station_intelligence'));
     expect(screen.queryByRole('dialog', { name: /station intelligence/i })).not.toBeInTheDocument();
   });
 

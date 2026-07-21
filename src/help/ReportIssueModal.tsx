@@ -19,7 +19,7 @@
  * NOT a separate OS window — inline overlay per feedback_inline_ui_no_window_clutter.
  */
 
-import { useEffect, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { save as saveDialog } from '@tauri-apps/plugin-dialog';
 // tuxlink-uxvn: open external URLs through the Tauri shell plugin (the project's
@@ -443,7 +443,18 @@ export function useReportIssueController(
     })();
   }, []);
 
-  return { start };
+  // `start` is already stable (useCallback, empty deps); wrap the RETURN
+  // object in useMemo too, keyed on `start`, so `reportIssueController`
+  // itself is referentially stable across re-renders (not a fresh `{ start
+  // }` wrapper every call). AppShell.tsx embeds this whole object in its
+  // `handlers` useMemo's dependency array; an unmemoized return here made
+  // that memo recompute on EVERY AppShellInner render regardless of its
+  // other listed deps, silently defeating the memoization it was meant to
+  // provide (found while diagnosing bd tuxlink-9obx2's stale-closure fix,
+  // which otherwise could never be mutation-verified: `handlers` was
+  // recomputing unconditionally, so a genuinely missing dependency there
+  // never actually went stale in practice).
+  return useMemo(() => ({ start }), [start]);
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────

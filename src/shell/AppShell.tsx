@@ -1994,8 +1994,26 @@ function AppShellInner() {
       setReportIssueState({ kind: 'intro' });
     },
     // bd tuxlink-9obx2: dock-aware; while popped, focuses the window
-    // instead of opening a second inline copy (mirrors openRoutines above).
-    openCatalogBuilder: openOrFocusStationIntel,
+    // instead of opening a second inline copy (mirrors openRoutines/openElmer
+    // above). Inlined against `stationIntelPopped` directly, matching the
+    // sibling handlers' structure, rather than delegating to the separately
+    // memoized `openOrFocusStationIntel` useCallback (still used as-is by the
+    // ribbon chip and the sidebar/Message-menu "Find a Gateway" entries,
+    // which read it fresh every render and are unaffected). Delegating here
+    // captured a stale closure: `openOrFocusStationIntel`'s OWN identity was
+    // never listed in this `useMemo`'s deps below, so popping Station
+    // Intelligence after mount left this handler holding the pre-pop closure
+    // (captured `stationIntelPopped === false` forever), which called
+    // `setCatalogBuilderOpen(true)` on every subsequent Tools -> Station
+    // Intelligence click - true but useless, since the render guard
+    // `catalogBuilderOpen && !stationIntelPopped` (below) is false and
+    // nothing renders. Silent dead menu action. `stationIntelPopped` is now
+    // listed directly in this memo's deps, same as `routinesPopped` /
+    // `elmerPopped`.
+    openCatalogBuilder: () => {
+      if (stationIntelPopped) { void focusSurface('station_intelligence'); return; }
+      setCatalogBuilderOpen(true);
+    },
     openRequestCenter: (initialView = 'home') => setRequestCenter({ initialView }),
     // routines plan-5 Task 7: Routines → Routines opens the dashboard view.
     // tuxlink-dmwte task 8, behavior 2 (spec §5): while popped, the menu never
@@ -2037,7 +2055,7 @@ function AppShellInner() {
     // — the same action the first-run offer card's "Start tour" fires.
     replayTour: () => hints.startTour(),
     quit: () => { void invoke('app_quit'); },
-  }), [openMessage, archiveOpen, selectedMessage, deleteByIdAndFolder, reportIssueController, aprsOpen, dockTab, hints, routinesPopped, elmerPopped, onRoutinesNavigate]);
+  }), [openMessage, archiveOpen, selectedMessage, deleteByIdAndFolder, reportIssueController, aprsOpen, dockTab, hints, routinesPopped, elmerPopped, stationIntelPopped, onRoutinesNavigate]);
 
   const editDraft = useCallback((draftId: string) => {
     void invoke('compose_window_open', { draftId });
