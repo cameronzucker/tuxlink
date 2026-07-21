@@ -84,19 +84,19 @@ vi.mock('./dock/surfaceRegistry', () => ({
   SURFACE_REGISTRY: {
     routines: {
       id: 'routines',
-      title: 'Routines — Tuxlink',
+      title: 'Routines - Tuxlink',
       Component: () => <div data-testid="pop-routines-surface-mock" />,
       StatusStrip: () => <div data-testid="pop-routines-strip-mock" />,
     },
     tac_map: {
       id: 'tac_map',
-      title: 'Tac Map — Tuxlink',
+      title: 'Tac Map - Tuxlink',
       Component: () => <div data-testid="pop-tacmap-surface-mock" />,
       StatusStrip: () => <div data-testid="pop-tacmap-strip-mock" />,
     },
     aprs_chat: {
       id: 'aprs_chat',
-      title: 'APRS Chat — Tuxlink',
+      title: 'APRS Chat - Tuxlink',
       Component: () => {
         useFirstOpenTip('aprs'); // the real regression trigger — see comment above
         return <div data-testid="pop-aprschat-surface-mock" />;

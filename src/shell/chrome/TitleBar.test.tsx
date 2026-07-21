@@ -16,7 +16,7 @@ describe('TitleBar', () => {
   it('renders the app name and active folder', () => {
     render(<TitleBar folderLabel="Inbox" />);
     expect(screen.getByText('Tuxlink')).toBeInTheDocument();
-    expect(screen.getByText('— Inbox')).toBeInTheDocument();
+    expect(screen.getByText('- Inbox')).toBeInTheDocument();
   });
 
   it('has a drag region', () => {

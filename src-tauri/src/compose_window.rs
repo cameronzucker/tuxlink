@@ -193,7 +193,7 @@ pub fn compose_window_open(
     let spec = SecondaryWindowSpec {
         label: label.clone(),
         route,
-        title: "New Message — Tuxlink".to_string(),
+        title: "New Message - Tuxlink".to_string(),
         inner_size: (1100.0, inner_h),
         min_inner_size: (720.0, 560.0),
         decorations: false,
