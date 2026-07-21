@@ -153,6 +153,41 @@ with one sentence of justification tied to the findings themselves.
 - Disposition of findings: filed as tuxlink-qtim5 (setup dead-end arm,
   filed P2 per severity calibration) and tuxlink-tteto (map layer aging).
 
+### 2026-07-20 — fg0em designer radio entry (PR #1224, commit e9d20a46) — pair 13, matched
+
+- 5.5 transcript: dev/adversarial/2026-07-20-fg0em-radio-entry-codex.md
+- 5.6 transcript: dev/adversarial/2026-07-20-fg0em-radio-entry-codex-gpt56.md
+- **Methodology incident (ours, not the models'):** both rounds launched
+  after a shell-cwd reset, so Codex's workdir was the MAIN checkout on a
+  stale operator branch — `git diff origin/main..HEAD` there showed
+  post-#1219/#1220 code as "removals". Both models still located and
+  reviewed the real fg0em code (file:line refs precise), but each emitted
+  baseline-skew artifacts (5.5: "reverts parse-if-string" P1 + harness
+  "removals" P2; 5.6: the harness hunks as its own P2). Grounded and
+  discarded; the real fix was merging origin/main into the branch. Standing
+  rule: verify Codex workdir = the branch worktree BEFORE launching.
+- Convergent real findings (both): bands whole-value ref silently dropped
+  (P1, data loss — fixed); case-variant bands newly rejected at save while
+  runtime accepts them (fixed: BandList-scoped case-insensitive allowed
+  matching); finder fetch guard pinning wrong modes pre-config (fixed);
+  60m band-edge frontend/backend drift (deferred to hq3e2).
+- 5.6-unique real catches: the Runs-on line ignored PACKET-link precedence
+  (P1 — verified against radio.rs and fixed with a Packet variant +
+  corrected bands hint); malformed-listen self-repair blocked by the
+  extras-preservation pass (P2, fixed); fractional listen passes editor,
+  fails u64 (P2, fixed); stale listenText vs same-step updates (P2, fixed);
+  the band-toggle test's fire-and-inspect parent was false-green for
+  sequential edits (P2 — suite moved to a controlled harness); duplicate
+  stations removed by value not index (P3, fixed).
+- 5.5-unique: none beyond the artifacts; tighter writeup, shallower round.
+- Quality delta: 5.6 clearly stronger here — six unique real findings incl.
+  the packet-precedence P1 the in-house build and 5.5 both missed.
+- Deception/cheating indicators: **none observed** either round; both
+  respected read-only, both cited real refs (artifacts traced to OUR wrong
+  workdir, not fabrication).
+- Disposition: all real findings fixed in a7f55824+ except 60m edge drift
+  and the vocabulary note, both carried into tuxlink-hq3e2.
+
 ### 2026-07-20 — sq72z Routines situation review (design + evidence + path, pre-PR) — pair 12, matched
 
 - Scope: NOT a diff review — a situation-level second opinion on the Routines

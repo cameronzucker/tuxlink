@@ -39,7 +39,7 @@
 
 use serde_json::Value;
 
-use crate::action::{ActionDescriptor, ValueType};
+use crate::action::{ActionDescriptor, ParamSpec, ValueType};
 use crate::refs::VarPath;
 use crate::types::{RoutineDef, Step, StepId};
 
@@ -444,7 +444,7 @@ fn check_value(
                     ));
                 }
                 if let Some(allowed) = spec.allowed {
-                    if !allowed.contains(&s.as_str()) {
+                    if !allowed_contains(spec, allowed, s) {
                         push(not_allowed(routine, a, spec, s, allowed));
                     }
                 }
@@ -515,7 +515,7 @@ fn check_value(
                     }
                     Value::String(s) => {
                         if let Some(allowed) = spec.allowed {
-                            if !allowed.contains(&s.as_str()) {
+                            if !allowed_contains(spec, allowed, s) {
                                 push(not_allowed(routine, a, spec, s, allowed));
                             }
                         }
@@ -566,6 +566,21 @@ fn mismatch(
             spec.example
         ),
     )
+}
+
+/// Allowed-vocabulary membership. `BandList` compares case-insensitively
+/// (tuxlink-fg0em adrev consensus): the runtime's `band_range` lookup is
+/// `eq_ignore_ascii_case`, so `"20M"` has always executed — the validator
+/// must not block on next save what the runtime accepts. Every other
+/// allowed-list stays exact-match: enum-typed params (busy policies, listing
+/// modes) deserialize case-SENSITIVELY downstream, and a case-insensitive
+/// pass here would trade a teaching finding for a runtime serde error.
+fn allowed_contains(spec: &ParamSpec, allowed: &[&str], s: &str) -> bool {
+    if matches!(spec.ty, ValueType::BandList) {
+        allowed.iter().any(|a| a.eq_ignore_ascii_case(s))
+    } else {
+        allowed.contains(&s)
+    }
 }
 
 fn not_allowed(
@@ -866,6 +881,25 @@ mod tests {
         assert_eq!(f.severity, Severity::Error);
         assert!(f.message.contains("99m"), "{}", f.message);
         assert!(f.message.contains("20m"), "lists the vocabulary: {}", f.message);
+    }
+
+    // tuxlink-fg0em adrev consensus: the runtime's band lookup is
+    // case-insensitive and always was — "20M" executed before the allowed
+    // list existed, so the validator must accept it too (BandList only;
+    // enum-typed allowed-lists stay exact so serde failures keep their
+    // teaching finding).
+    #[test]
+    fn band_case_variants_stay_valid() {
+        let def = routine(vec![action_step(
+            "s2",
+            "radio.connect",
+            json!({"stations": ["N0DAJ"], "bands": ["20M", "40m"]}),
+        )]);
+        let findings = run(&def);
+        assert!(
+            findings.is_empty(),
+            "case variants of a valid band must not flag: {findings:?}"
+        );
     }
 
     #[test]

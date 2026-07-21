@@ -10,6 +10,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, within } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { RoutineDef, Finding } from '../routinesApi';
 
 const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
@@ -67,14 +68,20 @@ afterEach(() => {
 function renderDesigner(props: Partial<Parameters<typeof RoutineDesigner>[0]> = {}) {
   const onBack = props.onBack ?? vi.fn();
   const onTabChange = props.onTabChange ?? vi.fn();
+  // tuxlink-fg0em: a selected radio.connect step mounts RadioConnectSection,
+  // which is react-query-backed — the designer always runs under the app's
+  // provider, so the test harness provides one too.
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const utils = render(
-    <RoutineDesigner
-      {...props}
-      routine={props.routine ?? 'deployment-poll'}
-      tab={props.tab ?? 'design'}
-      onBack={onBack}
-      onTabChange={onTabChange}
-    />,
+    <QueryClientProvider client={qc}>
+      <RoutineDesigner
+        {...props}
+        routine={props.routine ?? 'deployment-poll'}
+        tab={props.tab ?? 'design'}
+        onBack={onBack}
+        onTabChange={onTabChange}
+      />
+    </QueryClientProvider>,
   );
   return { ...utils, onBack, onTabChange };
 }

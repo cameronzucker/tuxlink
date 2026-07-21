@@ -172,6 +172,16 @@ pub(crate) fn band_range(label: &str) -> Option<(f64, f64)> {
         .map(|(lo, hi, _)| (*lo, *hi))
 }
 
+/// The closed band vocabulary `radio.connect.bands` accepts — one canonical
+/// lowercase label per [`crate::mcp_ports::BANDS`] row (the sync test
+/// `band_labels_match_the_canonical_band_table` pins the 1:1 correspondence).
+/// Wired into the `bands` [`ParamSpec::allowed`] (tuxlink-fg0em) so a
+/// free-typed band fails at SAVE time with `PARAM_VALUE_NOT_ALLOWED` naming
+/// the real vocabulary, instead of at run time in [`band_range`].
+pub(crate) const BAND_LABELS: &[&str] = &[
+    "160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m",
+];
+
 /// Honest failure from [`GatewayFrequencyResolver::resolve`] — no dial
 /// frequency could be resolved for `station`+`band`. Distinguishes "the
 /// cache has never been populated for this mode at all" (`cache_age_s:
@@ -374,7 +384,7 @@ impl Action for RadioConnect {
                     required: false,
                     description: "Bands walked per station, in order. Omit ONLY for the \
                                   band-less packet-dial shape; HF modes should list bands.",
-                    allowed: None,
+                    allowed: Some(BAND_LABELS),
                     example: r#"["20m","40m"]"#,
                 },
                 ParamSpec {
@@ -1978,6 +1988,41 @@ mod tests {
     fn band_range_unknown_label_is_none() {
         assert_eq!(band_range("6m"), None);
         assert_eq!(band_range("not-a-band"), None);
+    }
+
+    // tuxlink-fg0em: the ParamSpec's closed vocabulary and the runtime band
+    // table are the SAME list — a band added to one place must be added to
+    // the other, and this test is what makes the drift loud.
+    #[test]
+    fn band_labels_match_the_canonical_band_table() {
+        let canonical: Vec<&str> = crate::mcp_ports::BANDS.iter().map(|(_, _, l)| *l).collect();
+        assert_eq!(BAND_LABELS, canonical.as_slice());
+    }
+
+    // tuxlink-fg0em: the bands ParamSpec actually carries the closed
+    // vocabulary (this is what turns a free-typed band into a save-time
+    // PARAM_VALUE_NOT_ALLOWED finding instead of a run-time resolver error).
+    #[test]
+    fn bands_param_spec_carries_the_allowed_vocabulary() {
+        let action = RadioConnect::new(
+            arbiter(),
+            Arc::new(FakeConnectService::always_connects("W7DEF-10")),
+            Arc::new(FakeListenService::always(0.0)),
+        );
+        let desc = action.descriptor();
+        let bands = desc
+            .params
+            .iter()
+            .find(|p| p.key == "bands")
+            .expect("radio.connect declares a bands param");
+        assert_eq!(bands.allowed, Some(BAND_LABELS));
+        // stations stays open — callsigns are not a closed set.
+        let stations = desc
+            .params
+            .iter()
+            .find(|p| p.key == "stations")
+            .expect("radio.connect declares a stations param");
+        assert_eq!(stations.allowed, None);
     }
 
     #[test]
