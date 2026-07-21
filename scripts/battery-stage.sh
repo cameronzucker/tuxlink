@@ -19,12 +19,13 @@ RESULTS="$ROOT/battery-results/$SWEEP_ID"
 LEDGER="$ROOT/battery-results/ledger.json"
 
 # Order: cheapest first so an early harness defect burns cents, not dollars.
+# Fable 5 DISCONTINUED from the ladder (operator 2026-07-21: >95% of account
+# usage was Fable; disproportionate at its price tier). Four-model ladder.
 MODELS=(
   "qwen/qwen3.5-122b-a10b"
   "z-ai/glm-5.2"
   "anthropic/claude-sonnet-5"
   "openai/gpt-5.5"
-  "anthropic/claude-fable-5"
 )
 
 for MODEL in "${MODELS[@]}"; do

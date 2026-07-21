@@ -7,7 +7,10 @@ cross-session record. Newest entries first.
 
 Ladder: P2 → P1 → S1 → S2 → S4 → S3 → P3 (advance only when the stage is
 fully addressed). Models: qwen/qwen3.5-122b-a10b, z-ai/glm-5.2,
-anthropic/claude-sonnet-5, openai/gpt-5.5, anthropic/claude-fable-5.
+anthropic/claude-sonnet-5, openai/gpt-5.5. FABLE 5 DISCONTINUED
+2026-07-21 (operator: >95% of account usage was Fable across GUI testing +
+battery; disproportionate at $10/$50 per M — its P2 PASS stands as recorded
+evidence, no further cells). Account re-upped $50 same day; cap stands.
 Budget: $50 hard cap (ledger at battery-results/ledger.json on R2;
 harness refuses ≥ $45).
 
