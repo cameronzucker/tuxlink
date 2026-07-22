@@ -98,3 +98,7 @@ src-tauri/gen/
 
 # Phase 1 antenna pattern generator (dev tool) build output
 tools/pattern-gen/target/
+
+# Elmer battery result bundles (bd tuxlink-hwgdi) — judged summaries land in
+# tracked dev/battery/ docs; raw per-cell bundles stay local (R2 disk).
+battery-results/

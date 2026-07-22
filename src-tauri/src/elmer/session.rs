@@ -167,13 +167,17 @@ const COMPOSE_TOOLS: &[&str] = &[
 /// be flipped without re-borrowing `SessionInner`.  The run task holds `&Self`
 /// and the session holds `Self` — the `AtomicBool` is the rendezvous point.
 struct FreezableInvoker {
-    inner: InProcessMcpInvoker,
+    /// Boxed trait object (not the concrete `InProcessMcpInvoker`) so the
+    /// headless battery bin can interpose its allowlist wrapper via
+    /// [`ElmerSession::new_with_invoker`]; production still passes the
+    /// concrete invoker through [`ElmerSession::new`] unchanged.
+    inner: Box<dyn ToolInvoker>,
     frozen: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl FreezableInvoker {
     /// Wrap `inner`; return the shared `AtomicBool` so the session can flip it.
-    fn new(inner: InProcessMcpInvoker) -> (Self, Arc<std::sync::atomic::AtomicBool>) {
+    fn new(inner: Box<dyn ToolInvoker>) -> (Self, Arc<std::sync::atomic::AtomicBool>) {
         let frozen = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let fi = Self { inner, frozen: frozen.clone() };
         (fi, frozen)
@@ -278,6 +282,37 @@ impl ElmerSession {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         invoker: InProcessMcpInvoker,
+        provider: Arc<dyn Provider>,
+        model_config: Arc<ElmerModelConfigState>,
+        keyring: Arc<ElmerKeyring>,
+        guard: Arc<EgressGuard>,
+        abort: Arc<dyn AbortPort>,
+        outbox: Arc<dyn OutboxReadPort>,
+        flush_outbox: Arc<crate::mcp_ports::MonolithOutboxReadPort>,
+        flush_egress: Arc<crate::mcp_ports::MonolithEgressPort>,
+        transcript: Arc<ElmerTranscriptSink>,
+    ) -> Self {
+        Self::new_with_invoker(
+            Box::new(invoker),
+            provider,
+            model_config,
+            keyring,
+            guard,
+            abort,
+            outbox,
+            flush_outbox,
+            flush_egress,
+            transcript,
+        )
+    }
+
+    /// Trait-object constructor seam: identical to [`Self::new`] but accepts any
+    /// [`ToolInvoker`]. Consumed by the headless battery bin
+    /// (`src/bin/elmer_battery.rs`), which wraps the in-process invoker in a
+    /// harness-enforced authoring-only allowlist before construction.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_invoker(
+        invoker: Box<dyn ToolInvoker>,
         provider: Arc<dyn Provider>,
         model_config: Arc<ElmerModelConfigState>,
         keyring: Arc<ElmerKeyring>,
