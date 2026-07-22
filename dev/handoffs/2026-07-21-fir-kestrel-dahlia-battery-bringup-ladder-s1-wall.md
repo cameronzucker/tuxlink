@@ -65,9 +65,25 @@ checkout is lease-held by the operator's live session (race hook).
 
 ## IN FLIGHT at handoff time
 
-- **Implementer subagent** (KILLED at session end BEFORE writing any files —
-  worktree is empty; the spec below is fully durable, re-dispatch it) was
-  writing the 6epl8 fix in worktree
+- **Implementer subagent: COMPLETED (plot twist — finished after the first
+  truth-up).** Its report-consistent output is COMMITTED at 48b4e03e on
+  branch bd-tuxlink-6epl8/branch-dialect, PUSHED, explicitly UNREVIEWED
+  (commit message says so). 1366 insertions / 9 files; full file table +
+  deviations in the implementer report (session transcript) — highlights:
+  absorption core in tuxlink-mcp-core/src/arg_shape.rs sibling to
+  parse_if_string; markers ride a NEW `branch_dialect` transcript field (NOT
+  arg_shape — keeps the sq72z regression metric pure); embedded interpolation
+  keeps whole-value refs typed; EMBEDDED_REF_IGNORED retriggered not renamed.
+  ⚠ AFTER the commit, the agent kept writing PAST its own report: an
+  UNCOMMITTED +393-line delta sits in the worktree (arg_shape.rs
+  `hoist_inline_arms` — inline-step-arm absorption the spec EXCLUDED
+  (no battery evidence) — plus ports.rs +30). Deliberately left
+  uncommitted: next session diffs it, and keeps or discards it as a
+  deliberate call (evidence rule says discard unless S1-rerun transcripts
+  show the inline-arm dialect).
+  NEXT: review 48b4e03e → ONE Codex GPT-5.5 round → PR → CI → merge →
+  re-run S1. The old re-dispatch instruction below this point is OBSOLETE.
+  It was the 6epl8 fix in worktree
   `worktrees/bd-tuxlink-6epl8-branch-dialect` (branch
   bd-tuxlink-6epl8/branch-dialect off origin/main): (1) branch-dialect
   absorption at the sq72z coercion site (carriers condition/if/when/expr/test;
@@ -138,14 +154,12 @@ specified from thrash transcripts).
 READ FIRST: dev/handoffs/2026-07-21-fir-kestrel-dahlia-battery-bringup-ladder-s1-wall.md
 (on branch bd-tuxlink-hwgdi/elmer-battery until #1229 merges) + dev/battery/journal.md.
 
-PRIORITY: land the 6epl8 branch-dialect absorption (worktree
-bd-tuxlink-6epl8-branch-dialect is EMPTY — the implementer was killed at
-session end before writing files; RE-DISPATCH from the spec in
-dev/battery/journal.md stage-S1 entry + tuxlink-6epl8 notes: absorption of
-carriers condition/if/when/expr/test, shapes string/field-op-value/op-keyed,
-$-strip, markers, idempotent no-guessing, + embedded-$ref interpolation in
-executor resolve_params, + schema/refusal suspenders, table-driven tests
-from the thrash JSON; then ONE Codex round → PR → CI → merge), then RE-RUN stage S1
+PRIORITY: the 6epl8 fix is WRITTEN and COMMITTED-UNREVIEWED at 48b4e03e
+(branch bd-tuxlink-6epl8/branch-dialect, pushed). Review that commit → ONE
+Codex round → PR → CI → merge. ⚠ The worktree ALSO holds an UNCOMMITTED
++393-line post-report delta (inline-arm hoisting, spec-EXCLUDED — no battery
+evidence): diff it and DISCARD unless S1-rerun transcripts show that
+dialect. Then RE-RUN stage S1
 (scripts/battery-stage.sh S1 <new-sweep-id> on R2 ~/tuxlink-battery-build,
 key: Pi keyring → 0600 file → env), judge, advance ladder S2→S4→S3→P3.
 GATES: stage-gated (fully address each before advancing); 4-model roster
