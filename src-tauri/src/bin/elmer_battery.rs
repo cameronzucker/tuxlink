@@ -2079,7 +2079,7 @@ mod tests {
     }
 
     #[test]
-    fn corpus_loads_with_all_seven_prompts_and_global_predicates() {
+    fn corpus_loads_with_the_full_prompt_ladder_and_global_predicates() {
         let (corpus, sha) = load_corpus(&repo_corpus_path()).expect("corpus must load");
         assert_eq!(sha.len(), 64, "corpus sha must be full sha256 hex");
         assert!(
@@ -2087,10 +2087,16 @@ mod tests {
             "global predicates must be present"
         );
         let ids: Vec<&str> = corpus.prompts.iter().map(|p| p.id.as_str()).collect();
-        for expected in ["P2", "P1", "S1", "S2", "S4", "S3", "P3"] {
+        // The 7 prescriptive (TaskRabbit) tasks plus the 11 operator-authored
+        // intent-deciphering rungs (2 Assistant, 3 Collaborator, 3 Elmer, 3
+        // Elmer-ultra) — Task 14a.
+        for expected in [
+            "P2", "P1", "S1", "S2", "S4", "S3", "P3", "A1", "A2", "C1", "C2", "C3", "E1", "E2",
+            "E3", "EU1", "EU2", "EU3",
+        ] {
             assert!(ids.contains(&expected), "corpus must carry prompt {expected}");
         }
-        assert_eq!(corpus.prompts.len(), 7, "exactly the 7-prompt ladder");
+        assert_eq!(corpus.prompts.len(), 18, "the 7-prompt ladder + 11 rung tasks");
         // S2 is the only preseeded cell.
         for p in &corpus.prompts {
             assert_eq!(
