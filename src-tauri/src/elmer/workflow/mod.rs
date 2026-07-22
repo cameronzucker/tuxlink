@@ -12,6 +12,9 @@ pub mod catalog;
 pub mod ci;
 pub mod manifest;
 pub mod model;
+pub mod phases;
+pub mod present;
+pub mod router;
 
 pub use artifacts::{
     AffordanceAction, Affordances, CiFinding, CiReport, CiVerdict, Depth, Draft, DraftBranch,
@@ -26,3 +29,6 @@ pub use manifest::{
     WORKFLOW_MANIFEST_SCHEMA_VERSION,
 };
 pub use model::{PhaseModel, PhaseTurn, StubModel};
+pub use phases::{build_prompt, capture_artifact, tools_for, CapturedArtifact, PhaseError};
+pub use present::build_present;
+pub use router::{score_depth, select_depth};
