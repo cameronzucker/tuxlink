@@ -95,5 +95,52 @@ if printf '%s' "$cmd" | grep -qE '\bgit\b.*(--no-gpg-sign|-c[[:space:]]+commit\.
     deny "git --no-gpg-sign / -c commit.gpgsign=false is banned per CLAUDE.md."
 fi
 
+# --- Blast-radius patterns (tuxlink-18san, operator directive 2026-07-22) ---
+# Five sessions hit the cwd-reset landmine where a chained
+# "git add -A && git commit && git push" ran in the operator's main checkout
+# and swept ~100 untracked WIP files into a mislabeled commit; the fifth
+# occurrence PUSHED before the wrong-branch line could stop anything.
+# "If it's banned in prose it should be banned with a hook."
+
+# Heredoc-stripped view of the command: commit messages are heredocs
+# (<<EOF ... EOF, the Agent-trailer convention) whose PROSE legitimately
+# mentions git commands ("run git push at session end"). Counting those
+# as invocations would false-deny every well-formed commit, so the chain
+# checks below run on a copy with heredoc bodies removed. Conservative:
+# only the conventional EOF tag is stripped; other tags stay visible and
+# at worst cause a spurious deny (reword the message), never a miss.
+cmd_stripped=$(printf '%s' "$cmd" | awk '
+    hd { if ($0 == "EOF") hd = 0; next }
+    /<<-?['\''"]?EOF['\''"]?/ { hd = 1; print; next }
+    { print }
+')
+
+# Pattern: git add -A / --all / bare-dot pathspec
+# The main checkout perpetually holds ~90 untracked operator files; a
+# sweep-stage from a reset cwd is how every occurrence started. Stage
+# explicit paths or a scoped subtree and verify with
+# 'git diff --cached --name-only'.
+if printf '%s' "$cmd_stripped" | grep -qE '\bgit([[:space:]]+-[Cc][[:space:]]+[^[:space:]]+)?[[:space:]]+add[[:space:]]+(-[a-zA-Z]*A|--all\b|\.([[:space:]]|$|["'\''"]))'; then
+    deny "git add -A / --all / 'git add .' is banned per CLAUDE.md. The main checkout is full of untracked operator WIP; sweep-staging from a reset cwd has committed ~100 operator files onto the wrong branch five times. Stage explicit paths (e.g. 'git add src-tauri/ docs/x.md') and verify with 'git diff --cached --name-only'."
+fi
+
+# Pattern: two or more MUTATING git invocations chained in one call
+# One git write per Bash call: the wrong-branch line printed by commit is
+# the last tripwire before push, and it only works if push is a SEPARATE
+# call. Read-only chains (git log && git status) remain free.
+mutating='(add|commit|push|merge|rebase|pull|cherry-pick|revert|reset|stash|switch|checkout|restore|rm|mv|am|apply)'
+mut_count=$(printf '%s' "$cmd_stripped" | grep -oE "\bgit([[:space:]]+-[Cc][[:space:]]+[^[:space:]]+)?[[:space:]]+$mutating\b" | wc -l)
+if [ "$mut_count" -ge 2 ]; then
+    deny "Chaining multiple mutating git operations in one call is banned per CLAUDE.md (found $mut_count). One git write per Bash call: commit in one call, READ the printed branch line, push in the next. This is the deterministic form of the rule that would have stopped all five 'git add -A && git commit && git push' wrong-branch incidents."
+fi
+
+# Pattern: cd chained before a mutating git op in the same call
+# The main-checkout-race hook judges the PAYLOAD cwd, which an inline cd
+# does not update - 'cd <worktree> && git commit' is classified from
+# wherever the shell WAS. Standalone cd call first, then the git op bare.
+if printf '%s' "$cmd_stripped" | grep -qE '(^|&&|;|\|\|)[[:space:]]*cd[[:space:]][^|&;]*(&&|;)[[:space:]]*git([[:space:]]+-[Cc][[:space:]]+[^[:space:]]+)?[[:space:]]+'"$mutating"'\b'; then
+    deny "'cd <dir> && git <write-op>' in one call is banned per CLAUDE.md. The race hook classifies the call by the payload cwd, not the inline cd, so this form runs (or is judged) against the WRONG tree. Run a standalone 'cd <dir>' call first, verify with pwd or 'git branch --show-current', then run the git op bare in the next call."
+fi
+
 # All checks passed — allow by default (no output).
 exit 0

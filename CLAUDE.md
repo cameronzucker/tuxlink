@@ -282,6 +282,9 @@ The [`.claude/hooks/block-destructive-git.sh`](.claude/hooks/block-destructive-g
 - `git reflog expire --expire=now` / `git gc --prune=now` — strips the recovery safety net.
 - `git filter-branch` / `git filter-repo` — mass history rewrite.
 - `--no-verify` / `--no-gpg-sign` / `-c commit.gpgsign=false` — bypasses the project's gates.
+- `git add -A` / `--all` / `git add .` — sweep-staging grabs the main checkout's untracked operator WIP; stage explicit paths.
+- Chaining two or more mutating git ops in one shell call — one git write per call, so the printed branch line can stop a wrong-tree push before it happens.
+- `cd <dir> && git <write-op>` in one call — the race hook judges the payload cwd, not the inline cd; standalone `cd` first.
 
 **Why hooks, not just prose:** the 2026-04-20 Geographica incident — a subagent ran `git reset --hard feat/noaa-conus` on `dev`, wiping 7 commits including a shipped fix; recovered via reflog only because the regression was caught within the 14-day `git gc` window. Geographica's CLAUDE.md *correctly documented* the rule at the time of the incident. **Prose alone did not prevent it; the hook layer does.**
 
