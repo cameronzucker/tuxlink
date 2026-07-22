@@ -16,6 +16,12 @@ pub mod model;
 pub mod phases;
 pub mod present;
 pub mod router;
+pub mod scorers;
+
+#[cfg(test)]
+mod integration_tests;
+#[cfg(test)]
+mod part97_tests;
 
 pub use artifacts::{
     AffordanceAction, Affordances, CiFinding, CiReport, CiVerdict, Depth, Draft, DraftBranch,
@@ -34,3 +40,6 @@ pub use phases::{build_prompt, capture_artifact, tools_for, CapturedArtifact, Ph
 pub use present::build_present;
 pub use engine::{run_workflow, WorkflowInputs};
 pub use router::{parse_depth, score_depth, select_depth, select_depth_with_tokens};
+pub use scorers::{
+    score_heldout, score_task1_honesty, score_task2_editverb, score_task3_contention, ScoreResult,
+};
