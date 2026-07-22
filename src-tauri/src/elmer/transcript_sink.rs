@@ -72,6 +72,14 @@ struct TranscriptLine<'a> {
     /// and non-ToolCall lines. See [`arg_shape_marker`].
     #[serde(skip_serializing_if = "Option::is_none")]
     arg_shape: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Per-call branch-dialect telemetry (tuxlink-6epl8), sibling of
+    /// `arg_shape`: which step-shaped params of a ToolCall carried an
+    /// observed `Control::Branch` dialect the boundary absorbs, as
+    /// kind-precise marker lists, e.g. `{"step": ["branch-condition-object",
+    /// "branch-ref-dollar-stripped"]}`. Absent on well-shaped calls and
+    /// non-ToolCall lines. See [`branch_dialect_marker`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    branch_dialect: Option<serde_json::Map<String, serde_json::Value>>,
     message: &'a Message,
 }
 
@@ -104,6 +112,35 @@ fn arg_shape_marker(message: &Message) -> Option<serde_json::Map<String, serde_j
                     CompositeKind::Array => "string-to-array",
                 };
                 (p.to_string(), serde_json::Value::String(v.into()))
+            })
+            .collect(),
+    )
+}
+
+/// The `branch_dialect` marker (tuxlink-6epl8): which of this tool call's
+/// step-shaped params arrived in an observed branch dialect, with the
+/// kind-precise markers the boundary's absorber applies. Same corpus
+/// discipline as [`arg_shape_marker`]: the emission stays shape-preserved in
+/// `message.ToolCall.args` as the fine-tune target; this marker only makes
+/// each absorbed call countable (regression metric: the branch-dialect rate
+/// per run trending to zero).
+fn branch_dialect_marker(message: &Message) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let Message::ToolCall(tc) = message else {
+        return None;
+    };
+    let dialects = tuxlink_mcp_core::arg_shape::branch_dialect_params(&tc.name, &tc.args);
+    if dialects.is_empty() {
+        return None;
+    }
+    Some(
+        dialects
+            .into_iter()
+            .map(|(param, markers)| {
+                let list = markers
+                    .into_iter()
+                    .map(|m| serde_json::Value::String(m.into()))
+                    .collect();
+                (param.to_string(), serde_json::Value::Array(list))
             })
             .collect(),
     )
@@ -395,6 +432,7 @@ impl TranscriptSink for ElmerTranscriptSink {
             seq,
             ts_unix_ms: unix_ms(),
             arg_shape: arg_shape_marker(&redacted),
+            branch_dialect: branch_dialect_marker(&redacted),
             message: &redacted,
         };
         match serde_json::to_string(&line) {
@@ -707,6 +745,57 @@ mod tests {
         assert!(
             clean.get("arg_shape").is_none(),
             "well-shaped call must not be flagged: {clean}"
+        );
+    }
+
+    /// tuxlink-6epl8: a branch-dialect emission gets the per-call
+    /// `branch_dialect` marker (kind-precise, per param) while the emission
+    /// stays verbatim in args — same corpus discipline as `arg_shape`.
+    #[test]
+    fn branch_dialect_emission_gets_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sink = ElmerTranscriptSink::new(tmp.path().to_path_buf());
+        // Battery S1 (2026-07-21): sonnet's condition-object dialect.
+        sink.record(&Message::ToolCall(ToolCall::new(
+            "routines_step_add",
+            json!({
+                "routine": "hourly-20m-vara-cms",
+                "track": "main",
+                "step": {
+                    "control": "branch",
+                    "condition": {"field": "$s3.connected", "op": "eq", "value": true},
+                    "then": [], "else": []
+                }
+            }),
+        )));
+        // The real flat shape: no marker key at all.
+        sink.record(&Message::ToolCall(ToolCall::new(
+            "routines_step_add",
+            json!({
+                "routine": "hourly-20m-vara-cms",
+                "track": "main",
+                "step": {
+                    "control": "branch", "on": "s3.connected",
+                    "then": [], "else": []
+                }
+            }),
+        )));
+        assert!(sink.flush(FLUSH));
+
+        let files = read_session_lines(tmp.path());
+        let flagged = &files[0].1[0];
+        assert_eq!(
+            flagged["branch_dialect"]["step"],
+            json!(["branch-condition-object", "branch-ref-dollar-stripped"])
+        );
+        assert!(
+            flagged["message"]["ToolCall"]["args"]["step"]["condition"].is_object(),
+            "raw dialect emission must stay verbatim: {flagged}"
+        );
+        let clean = &files[0].1[1];
+        assert!(
+            clean.get("branch_dialect").is_none(),
+            "flat-shape call must not be flagged: {clean}"
         );
     }
 

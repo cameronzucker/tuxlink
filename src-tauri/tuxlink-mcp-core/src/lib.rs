@@ -174,7 +174,7 @@ pub mod test_support {
 
     use crate::ports::{
         AbortPort, ActionInfoDto, ActionsCatalogDto, ArdopConfigDto, ArdopWriteDto,
-        AttachmentMetaDto, AudioDevicesDto, TriggerKindDto,
+        AttachmentMetaDto, AudioDevicesDto, ControlInfoDto, TriggerKindDto,
         BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ChannelDto, ChannelReliabilityDto,
         ComposeDraftDto, ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocBodyDto,
         DocsHitDto, DryRunStartedDto, EgressPort, EgressPortError, EnableResultDto, FindingDto,
@@ -1034,6 +1034,23 @@ pub mod test_support {
                     allowed_values: None,
                     params: vec![],
                     outputs: vec![],
+                }],
+                controls: vec![ControlInfoDto {
+                    control: "branch".into(),
+                    description: "two-way split on a prior step's output".into(),
+                    fields: serde_json::json!({
+                        "on": "bare output path (no $)",
+                        "then": "list of step ids",
+                        "else": "list of step ids"
+                    }),
+                    example: serde_json::json!({
+                        "id": "s3", "control": "branch", "on": "s2.connected",
+                        "then": ["s4"], "else": []
+                    }),
+                    comparison_example: Some(serde_json::json!({
+                        "id": "s3", "control": "branch", "on": "s2.count",
+                        "op": "gte", "value": 1, "then": ["s4"], "else": []
+                    })),
                 }],
                 trigger_kinds: vec![TriggerKindDto {
                     r#type: "manual".into(),

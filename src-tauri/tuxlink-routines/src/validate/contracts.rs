@@ -153,9 +153,37 @@ pub fn check(def: &RoutineDef, vctx: &dyn ValidationContext, findings: &mut Vec<
     }
 }
 
-fn collect_dollar_tokens(value: &serde_json::Value, out: &mut Vec<String>) {
+/// How a `$` token sits in its string, which decides its failure class:
+/// a WHOLE-value ref is a hard runtime error when unresolvable (Error /
+/// Warning findings), while an EMBEDDED token interpolates and stays
+/// VERBATIM text when unresolvable (Warning findings only). The routing
+/// test is [`crate::refs::whole_ref`] - the exact one
+/// `executor::resolve_string` uses, so validation cannot disagree with the
+/// runtime (Codex 2026-07-22 P2 x2: "$ref plus trailing text" was refused
+/// with whole-ref errors, and embedded forward references sailed through
+/// with no order check at all).
+enum TokenKind {
+    Whole,
+    Embedded,
+}
+
+fn collect_dollar_tokens(value: &serde_json::Value, out: &mut Vec<(String, TokenKind)>) {
     match value {
-        serde_json::Value::String(s) if s.starts_with('$') => out.push(s.clone()),
+        serde_json::Value::String(s) => {
+            if crate::refs::whole_ref(s) {
+                out.push((s.clone(), TokenKind::Whole));
+            } else {
+                // Interpolation position: every DOTTED scannable token is a
+                // step-output read at runtime. Dot-less tokens ("$50", a
+                // bare input name inside text) are skipped - the dollar
+                // amount stays verbatim and warning on it would be noise.
+                for (_, path) in crate::refs::scan_embedded_refs(s) {
+                    if path.contains('.') {
+                        out.push((format!("${path}"), TokenKind::Embedded));
+                    }
+                }
+            }
+        }
         serde_json::Value::Array(items) => items.iter().for_each(|v| collect_dollar_tokens(v, out)),
         serde_json::Value::Object(map) => map.values().for_each(|v| collect_dollar_tokens(v, out)),
         _ => {}
@@ -171,35 +199,79 @@ fn check_dollar_refs(
 ) {
     let mut tokens = Vec::new();
     collect_dollar_tokens(value, &mut tokens);
-    for token in tokens {
+    for (token, kind) in tokens {
         let raw = &token[1..]; // strip the leading '$'
-        match classify(raw, ctx, step_idx) {
-            VarStatus::Satisfied => {}
-            VarStatus::CrossTrack => findings.push(
-                Finding::warning(
-                    CROSS_TRACK_VAR,
-                    ctx.def.routine.clone(),
-                    format!(
-                        "step \"{step_id}\" references \"{token}\", which a step in a different \
-                         track produces — only safe once that track has actually run"
+        match kind {
+            TokenKind::Whole => match classify(raw, ctx, step_idx) {
+                VarStatus::Satisfied => {}
+                VarStatus::CrossTrack => findings.push(
+                    Finding::warning(
+                        CROSS_TRACK_VAR,
+                        ctx.def.routine.clone(),
+                        format!(
+                            "step \"{step_id}\" references \"{token}\", which a step in a different \
+                             track produces — only safe once that track has actually run"
+                        ),
+                    )
+                    .with_track(ctx.track_name.to_string())
+                    .with_step(StepId(step_id.to_string())),
+                ),
+                VarStatus::UnsatisfiableOrder | VarStatus::UnknownBare => findings.push(
+                    Finding::error(
+                        UNSATISFIABLE_VAR,
+                        ctx.def.routine.clone(),
+                        format!(
+                            "step \"{step_id}\" references \"{token}\", which is not a step earlier \
+                             in track \"{}\" and not a declared input",
+                            ctx.track_name
+                        ),
+                    )
+                    .with_track(ctx.track_name.to_string())
+                    .with_step(StepId(step_id.to_string())),
+                ),
+            },
+            TokenKind::Embedded => {
+                // Same lexical-order rule as whole refs, downgraded to the
+                // embedded-ref warning class: an unresolvable embedded token
+                // stays literal text at runtime (never a run failure), but
+                // the author almost certainly expected a value. Nonexistent
+                // step ids are params.rs's embedded check (declared
+                // surfaces) - only order and track placement are ours.
+                let Some(vp) = VarPath::parse(raw) else {
+                    continue;
+                };
+                match ctx.locations.get(&vp.step) {
+                    None => {}
+                    Some(loc) if loc.track_idx == ctx.track_idx && loc.step_idx < step_idx => {}
+                    Some(loc) if loc.track_idx == ctx.track_idx => findings.push(
+                        Finding::warning(
+                            super::params::EMBEDDED_REF_IGNORED,
+                            ctx.def.routine.clone(),
+                            format!(
+                                "step \"{step_id}\" embeds \"{token}\", but step \"{}\" only \
+                                 produces it LATER in track \"{}\" - an embedded ref that cannot \
+                                 resolve stays literal text at runtime",
+                                vp.step.0, ctx.track_name
+                            ),
+                        )
+                        .with_track(ctx.track_name.to_string())
+                        .with_step(StepId(step_id.to_string())),
                     ),
-                )
-                .with_track(ctx.track_name.to_string())
-                .with_step(StepId(step_id.to_string())),
-            ),
-            VarStatus::UnsatisfiableOrder | VarStatus::UnknownBare => findings.push(
-                Finding::error(
-                    UNSATISFIABLE_VAR,
-                    ctx.def.routine.clone(),
-                    format!(
-                        "step \"{step_id}\" references \"{token}\", which is not a step earlier \
-                         in track \"{}\" and not a declared input",
-                        ctx.track_name
+                    Some(_) => findings.push(
+                        Finding::warning(
+                            super::params::EMBEDDED_REF_IGNORED,
+                            ctx.def.routine.clone(),
+                            format!(
+                                "step \"{step_id}\" embeds \"{token}\", which a step in a \
+                                 different track produces - it interpolates only once that track \
+                                 has run; until then it stays literal text"
+                            ),
+                        )
+                        .with_track(ctx.track_name.to_string())
+                        .with_step(StepId(step_id.to_string())),
                     ),
-                )
-                .with_track(ctx.track_name.to_string())
-                .with_step(StepId(step_id.to_string())),
-            ),
+                }
+            }
         }
     }
 }
@@ -703,5 +775,100 @@ mod tests {
         let mut findings = Vec::new();
         check(&def, &StaticContext::new(), &mut findings);
         assert!(findings.is_empty(), "{:?}", findings);
+    }
+
+    // --- embedded tokens (Codex 2026-07-22 P2 x2) ----------------------
+
+    /// A FORWARD embedded reference gets the same lexical-order rule as a
+    /// whole ref, downgraded to the embedded warning class: "later=$s2.count"
+    /// in s1's params, where s2 runs after s1, stays literal text at runtime.
+    #[test]
+    fn embedded_forward_reference_warns() {
+        use crate::validate::findings::Severity;
+        use crate::validate::params::EMBEDDED_REF_IGNORED;
+        let def = routine_with(
+            vec![],
+            vec![Track {
+                name: "t1".into(),
+                steps: vec![
+                    action("s1", json!({"message": "later=$s2.count"})),
+                    action("s2", json!({})),
+                ],
+            }],
+        );
+        let mut findings = Vec::new();
+        check(&def, &StaticContext::new(), &mut findings);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0].code, EMBEDDED_REF_IGNORED);
+        assert_eq!(findings[0].severity, Severity::Warning);
+        assert_eq!(findings[0].step, Some(StepId("s1".into())));
+        assert!(findings[0].message.contains("$s2.count"), "{}", findings[0].message);
+        assert!(findings[0].message.contains("literal text"), "{}", findings[0].message);
+    }
+
+    /// Embedded cross-track reads warn (timing-dependent, like whole refs);
+    /// a satisfied embedded ref, a dollar amount, and a nonexistent step id
+    /// (params.rs's embedded check owns that one) are all silent here.
+    #[test]
+    fn embedded_cross_track_warns_and_benign_tokens_are_silent() {
+        use crate::validate::params::EMBEDDED_REF_IGNORED;
+        let def = routine_with(
+            vec![],
+            vec![
+                Track {
+                    name: "a".into(),
+                    steps: vec![action(
+                        "s1",
+                        json!({"message": "peer said $s9.status, cost $50, ok=$s1.ok, gone=$s8.x"}),
+                    )],
+                },
+                Track {
+                    name: "b".into(),
+                    steps: vec![action("s9", json!({}))],
+                },
+            ],
+        );
+        let mut findings = Vec::new();
+        check(&def, &StaticContext::new(), &mut findings);
+        // The cross-track $s9.status warns; $50 is dot-less (silent); $s8.x
+        // names no step (silent here; params.rs owns nonexistent ids). The
+        // self-read $s1.ok also warns (a step's own output does not exist
+        // while it runs) - not asserted on, just present.
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.code == EMBEDDED_REF_IGNORED && f.message.contains("$s9.status")),
+            "{findings:?}"
+        );
+        assert!(
+            !findings.iter().any(|f| f.message.contains("$50")),
+            "dollar amounts are not refs: {findings:?}"
+        );
+        assert!(
+            !findings.iter().any(|f| f.message.contains("$s8.x")),
+            "nonexistent ids are params.rs's embedded check: {findings:?}"
+        );
+    }
+
+    /// "$ref plus trailing text" is INTERPOLATION at runtime
+    /// (executor::resolve_string), so it must not be refused with whole-ref
+    /// errors: no UNSATISFIABLE_VAR for "$s9.connected fallback" when s9
+    /// does not exist - the token stays literal text (params.rs warns on
+    /// declared surfaces).
+    #[test]
+    fn dollar_prefixed_with_trailing_text_is_not_a_whole_ref_error() {
+        let def = routine_with(
+            vec![],
+            vec![Track {
+                name: "t1".into(),
+                steps: vec![action("s1", json!({"message": "$s9.connected fallback"}))],
+            }],
+        );
+        let mut findings = Vec::new();
+        check(&def, &StaticContext::new(), &mut findings);
+        assert!(
+            !findings.iter().any(|f| f.code == UNSATISFIABLE_VAR),
+            "interpolation strings must not hit whole-ref errors: {findings:?}"
+        );
     }
 }

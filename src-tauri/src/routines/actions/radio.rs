@@ -342,25 +342,29 @@ impl RadioConnect {
     }
 }
 
-#[async_trait]
-impl Action for RadioConnect {
-    fn descriptor(&self) -> ActionDescriptor {
-        ActionDescriptor {
-            writes_config: false,
-            name: RADIO_CONNECT,
+/// `radio.connect`'s catalog descriptor as a free fn (no services needed):
+/// the definition_template branch lock in `mcp_ports.rs` asserts the
+/// template's branch tests a DECLARED output of this action - executable
+/// teaching, not merely parseable (Codex 2026-07-22 P2).
+pub(crate) fn radio_connect_descriptor() -> ActionDescriptor {
+    ActionDescriptor {
+        writes_config: false,
+        name: RADIO_CONNECT,
             label: "Connect to gateway",
             // Contract facts models kept asking the operator for (tuxlink-591dw
             // run-3/run-4 evidence): owns the whole connect (no pre-tune or
             // session step exists), takes step refs, bands-omission semantics,
             // and there is no `intent` param (that vocabulary belongs to the
             // live-session MCP tools, which models kept importing).
-            description: "Try a Winlink connection across the station set and band set, \
-                          exchanging mail on success. Self-contained: tunes the rig and runs \
-                          the modem per station-and-band attempt — no separate tune or \
-                          open-session step exists, and there is no intent param. stations \
-                          accepts a prior step's output (e.g. \"$s2.callsigns\"). Omitting \
-                          bands is the band-less packet-dial shape, NOT \"use current \
-                          tuning\" — HF modes should list bands.",
+            description: "To try N stations until one connects, pass them ALL in stations - \
+                          this ONE step walks every station-and-band pair in order and stops \
+                          at the first success; do NOT build per-station branching. Exchanges \
+                          mail on success. Self-contained: tunes the rig and runs the modem \
+                          per attempt - no separate tune or open-session step exists, and \
+                          there is no intent param. stations accepts a prior step's output \
+                          (e.g. \"$s2.callsigns\"). Omitting bands is the band-less \
+                          packet-dial shape, NOT \"use current tuning\" - HF modes should \
+                          list bands.",
             needs_radio: true,
             transmits: true,
             needs_internet: false,
@@ -431,6 +435,12 @@ impl Action for RadioConnect {
             ],
             dry_run_shape: None,
         }
+}
+
+#[async_trait]
+impl Action for RadioConnect {
+    fn descriptor(&self) -> ActionDescriptor {
+        radio_connect_descriptor()
     }
 
     async fn execute(

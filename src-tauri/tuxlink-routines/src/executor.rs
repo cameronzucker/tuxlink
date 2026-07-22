@@ -244,13 +244,62 @@ fn eval_branch_condition(
     }
 }
 
-/// Resolve `$var` string params through RunVars (spec §14 convention).
+/// Resolve one string param through RunVars.
+///
+/// Whole-value semantics are unchanged and win: any `$`-prefixed string
+/// still tries `vars.resolve` on its full remainder first, so a resolving
+/// ref of ANY spelling keeps the referenced TYPED value (a list stays a
+/// list), and an unset ref that IS exactly one `$path` token (or has no
+/// scannable token at all) keeps its hard verbatim error. Everything else
+/// interpolates embedded `$path` tokens in place (tuxlink-6epl8, battery
+/// S1: qwen wrote `"connected=$s3.connected, station=$s3.station"` and got
+/// literal text): a resolving token substitutes — strings raw, everything
+/// else compact JSON — and a non-resolving token stays VERBATIM, never an
+/// interpolation error.
+fn resolve_string(s: &str, vars: &RunVars) -> Result<serde_json::Value, StepError> {
+    let tokens = crate::refs::scan_embedded_refs(s);
+    if let Some(rest) = s.strip_prefix('$') {
+        match vars.resolve(rest) {
+            Ok(v) => return Ok(v), // whole-value: the typed contract
+            Err(e) => {
+                if crate::refs::whole_ref(s) {
+                    // A genuine whole-value ref that is unset: the hard
+                    // verbatim error, exactly as before interpolation
+                    // existed (spec §10: never its own text). `whole_ref`
+                    // is the SHARED routing test - the validators use the
+                    // same one, so they cannot disagree with this branch.
+                    return Err(e);
+                }
+                // "$ref plus trailing text" falls through to interpolation.
+            }
+        }
+    }
+    if tokens.is_empty() {
+        return Ok(serde_json::Value::String(s.to_string()));
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut cursor = 0;
+    for (start, path) in tokens {
+        out.push_str(&s[cursor..start]);
+        cursor = start + 1 + path.len();
+        match vars.resolve(path) {
+            Ok(serde_json::Value::String(text)) => out.push_str(&text),
+            Ok(other) => out.push_str(&other.to_string()),
+            Err(_) => out.push_str(&s[start..cursor]), // unresolvable: verbatim
+        }
+    }
+    out.push_str(&s[cursor..]);
+    Ok(serde_json::Value::String(out))
+}
+
+/// Resolve `$var` string params through RunVars (spec §14 convention);
+/// string handling in [`resolve_string`].
 fn resolve_params(
     params: &serde_json::Value,
     vars: &RunVars,
 ) -> Result<serde_json::Value, StepError> {
     match params {
-        serde_json::Value::String(s) if s.starts_with('$') => vars.resolve(&s[1..]),
+        serde_json::Value::String(s) => resolve_string(s, vars),
         serde_json::Value::Object(map) => {
             let mut out = serde_json::Map::new();
             for (k, v) in map {
@@ -1054,6 +1103,79 @@ mod tests {
             })
             .collect();
         assert_eq!(kinds, vec!["intent", "ok", "intent", "ok"]);
+    }
+
+    // ── tuxlink-6epl8: embedded-ref interpolation (battery S1, qwen) ──
+
+    /// The qwen emission verbatim: embedded `$path` tokens inside a longer
+    /// string interpolate — strings insert raw.
+    #[test]
+    fn embedded_refs_interpolate_inside_strings() {
+        let mut vars = RunVars::default();
+        vars.set_step_output(
+            &StepId("s3".into()),
+            json!({"connected": true, "station": "W7DEF-10"}),
+        );
+        let got = resolve_params(
+            &json!({"message": "connected=$s3.connected, station=$s3.station"}),
+            &vars,
+        )
+        .unwrap();
+        assert_eq!(got, json!({"message": "connected=true, station=W7DEF-10"}));
+    }
+
+    /// A token that does not resolve stays VERBATIM — interpolation is never
+    /// an error — and a plain dollar amount survives untouched.
+    #[test]
+    fn unresolvable_embedded_token_stays_verbatim_never_an_error() {
+        let mut vars = RunVars::default();
+        vars.set_step_output(&StepId("s3".into()), json!({"connected": false}));
+        let got = resolve_params(
+            &json!({"message": "x=$s3.connected y=$s9.missing $50 total"}),
+            &vars,
+        )
+        .unwrap();
+        assert_eq!(got, json!({"message": "x=false y=$s9.missing $50 total"}));
+    }
+
+    /// Whole-value semantics are UNCHANGED: exactly-one-ref strings resolve
+    /// to the typed value (a list stays a list, never a string), and an
+    /// unset whole-value ref keeps its hard verbatim error.
+    #[test]
+    fn whole_value_ref_stays_typed_and_unset_whole_value_still_errors() {
+        let mut vars = RunVars::default();
+        vars.set_step_output(&StepId("s1".into()), json!({"callsigns": ["N0DAJ", "W7DEF"]}));
+        let got = resolve_params(&json!({"stations": "$s1.callsigns"}), &vars).unwrap();
+        assert_eq!(
+            got,
+            json!({"stations": ["N0DAJ", "W7DEF"]}),
+            "typed, not stringified"
+        );
+        let err = resolve_params(&json!({"stations": "$s9.callsigns"}), &vars).unwrap_err();
+        assert!(
+            matches!(&err, StepError::UnsetVariable(p) if p == "s9.callsigns"),
+            "got {err:?}"
+        );
+    }
+
+    /// Non-string values in EMBEDDED position stringify as compact JSON;
+    /// nested output paths resolve the same way they do whole-value.
+    #[test]
+    fn embedded_non_string_values_stringify_as_compact_json() {
+        let mut vars = RunVars::default();
+        vars.set_step_output(
+            &StepId("s1".into()),
+            json!({"callsigns": ["N0DAJ"], "count": 1, "detail": {"ok": true}}),
+        );
+        let got = resolve_params(
+            &json!({"message": "found $s1.count: $s1.callsigns / $s1.detail"}),
+            &vars,
+        )
+        .unwrap();
+        assert_eq!(
+            got,
+            json!({"message": "found 1: [\"N0DAJ\"] / {\"ok\":true}"})
+        );
     }
 
     #[tokio::test]

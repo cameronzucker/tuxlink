@@ -1345,8 +1345,13 @@ impl TuxlinkMcp {
         name = "routines_actions_list",
         description = "The routine AUTHORING catalog: every valid step action (name, description, \
                        example params, and whether it transmits / writes config / needs radio or \
-                       internet) plus every trigger kind with its fields and a paste-ready \
-                       example, plus definition_template: one COMPLETE valid routine document \
+                       internet), every CONTROL step kind under controls (branch / delay / retry \
+                       / call / end) with its exact field shape and paste-ready examples - a \
+                       branch is FLAT ({\"control\": \"branch\", \"on\": \"s1.connected\", \
+                       \"then\": [step ids], \"else\": [step ids]}, optional op+value pair, \
+                       never a condition/if wrapper), plus every trigger kind with its fields \
+                       and a paste-ready example, plus definition_template: one COMPLETE valid \
+                       routine document \
                        (the exact shape routines_save's def accepts; note `routine` is the \
                        routine's NAME string and `triggers` is a list). The recommended authoring \
                        flow: save the template under your routine's name with routines_save, \
@@ -1426,7 +1431,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "routines_step_add",
-        description = "Insert ONE step into a saved routine (the fragment-edit path — no whole-document rewrite). step is a JSON OBJECT ({\"action\": ..., \"params\": {...}} or {\"control\": ...}); omit its id to have one assigned and returned as step_id. Place with exactly one of: track (append — lands BEFORE the track's trailing end step when one exists, so appended steps always run), after_step_id (splice after), or branch_step_id+branch_arm (into a branch's then/else arm — arm membership and position land atomically). The routine must be DISABLED (ROUTINE_ENABLED otherwise — disable, edit, re-enable). The result is SAVED even with error findings (errors block enable/run, never save); step_findings carries the validator's verdict on YOUR step — fix those before reporting done."
+        description = "Insert ONE step into a saved routine (the fragment-edit path — no whole-document rewrite). step is a JSON OBJECT ({\"action\": ..., \"params\": {...}} or {\"control\": ...}; a branch is FLAT: {\"control\": \"branch\", \"on\": \"s1.connected\", \"then\": [step ids], \"else\": [step ids]} with on a bare path (no $) and an optional op (eq|ne|lt|lte|gt|gte) + value pair); omit its id to have one assigned and returned as step_id. Place with exactly one of: track (append — lands BEFORE the track's trailing end step when one exists, so appended steps always run), after_step_id (splice after), or branch_step_id+branch_arm (into a branch's then/else arm — arm membership and position land atomically). The routine must be DISABLED (ROUTINE_ENABLED otherwise — disable, edit, re-enable). The result is SAVED even with error findings (errors block enable/run, never save); step_findings carries the validator's verdict on YOUR step — fix those before reporting done."
     )]
     pub async fn routines_step_add(
         &self,
@@ -1875,8 +1880,12 @@ pub struct RoutineStepAddParams {
     /// The routine's name, exactly as `routines_list` reports it.
     pub routine: String,
     /// The step as a JSON OBJECT: `{"id": "s3", "action": "local.log",
-    /// "params": {...}}` or `{"id": "s4", "control": "branch", ...}`. Omit
-    /// `id` to have one assigned and returned.
+    /// "params": {...}}` or a control step. A branch is FLAT:
+    /// `{"id": "s4", "control": "branch", "on": "s1.connected", "then":
+    /// ["s5"], "else": []}` — `on` is a bare variable path (no `$` prefix,
+    /// no condition/if/when wrapper object), a comparison adds `op`
+    /// (eq|ne|lt|lte|gt|gte) and `value` together, and `then`/`else` are
+    /// LISTS of step ids. Omit `id` to have one assigned and returned.
     #[schemars(schema_with = "crate::arg_shape::object_schema")]
     pub step: serde_json::Value,
     #[serde(flatten)]
@@ -1896,7 +1905,10 @@ pub struct RoutineStepUpdateParams {
     /// Fields to shallow-merge onto the step, as a JSON OBJECT. `params`
     /// replaces wholesale; scalar fields (`action`, `timeout_s`,
     /// `on_radio_busy`, branch `then`/`else`, ...) patch individually; a
-    /// `null` clears an optional field. The `id` and the action-vs-control
+    /// `null` clears an optional field. A branch condition is FLAT fields on
+    /// the step: `on` (a bare variable path, no `$`) with `op`
+    /// (eq|ne|lt|lte|gt|gte) and `value` together or absent — there is no
+    /// condition/if/when wrapper object. The `id` and the action-vs-control
     /// kind cannot change — remove and re-add instead.
     #[schemars(schema_with = "crate::arg_shape::object_schema")]
     pub patch: serde_json::Value,
@@ -3286,6 +3298,19 @@ mod tests {
             json["definition_template"]["routine"].is_string()
                 && json["definition_template"]["tracks"].is_array(),
             "the catalog carries a complete definition_template (tuxlink-rt4ey): {json}"
+        );
+        // tuxlink-6epl8: the catalog documents control-flow step kinds; the
+        // branch entry carries BOTH the strict-boolean example and the
+        // op/value comparison_example.
+        assert_eq!(json["controls"][0]["control"], "branch");
+        assert!(
+            json["controls"][0]["example"]["on"].is_string()
+                && json["controls"][0]["example"]["then"].is_array(),
+            "branch example is flat with then as a step-id list: {json}"
+        );
+        assert!(
+            json["controls"][0]["comparison_example"]["op"].is_string(),
+            "branch carries the op/value form too: {json}"
         );
         assert!(
             json["trigger_kinds"][0]["example"].is_object(),
