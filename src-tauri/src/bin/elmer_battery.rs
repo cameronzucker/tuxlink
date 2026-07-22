@@ -137,11 +137,29 @@ const ALLOWED_TOOLS: &[&str] = &[
 /// Teaching refusal returned for a call outside the allowlist. Names the
 /// boundary honestly (harness policy, not a station fault) so the model can
 /// route back to authoring instead of retrying.
+///
+/// Returned as [`ToolOutcome::InvalidArgs`], NOT [`ToolOutcome::Denied`]
+/// (tuxlink-zvy6q): the allowlist is a REDIRECT ("author instead"), not a
+/// consent boundary. The agent-runner treats `Denied` as `denial_final` and
+/// terminates the run after one narration turn — correct for real Elmer's
+/// transmit/config consent gates, but for the battery it kills the cell on
+/// the first off-surface probe and scores an exploring-then-recovering model
+/// identically to one that gave up, corrupting the fine-tuning assessment
+/// (tuxlink-77620). `InvalidArgs` is fed back non-terminally via the loop's
+/// `push_outcome` path and does NOT consume the COR-3 malformed-retry budget,
+/// so the model sees the teaching and continues authoring.
 const DENY_TEACHING: &str = "This tool is outside the battery harness's authoring surface. \
      This session is for DESIGNING routines only: use the routines_* authoring \
      verbs plus position_status / find_stations / docs_search / docs_read / \
      catalog_list. Do not run, enable, export, transmit, or change station \
      config — author and validate the routine instead.";
+
+/// The outcome an off-allowlist call gets. `InvalidArgs`, deliberately, so
+/// the runner feeds [`DENY_TEACHING`] back non-terminally (tuxlink-zvy6q);
+/// `Denied` is reserved for real consent/authority gates, which terminate.
+fn allowlist_denial_outcome() -> ToolOutcome {
+    ToolOutcome::InvalidArgs(DENY_TEACHING.to_string())
+}
 
 /// Scratch-profile config.json (schema v9): manual grid DM33, GPS off, NO
 /// transports configured, offline (connect_to_cms false). Everything else
@@ -555,7 +573,10 @@ impl ToolInvoker for AllowlistInvoker {
                 "detail": DENY_TEACHING,
                 "elapsed_ms": 0,
             }));
-            return ToolOutcome::Denied(DENY_TEACHING.to_string());
+            // NON-TERMINAL (tuxlink-zvy6q): see [`DENY_TEACHING`]. InvalidArgs
+            // feeds the teaching back and lets the model keep authoring;
+            // Denied would end the run after one narration turn.
+            return allowlist_denial_outcome();
         }
 
         let outcome = self.inner.invoke(call, authority, cancel).await;
@@ -1529,6 +1550,22 @@ mod tests {
             "server_info",
         ] {
             assert!(!tool_allowed(tool), "{tool} must be denied");
+        }
+    }
+
+    /// tuxlink-zvy6q: an off-allowlist call must be NON-TERMINAL. The
+    /// runner ends the run on `ToolOutcome::Denied` (one narration turn) but
+    /// feeds `InvalidArgs` back and continues — so the battery allowlist,
+    /// which is a "use the authoring verbs instead" redirect and not a
+    /// consent gate, must surface as `InvalidArgs`. Regression guard for the
+    /// stage-S4 glm-5.2 cell that died at turn 2 on a single rig_status probe.
+    #[test]
+    fn allowlist_denial_is_nonterminal_invalidargs() {
+        match allowlist_denial_outcome() {
+            ToolOutcome::InvalidArgs(msg) => {
+                assert!(msg.contains("authoring surface"), "carries the teaching");
+            }
+            other => panic!("allowlist denial must be non-terminal InvalidArgs, got {other:?}"),
         }
     }
 
