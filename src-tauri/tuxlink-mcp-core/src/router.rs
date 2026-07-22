@@ -1345,8 +1345,13 @@ impl TuxlinkMcp {
         name = "routines_actions_list",
         description = "The routine AUTHORING catalog: every valid step action (name, description, \
                        example params, and whether it transmits / writes config / needs radio or \
-                       internet) plus every trigger kind with its fields and a paste-ready \
-                       example, plus definition_template: one COMPLETE valid routine document \
+                       internet), every CONTROL step kind under controls (branch / delay / retry \
+                       / call / end) with its exact field shape and paste-ready examples - a \
+                       branch is FLAT ({\"control\": \"branch\", \"on\": \"s1.connected\", \
+                       \"then\": [step ids], \"else\": [step ids]}, optional op+value pair, \
+                       never a condition/if wrapper), plus every trigger kind with its fields \
+                       and a paste-ready example, plus definition_template: one COMPLETE valid \
+                       routine document \
                        (the exact shape routines_save's def accepts; note `routine` is the \
                        routine's NAME string and `triggers` is a list). The recommended authoring \
                        flow: save the template under your routine's name with routines_save, \
@@ -3293,6 +3298,19 @@ mod tests {
             json["definition_template"]["routine"].is_string()
                 && json["definition_template"]["tracks"].is_array(),
             "the catalog carries a complete definition_template (tuxlink-rt4ey): {json}"
+        );
+        // tuxlink-6epl8: the catalog documents control-flow step kinds; the
+        // branch entry carries BOTH the strict-boolean example and the
+        // op/value comparison_example.
+        assert_eq!(json["controls"][0]["control"], "branch");
+        assert!(
+            json["controls"][0]["example"]["on"].is_string()
+                && json["controls"][0]["example"]["then"].is_array(),
+            "branch example is flat with then as a step-id list: {json}"
+        );
+        assert!(
+            json["controls"][0]["comparison_example"]["op"].is_string(),
+            "branch carries the op/value form too: {json}"
         );
         assert!(
             json["trigger_kinds"][0]["example"].is_object(),

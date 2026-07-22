@@ -354,13 +354,15 @@ impl Action for RadioConnect {
             // session step exists), takes step refs, bands-omission semantics,
             // and there is no `intent` param (that vocabulary belongs to the
             // live-session MCP tools, which models kept importing).
-            description: "Try a Winlink connection across the station set and band set, \
-                          exchanging mail on success. Self-contained: tunes the rig and runs \
-                          the modem per station-and-band attempt — no separate tune or \
-                          open-session step exists, and there is no intent param. stations \
-                          accepts a prior step's output (e.g. \"$s2.callsigns\"). Omitting \
-                          bands is the band-less packet-dial shape, NOT \"use current \
-                          tuning\" — HF modes should list bands.",
+            description: "To try N stations until one connects, pass them ALL in stations - \
+                          this ONE step walks every station-and-band pair in order and stops \
+                          at the first success; do NOT build per-station branching. Exchanges \
+                          mail on success. Self-contained: tunes the rig and runs the modem \
+                          per attempt - no separate tune or open-session step exists, and \
+                          there is no intent param. stations accepts a prior step's output \
+                          (e.g. \"$s2.callsigns\"). Omitting bands is the band-less \
+                          packet-dial shape, NOT \"use current tuning\" - HF modes should \
+                          list bands.",
             needs_radio: true,
             transmits: true,
             needs_internet: false,

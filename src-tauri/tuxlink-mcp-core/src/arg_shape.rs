@@ -138,7 +138,7 @@ const CMP_OP_NAMES: &[&str] = &["eq", "ne", "lt", "lte", "gt", "gte"];
 const BRANCH_KNOWN_KEYS: &[&str] = &["id", "control", "on", "op", "value", "then", "else", "params"];
 
 /// Kind-precise transcript markers, one per observed condition shape plus
-/// the `$`-strip, the `control: "if"` remap, and the inline-arm hoist — the
+/// the `$`-strip, the `control: "if"` remap, and the inline-arm hoist - the
 /// `branch_dialect` sibling of `arg_shape`'s `string-to-object` vocabulary.
 pub const BRANCH_CONDITION_STRING: &str = "branch-condition-string";
 pub const BRANCH_CONDITION_OBJECT: &str = "branch-condition-object";
@@ -235,7 +235,7 @@ fn classify_condition(
 /// The ONE branch-dialect rule (tuxlink-6epl8, sibling of [`parse_if_string`]):
 /// a step that EXPLICITLY says `control: "branch"` (or the invented
 /// `control: "if"`, 2026-07-19 probe, remapped to `branch`) and carries an
-/// observed condition dialect is rewritten to the real flat shape — carrier
+/// observed condition dialect is rewritten to the real flat shape - carrier
 /// keys (`condition`/`if`/`when`/`expr`/`test`, top level or inside
 /// `params`) become `on`/`op`/`value`, `params`-nested `then`/`else` lift to
 /// the step's top level, and a single leading `$` is stripped from the ref
@@ -244,7 +244,7 @@ fn classify_condition(
 ///
 /// Constraints, all load-bearing:
 /// - A carrier key WITHOUT an explicit `control: "branch"` / `"if"` never
-///   invents a branch — only the explicit discriminator activates the rule.
+///   invents a branch - only the explicit discriminator activates the rule.
 /// - Ambiguity refuses to guess: a carrier alongside `on`/`op`/`value`,
 ///   multiple carriers, keys beyond the observed set, a `params` holding
 ///   anything beyond one carrier plus `then`/`else`, arms present BOTH in
@@ -253,7 +253,7 @@ fn classify_condition(
 ///   validation's instructive refusal fires on the original emission.
 /// - Idempotent: absorbed output re-enters and leaves untouched (`"if"` is
 ///   never a valid control kind, so the remap can never touch valid input).
-/// - INLINE STEP OBJECTS inside arms are NOT absorbed here — a lone step
+/// - INLINE STEP OBJECTS inside arms are NOT absorbed here - a lone step
 ///   has no surrounding track to hoist them into. The whole-def walk
 ///   ([`absorb_branch_dialects_in_def`]) owns that absorption (glm-5.2
 ///   battery S1 seq 16-18 evidence).
@@ -275,7 +275,7 @@ pub fn absorb_branch_dialect(step: &mut Value, shape: BranchShape) -> Vec<&'stat
     // `params: {"if": "$s3.connected"}`; the 2026-07-19 probe put the whole
     // condition+then+else payload under `params`). `params` is not a branch
     // field, so a `params` holding anything beyond exactly one carrier plus
-    // `then`/`else` is outside the observed set — as are arms present both
+    // `then`/`else` is outside the observed set - as are arms present both
     // in `params` and at top level (ambiguous, no guessing).
     let top_carriers: Vec<&'static str> = BRANCH_CONDITION_CARRIERS
         .iter()
@@ -383,7 +383,7 @@ pub fn absorb_branch_dialect(step: &mut Value, shape: BranchShape) -> Vec<&'stat
             // control kind may still be the invented `"if"`.
             if let Some(on) = obj.get("on").and_then(Value::as_str) {
                 if on.starts_with('$') && strip_one_dollar(on).is_none() {
-                    return Vec::new(); // "$" / "$$…" — unstrippable, untouched
+                    return Vec::new(); // "$" / "$$…" - unstrippable, untouched
                 }
             }
             let stripped = obj
@@ -405,21 +405,146 @@ pub fn absorb_branch_dialect(step: &mut Value, shape: BranchShape) -> Vec<&'stat
     markers
 }
 
+/// What [`hoist_inline_arms`] decided for one (already-absorbed) step.
+enum HoistOutcome {
+    /// Arms hold no inline step objects (or this is not a flat branch) -
+    /// nothing to do.
+    NotApplicable,
+    /// Arms held inline step objects; they were replaced by their id lists
+    /// and the extracted steps (then-arm first, in emission order) must be
+    /// spliced in immediately after the branch.
+    Hoisted(Vec<Value>),
+    /// Arms hold inline objects the rule refuses to guess at (an object
+    /// without an `id`, a colliding id, a non-string non-object element) -
+    /// the caller reverts the WHOLE step to its original bytes.
+    Refused,
+}
+
+/// glm-5.2's inline-arm dialect (battery S1 seq 16-18): full step objects
+/// inside a branch's `then`/`else` where the real shape wants step-id LISTS.
+/// Only a surrounding track gives the objects somewhere to live, so this
+/// runs exclusively from [`absorb_branch_dialects_in_def`]. The step must
+/// already be in the flat branch vocabulary (any leftover carrier or
+/// `params` means the condition absorption refused - do not hoist arms of a
+/// step that will be refused anyway). Strings mixed among inline objects
+/// stay as the ids they are.
+fn hoist_inline_arms(
+    step: &mut Value,
+    used_ids: &mut std::collections::HashSet<String>,
+) -> HoistOutcome {
+    let Some(obj) = step.as_object() else {
+        return HoistOutcome::NotApplicable;
+    };
+    if obj.get("control").and_then(Value::as_str) != Some("branch")
+        || !obj.keys().all(|k| {
+            matches!(k.as_str(), "id" | "control" | "on" | "op" | "value" | "then" | "else")
+        })
+    {
+        return HoistOutcome::NotApplicable;
+    }
+    let has_inline = ["then", "else"].iter().any(|arm| {
+        obj.get(*arm)
+            .and_then(Value::as_array)
+            .is_some_and(|a| a.iter().any(Value::is_object))
+    });
+    if !has_inline {
+        return HoistOutcome::NotApplicable;
+    }
+    // Dry pass: every arm element must be a string (kept as an id) or an
+    // object with a fresh, unique, non-empty string id.
+    let mut hoisted_ids: Vec<String> = Vec::new();
+    for arm in ["then", "else"] {
+        let Some(items) = obj.get(arm).and_then(Value::as_array) else {
+            continue;
+        };
+        for item in items {
+            match item {
+                Value::String(_) => {}
+                Value::Object(m) => match m.get("id").and_then(Value::as_str) {
+                    Some(id)
+                        if !id.is_empty()
+                            && !used_ids.contains(id)
+                            && !hoisted_ids.iter().any(|h| h == id) =>
+                    {
+                        hoisted_ids.push(id.to_string());
+                    }
+                    _ => return HoistOutcome::Refused,
+                },
+                _ => return HoistOutcome::Refused,
+            }
+        }
+    }
+    // Commit: rewrite both arms to id lists, extract the objects in order.
+    let mut extracted: Vec<Value> = Vec::new();
+    let obj = step.as_object_mut().expect("checked as_object above");
+    for arm in ["then", "else"] {
+        let Some(items) = obj.get_mut(arm).and_then(Value::as_array_mut) else {
+            continue;
+        };
+        for item in items.iter_mut() {
+            if item.is_object() {
+                let id = item
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .expect("dry pass verified the id")
+                    .to_string();
+                extracted.push(std::mem::replace(item, Value::String(id)));
+            }
+        }
+    }
+    used_ids.extend(hoisted_ids);
+    HoistOutcome::Hoisted(extracted)
+}
+
 /// Apply [`absorb_branch_dialect`] to every step of a WHOLE routine
-/// definition (`routines_save`): walk `tracks[].steps[]`, aggregating
-/// markers in document order. A def that is not object-shaped (or has no
-/// tracks) returns empty and stays untouched — the parser's refusal fires.
+/// definition (`routines_save`), then hoist inline-arm step objects
+/// ([`hoist_inline_arms`], glm-5.2 seq 16-18): extracted steps land in the
+/// surrounding track immediately after their branch (then-arm first,
+/// emission order preserved) and the arms become the id lists the real
+/// shape wants. Hoisted steps re-enter the walk, so a hoisted step that is
+/// itself a dialect branch absorbs too. Markers aggregate in document
+/// order. No-guessing survives whole-step-wise: when an arm holds an
+/// id-less or id-colliding object, the ENTIRE step reverts to its original
+/// bytes (condition absorption included) so validation refuses the verbatim
+/// emission. A def that is not object-shaped (or has no tracks) returns
+/// empty and stays untouched - the parser's refusal fires.
 pub fn absorb_branch_dialects_in_def(def: &mut Value) -> Vec<&'static str> {
     let mut markers = Vec::new();
     let Some(tracks) = def.get_mut("tracks").and_then(Value::as_array_mut) else {
         return markers;
     };
+    // Def-wide id inventory for the hoist collision check (arms may
+    // reference steps in the same track; ids must be unique per routine).
+    let mut used_ids: std::collections::HashSet<String> = tracks
+        .iter()
+        .filter_map(|t| t.get("steps").and_then(Value::as_array))
+        .flatten()
+        .filter_map(|s| s.get("id").and_then(Value::as_str))
+        .map(str::to_string)
+        .collect();
     for track in tracks {
         let Some(steps) = track.get_mut("steps").and_then(Value::as_array_mut) else {
             continue;
         };
-        for step in steps {
-            markers.extend(absorb_branch_dialect(step, BranchShape::WholeStep));
+        let mut i = 0;
+        while i < steps.len() {
+            let original = steps[i].clone();
+            let mut step_markers = absorb_branch_dialect(&mut steps[i], BranchShape::WholeStep);
+            match hoist_inline_arms(&mut steps[i], &mut used_ids) {
+                HoistOutcome::NotApplicable => {}
+                HoistOutcome::Hoisted(extracted) => {
+                    step_markers.push(BRANCH_ARMS_HOISTED);
+                    for (offset, hoisted) in extracted.into_iter().enumerate() {
+                        steps.insert(i + 1 + offset, hoisted);
+                    }
+                }
+                HoistOutcome::Refused => {
+                    steps[i] = original;
+                    step_markers.clear();
+                }
+            }
+            markers.append(&mut step_markers);
+            i += 1;
         }
     }
     markers
@@ -779,6 +904,15 @@ mod tests {
                 json!({"control": "branch", "when": "$s3.connected"}),
                 BranchShape::Patch,
             ),
+            (
+                json!({"control": "if", "on": "s1.ok", "then": [], "else": []}),
+                BranchShape::WholeStep,
+            ),
+            (
+                json!({"control": "branch", "condition": {"ref": "$s3.connected"},
+                       "then": [], "else": []}),
+                BranchShape::WholeStep,
+            ),
         ];
         for (dialect, shape) in dialects {
             let mut once = dialect.clone();
@@ -946,5 +1080,241 @@ mod tests {
             json!({"step": {"id": "s2", "control": "branch", "on": "s1.ok", "then": [], "else": []}});
         assert!(branch_dialect_params("routines_step_add", &clean).is_empty());
         assert!(branch_dialect_params("cms_connect", &args).is_empty());
+    }
+
+    /// gpt-5.5 seq 14 verbatim: the `{"ref": "$path"}` wrapper is a
+    /// strict-boolean condition; a non-string or empty `ref` refuses.
+    #[test]
+    fn gpt_ref_wrapper_condition_absorbs() {
+        let mut step = json!({
+            "condition": {"ref": "$s3.connected"}, "control": "branch",
+            "else": [], "then": []
+        });
+        let markers = absorb_branch_dialect(&mut step, BranchShape::WholeStep);
+        assert_eq!(markers, vec![BRANCH_CONDITION_REF, BRANCH_REF_DOLLAR_STRIPPED]);
+        assert_eq!(
+            step,
+            json!({"control": "branch", "on": "s3.connected", "then": [], "else": []})
+        );
+
+        for bad in [json!({"ref": 7}), json!({"ref": ""}), json!({"ref": ["$s3.x"]})] {
+            let mut step = json!({"control": "branch", "condition": bad, "then": [], "else": []});
+            let before = step.clone();
+            assert!(absorb_branch_dialect(&mut step, BranchShape::WholeStep).is_empty());
+            assert_eq!(step, before);
+        }
+    }
+
+    /// Sonnet-5 seq 27 verbatim: `"condition": true` is NOT mappable - the
+    /// step passes through byte-identical so validation refuses the honest
+    /// original (there is no path to branch on).
+    #[test]
+    fn sonnet_literal_condition_true_passes_through_verbatim() {
+        let mut step = json!({
+            "condition": true, "control": "branch", "else": [], "id": "s4", "then": []
+        });
+        let before = step.clone();
+        assert!(absorb_branch_dialect(&mut step, BranchShape::WholeStep).is_empty());
+        assert_eq!(step, before, "must stay byte-identical");
+    }
+
+    /// The 2026-07-19 probe's invented `control: "if"` maps to `"branch"`:
+    /// bare, with a flat `$`-prefixed `on`, and with the whole
+    /// condition+then+else payload nested under `params` (the probe's exact
+    /// carrier layout, with id-list arms). A carrier WITHOUT the explicit
+    /// `branch`/`if` discriminator still never invents a branch.
+    #[test]
+    fn control_if_maps_to_branch() {
+        let mut step = json!({"control": "if", "on": "s1.ok", "then": ["s2"], "else": []});
+        assert_eq!(
+            absorb_branch_dialect(&mut step, BranchShape::WholeStep),
+            vec![BRANCH_CONTROL_IF_MAPPED]
+        );
+        assert_eq!(
+            step,
+            json!({"control": "branch", "on": "s1.ok", "then": ["s2"], "else": []})
+        );
+
+        let mut step = json!({"control": "if", "on": "$s1.ok", "then": [], "else": []});
+        assert_eq!(
+            absorb_branch_dialect(&mut step, BranchShape::WholeStep),
+            vec![BRANCH_CONTROL_IF_MAPPED, BRANCH_REF_DOLLAR_STRIPPED]
+        );
+        assert_eq!(step["control"], "branch");
+        assert_eq!(step["on"], "s1.ok");
+
+        let mut step = json!({
+            "control": "if", "id": "s4",
+            "params": {"condition": "$s2.success", "then": ["s5"], "else": ["s6"]}
+        });
+        assert_eq!(
+            absorb_branch_dialect(&mut step, BranchShape::WholeStep),
+            vec![
+                BRANCH_CONTROL_IF_MAPPED,
+                BRANCH_CONDITION_STRING,
+                BRANCH_REF_DOLLAR_STRIPPED
+            ]
+        );
+        assert_eq!(
+            step,
+            json!({
+                "control": "branch", "id": "s4", "on": "s2.success",
+                "then": ["s5"], "else": ["s6"]
+            })
+        );
+
+        // Arms in params AND at top level: ambiguous, untouched.
+        let mut step = json!({
+            "control": "if", "then": ["s9"],
+            "params": {"condition": "$s2.success", "then": ["s5"]}
+        });
+        let before = step.clone();
+        assert!(absorb_branch_dialect(&mut step, BranchShape::WholeStep).is_empty());
+        assert_eq!(step, before);
+
+        // No discriminator: no invented branch.
+        let mut step = json!({"if": "$s2.success", "then": [], "else": []});
+        let before = step.clone();
+        assert!(absorb_branch_dialect(&mut step, BranchShape::Patch).is_empty());
+        assert_eq!(step, before);
+    }
+
+    /// glm-5.2 seq 16 structural: the whole `routines_save` def with a
+    /// carrier condition AND inline step objects in both arms. The def walk
+    /// flattens the condition, hoists the inline steps into the track right
+    /// after the branch (then-arm first, order preserved), and rewrites the
+    /// arms as id lists. Second pass: no-op (idempotent).
+    #[test]
+    fn glm_inline_arm_def_absorbs_and_hoists() {
+        let mut def = json!({
+            "routine": "gateway-check-4h", "schema_version": 1,
+            "transmit_mode": "attended", "triggers": [{"type": "manual"}],
+            "tracks": [{"name": "track-1", "steps": [
+                {"action": "data.find_stations", "id": "s1", "on_radio_busy": "wait",
+                 "params": {"bands": ["20m"], "limit": 3, "modes": ["vara-hf"]}},
+                {"action": "radio.connect", "id": "s3", "on_radio_busy": "wait",
+                 "params": {"bands": ["20m"], "stations": "$s1.callsigns"}},
+                {"condition": "$s3.connected", "control": "branch",
+                 "else": [
+                    {"action": "radio.aprs_send", "id": "s6",
+                     "params": {"text": "No gateway was reachable this cycle"}},
+                    {"action": "local.log", "id": "s7",
+                     "params": {"message": "no gateway reachable, APRS alert sent"}}
+                 ],
+                 "id": "s4",
+                 "then": [
+                    {"action": "local.log", "id": "s5",
+                     "params": {"message": "connected to a 20m VARA gateway"}}
+                 ]},
+                {"control": "end", "failed": false, "id": "s2"}
+            ]}]
+        });
+        let markers = absorb_branch_dialects_in_def(&mut def);
+        assert_eq!(
+            markers,
+            vec![
+                BRANCH_CONDITION_STRING,
+                BRANCH_REF_DOLLAR_STRIPPED,
+                BRANCH_ARMS_HOISTED
+            ]
+        );
+        let steps = def["tracks"][0]["steps"].as_array().unwrap();
+        let ids: Vec<&str> = steps.iter().map(|s| s["id"].as_str().unwrap()).collect();
+        assert_eq!(
+            ids,
+            vec!["s1", "s3", "s4", "s5", "s6", "s7", "s2"],
+            "then-arm steps first, right after the branch: {def}"
+        );
+        let branch = &steps[2];
+        assert_eq!(branch["on"], "s3.connected");
+        assert!(branch.get("condition").is_none());
+        assert_eq!(branch["then"], json!(["s5"]));
+        assert_eq!(branch["else"], json!(["s6", "s7"]));
+        assert_eq!(steps[3]["action"], "local.log", "hoisted step kept whole");
+        assert_eq!(steps[4]["action"], "radio.aprs_send");
+
+        // Idempotent: the absorbed def re-enters and leaves untouched.
+        let after_once = def.clone();
+        assert!(absorb_branch_dialects_in_def(&mut def).is_empty());
+        assert_eq!(def, after_once);
+    }
+
+    /// No-guessing on arms: an inline object without an `id`, or one whose
+    /// id collides with an existing step, reverts the WHOLE step - the
+    /// condition absorption included - so validation refuses the verbatim
+    /// emission. A lone step (step_add/step_update) never hoists: there is
+    /// no track to hoist into.
+    #[test]
+    fn inline_arm_hoisting_refuses_without_ids_and_never_runs_on_lone_steps() {
+        let idless = json!({
+            "routine": "r", "schema_version": 1, "transmit_mode": "attended",
+            "triggers": [{"type": "manual"}],
+            "tracks": [{"name": "main", "steps": [
+                {"id": "s1", "action": "radio.connect", "params": {}},
+                {"id": "s2", "control": "branch", "when": "$s1.connected",
+                 "then": [{"action": "local.log", "params": {"message": "hi"}}],
+                 "else": []}
+            ]}]
+        });
+        let mut def = idless.clone();
+        assert!(
+            absorb_branch_dialects_in_def(&mut def).is_empty(),
+            "id-less inline arm reverts the whole step"
+        );
+        assert_eq!(def, idless);
+
+        let colliding = json!({
+            "routine": "r", "schema_version": 1, "transmit_mode": "attended",
+            "triggers": [{"type": "manual"}],
+            "tracks": [{"name": "main", "steps": [
+                {"id": "s1", "action": "radio.connect", "params": {}},
+                {"id": "s2", "control": "branch", "on": "s1.connected",
+                 "then": [{"id": "s1", "action": "local.log", "params": {}}],
+                 "else": []}
+            ]}]
+        });
+        let mut def = colliding.clone();
+        assert!(absorb_branch_dialects_in_def(&mut def).is_empty());
+        assert_eq!(def, colliding);
+
+        // Lone step through the fragment path: inline arms pass through
+        // verbatim (the condition still absorbs).
+        let mut step = json!({
+            "control": "branch", "condition": "$s1.connected",
+            "then": [{"id": "s5", "action": "local.log", "params": {}}], "else": []
+        });
+        let markers = absorb_branch_dialect(&mut step, BranchShape::WholeStep);
+        assert_eq!(
+            markers,
+            vec![BRANCH_CONDITION_STRING, BRANCH_REF_DOLLAR_STRIPPED]
+        );
+        assert_eq!(
+            step["then"],
+            json!([{"id": "s5", "action": "local.log", "params": {}}]),
+            "no track, no hoist"
+        );
+    }
+
+    /// Mixed arms (id strings alongside inline objects) hoist only the
+    /// objects and keep the strings in place.
+    #[test]
+    fn mixed_inline_and_id_arms_hoist_only_the_objects() {
+        let mut def = json!({
+            "routine": "r", "schema_version": 1, "transmit_mode": "attended",
+            "triggers": [{"type": "manual"}],
+            "tracks": [{"name": "main", "steps": [
+                {"id": "s1", "action": "radio.connect", "params": {}},
+                {"id": "s2", "control": "branch", "on": "s1.connected",
+                 "then": ["s9", {"id": "s5", "action": "local.log", "params": {}}],
+                 "else": []},
+                {"id": "s9", "action": "local.log", "params": {}}
+            ]}]
+        });
+        let markers = absorb_branch_dialects_in_def(&mut def);
+        assert_eq!(markers, vec![BRANCH_ARMS_HOISTED]);
+        let steps = def["tracks"][0]["steps"].as_array().unwrap();
+        let ids: Vec<&str> = steps.iter().map(|s| s["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, vec!["s1", "s2", "s5", "s9"]);
+        assert_eq!(steps[1]["then"], json!(["s9", "s5"]));
     }
 }

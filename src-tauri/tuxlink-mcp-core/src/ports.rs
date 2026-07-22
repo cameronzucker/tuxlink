@@ -1847,14 +1847,38 @@ pub struct TriggerKindDto {
     pub example: serde_json::Value,
 }
 
+/// One control-flow step kind (`branch` / `delay` / `retry` / `call` /
+/// `end`), documented for an agent author (tuxlink-6epl8): battery S1 ran
+/// four model families against `Control::Branch` and NONE guessed its flat
+/// `on`/`op`/`value` + then/else-id-list shape - the catalog taught actions
+/// and triggers but left every control shape to invention. `fields`
+/// documents the kind field-by-field; `example` is a paste-ready step
+/// object (for `branch`, the strict-boolean form; `comparison_example`
+/// carries the op/value form and is absent on every other kind).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ControlInfoDto {
+    pub control: String,
+    pub description: String,
+    pub fields: serde_json::Value,
+    pub example: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comparison_example: Option<serde_json::Value>,
+}
+
 /// [`RoutinesPort::actions_catalog`]'s result: everything an author needs to
 /// write a valid routine WITHOUT guessing — the action set with params and
-/// consent classes, the trigger kinds, and one complete example definition.
-/// Built for the agent path (the human path is the designer palette over the
-/// same registry).
+/// consent classes, the control-flow step kinds with their exact shapes,
+/// the trigger kinds, and one complete example definition. Built for the
+/// agent path (the human path is the designer palette over the same
+/// registry).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActionsCatalogDto {
     pub actions: Vec<ActionInfoDto>,
+    /// Every control-flow step kind with its exact wire shape
+    /// (tuxlink-6epl8). `#[serde(default)]` keeps older serialized payloads
+    /// deserializable.
+    #[serde(default)]
+    pub controls: Vec<ControlInfoDto>,
     pub trigger_kinds: Vec<TriggerKindDto>,
     /// One COMPLETE, minimal, valid routine definition — the exact JSON shape
     /// `routines_save` accepts (tuxlink-rt4ey). This teaches the ENVELOPE

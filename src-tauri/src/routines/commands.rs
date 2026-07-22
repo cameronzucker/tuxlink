@@ -788,7 +788,13 @@ fn parse_step(v: serde_json::Value) -> Result<tuxlink_routines::types::Step, UiE
                 .into(),
         )),
         _ => {
-            let is_branch = obj.get("control").and_then(|c| c.as_str()) == Some("branch");
+            // "if" is the battery's invented spelling of branch (mapped at
+            // the MCP boundary; a non-MCP caller can still land it here) —
+            // its refusal teaches the branch shape too.
+            let is_branch = matches!(
+                obj.get("control").and_then(|c| c.as_str()),
+                Some("branch") | Some("if")
+            );
             serde_json::from_value(v).map_err(|e| {
                 if is_branch {
                     UiError::Rejected(format!("[INVALID_STEP] {BRANCH_SHAPE_TEACHING}: {e}"))
