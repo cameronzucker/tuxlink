@@ -19,6 +19,63 @@ model-family-trend | ambiguous. Compat is the belt, prose the suspenders.
 
 ---
 
+## 2026-07-22 — LOCAL-vs-API parity (qwen35-122b-nvfp4 @ twin-bramble, 256k) + P3 gap resolved by strict visibility
+
+Operator asked to run the suite on the local vLLM (qwen35-122b-nvfp4,
+NVFP4, 256k ctx, https://inference.twin-bramble.ts.net) to verify parity
+with the OpenRouter-served qwen. Two harness fixes were needed to get there
+(both battery-only): zvy6q (allowlist denial non-terminal) and g31en
+(credits baseline non-fatal for non-OpenRouter origins — the local endpoint
+has no /api/v1/credits). Full 7-stage local sweep: ALL cells `completed`.
+
+**PARITY VERDICT: functional parity.** Same verdicts on all 7 stages.
+
+| stage | API qwen | local qwen | note |
+|---|---|---|---|
+| P1 | PASS | PASS | local 13t, 1 off-surface probe recovered (zvy6q fix works locally) |
+| P2 | PASS | PASS | equal |
+| S1 | PASS (16t) | PASS (9t) | conditional-APRS-on-failure branch, no fall-through leak; local FASTER |
+| S2 | PASS (6t) | PASS-equiv (6t) | meets 15m/+80m/record-band; cosmetic NO_TERMINAL_PATH (dropped explicit end) |
+| S3 | PASS (7t) | PASS (24t) | full Delay + 2-connect structure; local SLOWER (only notable efficiency gap) |
+| S4 | PASS (14t) | PASS (13t) | all 5 actions, correct order |
+| P3 | gap-cartography | gap-cartography | both honestly decline the (missing) prediction tier |
+
+Differences are minor and NON-capability: S2 cosmetic missing-end warning;
+efficiency MIXED (local faster on S1, slower on S3 — no systematic
+degradation from the NVFP4 quant / local serving). No stage where one
+serving passes and the other fails.
+
+**P3 STRICT-VISIBILITY PAYOFF (the point of running local).** The
+API-served P3 "stub" was ambiguous through opaque tool-I/O: lazy/incapable,
+or honest? The local run's full narration RESOLVES it decisively. qwen
+verbatim: it built "only the first phase (closest 20)", enumerated the exact
+requested prediction logic, and named the precise gap — "the find_stations
+action doesn't support FT-8 evidence filtering directly (the ft8_evidence
+parameter isn't valid for this action). The FT-8 evidence feature exists but
+works differently — it requires the FT-8 listener running and adds
+corroboration data." VERIFIED grounded (not hallucinated): find_stations'
+ParamSpecs are modes/bands/history_hours/limit (no ft8_evidence), and
+ft8_evidence is a real feature elsewhere in the MCP surface. qwen correctly
+distinguished FT8 CORROBORATION (exists) from PREDICTIVE-RANKING (does not)
+and DECLINED TO FABRICATE — while transparently telling the operator exactly
+what is missing and why.
+
+Consequences:
+1. The honest-decline read of P3 is CONFIRMED over confabulation, and it is
+   a genuine MODEL PROPERTY (consistent API↔local), not a serving artifact.
+2. It INVERTS the P3 quality ranking: qwen's transparent gap-acknowledgment
+   is BETTER than sonnet's silent find_stations-history proxy (which would
+   connect to wrong stations in reality). Confabulating an absent capability
+   is the failure; honest decline is the correct behavior for a Part-97 tool.
+3. Distillation implication (tuxlink-77620): do NOT train this away. The P3
+   delta is a PRODUCT gap (no propagation-prediction/ranking action). Fix =
+   add the affordance qwen was reaching for; then re-eval. Distilling
+   sonnet's workaround would teach fabrication. Candidate new FT objective:
+   reward honest capability-boundary behavior.
+
+Bundles: R2 battery-results/local-qwen-1/. API reference:
+battery-results/post-6epl8-1/.
+
 ## 2026-07-22 — Stages S2 (4/4) + S4 + S3 + a CORRECTED S4 verdict
 
 **S2 (edit-in-place: 40m-dial → 15m cadence, +80m fallback, record band).**
