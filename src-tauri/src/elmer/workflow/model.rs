@@ -169,6 +169,17 @@ impl PhaseModel for StubModel {
 /// for the provider; the in-process routines invoker for the store). Task 13b
 /// builds it from those; the tests below build it from a scripted fake provider
 /// plus a temp-dir store-writing invoker.
+/// An optional forwarder called for EVERY [`RunEvent`] a phase's bounded loop
+/// emits, in addition to the private token sum. 13b installs one that bridges
+/// each `RunEvent` into the battery `Meters`/`EventSink` exactly as
+/// [`ElmerSession::send`](crate::elmer::session) does, so a Full-arm cell's
+/// turns feed the same meters (provider-turn count, prompt/eval tokens, the
+/// watchdog) as a Base-arm cell — without which the cross-arm token/turn
+/// comparison would be invalid (the two arms would meter through different
+/// paths). Defaults to `None`, so 13a's own construction + tests, which never
+/// install one, are unaffected.
+pub type EventForwarder = Arc<dyn Fn(RunEvent) + Send + Sync>;
+
 pub struct SessionPhaseModel {
     /// The vetted model provider for this run (one per cell, as in `run_cell`).
     provider: Arc<dyn Provider>,
@@ -177,16 +188,20 @@ pub struct SessionPhaseModel {
     emit_invoker: Arc<dyn ToolInvoker>,
     /// Bounds on each phase's bounded agent loop.
     limits: Limits,
+    /// Optional per-`RunEvent` forwarder (13b's meters bridge). `None` for the
+    /// standalone adapter (13a): the token sum still runs, nothing is bridged.
+    event_forwarder: Option<EventForwarder>,
 }
 
 impl SessionPhaseModel {
-    /// Build with default [`Limits`].
+    /// Build with default [`Limits`] and no event forwarder.
     pub fn new(provider: Arc<dyn Provider>, emit_invoker: Arc<dyn ToolInvoker>) -> Self {
         Self::with_limits(provider, emit_invoker, Limits::default())
     }
 
     /// Build with explicit per-phase loop [`Limits`] (13b may tighten these to
-    /// the cell's budget).
+    /// the cell's budget). No event forwarder — use
+    /// [`Self::with_event_forwarder`] to add one.
     pub fn with_limits(
         provider: Arc<dyn Provider>,
         emit_invoker: Arc<dyn ToolInvoker>,
@@ -196,7 +211,17 @@ impl SessionPhaseModel {
             provider,
             emit_invoker,
             limits,
+            event_forwarder: None,
         }
+    }
+
+    /// Attach an [`EventForwarder`] called for every [`RunEvent`] each phase
+    /// emits (13b's meters-fidelity requirement). Builder-style so 13a's
+    /// existing constructors keep their exact signatures and the forwarder
+    /// defaults to `None`.
+    pub fn with_event_forwarder(mut self, forwarder: EventForwarder) -> Self {
+        self.event_forwarder = Some(forwarder);
+        self
     }
 }
 
@@ -206,12 +231,21 @@ impl PhaseModel for SessionPhaseModel {
         // Sum prompt tokens across the phase's provider turns from the runner's
         // fire-and-forget ContextUsage events (mirrors `make_battery_sink`).
         let prompt_tokens = AtomicU64::new(0);
+        // The forwarder (if any) sees EVERY event, so 13b's meters bridge
+        // counts Full's provider turns / tokens identically to Base; the token
+        // sum below is read off the SAME `ContextUsage` events regardless.
+        // Borrow the event first (the `ContextUsage` fields are `Copy`), then
+        // hand the owned event to the forwarder.
+        let forwarder = self.event_forwarder.as_ref();
         let on_event = |ev: RunEvent| {
             if let RunEvent::ContextUsage {
                 prompt_tokens: pt, ..
-            } = ev
+            } = &ev
             {
-                prompt_tokens.fetch_add(u64::from(pt), Ordering::SeqCst);
+                prompt_tokens.fetch_add(u64::from(*pt), Ordering::SeqCst);
+            }
+            if let Some(forward) = forwarder {
+                forward(ev);
             }
         };
 
@@ -594,6 +628,40 @@ mod tests {
             turn.outcome,
             RunOutcome::Completed("Built and saved the routine.".to_string())
         );
+    }
+
+    // (2b) Meters fidelity (13b): an installed `EventForwarder` is called for
+    // every `RunEvent` the phase's loop emits — including the `ContextUsage`
+    // the token sum reads — so the battery `Meters`/`EventSink` see Full's
+    // turns identically to Base's. The token sum still works with a forwarder
+    // installed (both read the same `ContextUsage`).
+    #[tokio::test]
+    async fn event_forwarder_receives_every_run_event_and_token_sum_still_holds() {
+        let provider: Arc<dyn Provider> = Arc::new(FakeProvider::new(vec![(
+            77,
+            ModelTurn::Text("done".to_string()),
+        )]));
+        let dir = tempfile::tempdir().expect("tempdir");
+        let emit_invoker: Arc<dyn ToolInvoker> = Arc::new(StoreWritingInvoker {
+            store: DefinitionStore::open(dir.path().to_path_buf()),
+        });
+
+        // The forwarder records the prompt_tokens of every ContextUsage it sees.
+        let seen: Arc<Mutex<Vec<u32>>> = Arc::new(Mutex::new(Vec::new()));
+        let seen_for_fwd = Arc::clone(&seen);
+        let forwarder: super::EventForwarder = Arc::new(move |ev: RunEvent| {
+            if let RunEvent::ContextUsage { prompt_tokens, .. } = ev {
+                seen_for_fwd.lock().expect("seen mutex").push(prompt_tokens);
+            }
+        });
+
+        let model = SessionPhaseModel::new(provider, emit_invoker).with_event_forwarder(forwarder);
+        let turn = model.run_phase("intent prompt".to_string(), &[]).await;
+
+        // The token sum (adapter-private) still reflects the metered tokens ...
+        assert_eq!(turn.prompt_tokens, 77);
+        // ... AND the forwarder saw the same ContextUsage (the meters bridge).
+        assert_eq!(*seen.lock().expect("seen mutex"), vec![77]);
     }
 
     // (3) Part-97 belt: `EmitDispatch` DENIES a call outside its allow-set and
