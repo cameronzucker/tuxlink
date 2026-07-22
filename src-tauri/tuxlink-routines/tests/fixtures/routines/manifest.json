@@ -170,6 +170,18 @@
     },
     {
       "kind": "single",
+      "name": "ARM_FALLTHROUGH_LEAK",
+      "file": "arm-fallthrough-leak.json",
+      "expected_codes": ["ARM_FALLTHROUGH_LEAK"],
+      "context": {
+        "actions": ["local.note"],
+        "entities": [],
+        "profile": { "has_internet": false, "rigs": [] },
+        "sibling_routines": []
+      }
+    },
+    {
+      "kind": "single",
       "name": "CALL_RECURSION",
       "file": "call-recursion.json",
       "expected_codes": ["CALL_RECURSION"],
