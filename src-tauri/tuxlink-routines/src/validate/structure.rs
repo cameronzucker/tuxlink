@@ -49,6 +49,7 @@ pub const RETRY_TARGET_MISSING: &str = "RETRY_TARGET_MISSING";
 pub const RETRY_TARGET_NOT_ACTION: &str = "RETRY_TARGET_NOT_ACTION";
 pub const BRANCH_CYCLE: &str = "BRANCH_CYCLE";
 pub const BRANCH_TARGET_MISSING: &str = "BRANCH_TARGET_MISSING";
+pub const ARM_FALLTHROUGH_LEAK: &str = "ARM_FALLTHROUGH_LEAK";
 pub const CALL_RECURSION: &str = "CALL_RECURSION";
 pub const CALL_TARGET_MISSING: &str = "CALL_TARGET_MISSING";
 
@@ -59,8 +60,101 @@ pub fn check(def: &RoutineDef, ctx: &dyn ValidationContext, findings: &mut Vec<F
     for track in &def.tracks {
         check_retry_controls(def, track, findings);
         check_graph_properties(def, track, findings);
+        check_arm_fallthrough_leaks(def, track, findings);
     }
     check_calls(def, ctx, findings);
+}
+
+/// ARM_FALLTHROUGH_LEAK (tuxlink-ilrav, battery S1 post-6epl8-1 qwen
+/// evidence): branch arms are jump targets with fall-through, so an arm
+/// whose fall-through path reaches the OTHER arm's entry step runs that
+/// arm's steps too. The observed real-world failure: then-arm success-log
+/// placed directly before the else-arm's `radio.aprs_send` transmitted a
+/// false "no gateway" alert on every SUCCESSFUL cycle, and validation said
+/// nothing.
+///
+/// Warning, not error: exclusive-prefix-shared-tail ("then does extra
+/// steps, then falls into the path both arms share") is only encodable in
+/// exactly this shape, so an intentional convergence exists. The message
+/// teaches both readings. The walk follows pure fall-through (actions,
+/// delay/retry/call) and stops at any End (terminated) or Branch (a new
+/// decision point, not a leak).
+fn check_arm_fallthrough_leaks(def: &RoutineDef, track: &Track, findings: &mut Vec<Finding>) {
+    let n = track.steps.len();
+    for (i, step) in track.steps.iter().enumerate() {
+        let Step::Control(c) = step else { continue };
+        let Control::Branch { then, r#else, .. } = &c.control else {
+            continue;
+        };
+        // An arm's entry index: its first target, or fall-through for an
+        // empty arm. Dangling targets are BRANCH_TARGET_MISSING's job.
+        let entry = |arm: &[StepId]| -> Option<usize> {
+            match arm.first() {
+                Some(t) => find_index(track, t),
+                None => Some(i + 1),
+            }
+        };
+        let (Some(then_entry), Some(else_entry)) = (entry(then), entry(r#else)) else {
+            continue;
+        };
+        if then_entry == else_entry {
+            continue; // both arms converge immediately: no exclusivity claimed
+        }
+        for (this_entry, other_entry, this_name, other_name) in [
+            (then_entry, else_entry, "then", "else"),
+            (else_entry, then_entry, "else", "then"),
+        ] {
+            let mut j = this_entry;
+            let leaked = loop {
+                if j == other_entry {
+                    break true;
+                }
+                if j >= n {
+                    break false; // ran off the track end (NO_TERMINAL_PATH's job)
+                }
+                match &track.steps[j] {
+                    Step::Action(_) => j += 1,
+                    Step::Control(c2) => match &c2.control {
+                        Control::End { .. } => break false,
+                        Control::Branch { .. } => break false,
+                        // Retry executes its wrapped target before advancing
+                        // (Codex 2026-07-22 P2): a retry on this arm's path
+                        // whose target IS the other arm's entry runs that
+                        // arm's first step - the same leak through a
+                        // different door.
+                        Control::Retry { step: target, .. } => {
+                            if find_index(track, target) == Some(other_entry) {
+                                break true;
+                            }
+                            j += 1;
+                        }
+                        _ => j += 1,
+                    },
+                }
+            };
+            if leaked {
+                findings.push(
+                    Finding::warning(
+                        ARM_FALLTHROUGH_LEAK,
+                        def.routine.clone(),
+                        format!(
+                            "branch \"{}\": the \"{}\" path falls through into \"{}\", the \"{}\" arm's first step - after the \"{}\" arm's steps run, execution CONTINUES into the \"{}\" arm's steps (arms are jump targets, not exclusive blocks). If the arms should be exclusive, insert an end control after the \"{}\" arm's steps; if the \"{}\" arm is deliberately a shared tail, ignore this",
+                            track.steps[i].id().0,
+                            this_name,
+                            track.steps[other_entry].id().0,
+                            other_name,
+                            this_name,
+                            other_name,
+                            this_name,
+                            other_name,
+                        ),
+                    )
+                    .with_track(track.name.clone())
+                    .with_step(track.steps[i].id().clone()),
+                );
+            }
+        }
+    }
 }
 
 fn find_index(track: &Track, id: &StepId) -> Option<usize> {
@@ -902,5 +996,200 @@ mod tests {
             unreachable.iter().map(|f| &f.step).collect();
         assert!(unreachable_ids.contains(&Some(StepId("r1".into()))));
         assert!(unreachable_ids.contains(&Some(StepId("s2".into()))));
+    }
+
+    // --- ARM_FALLTHROUGH_LEAK (tuxlink-ilrav) -------------------------
+
+    fn leak_findings(def: &RoutineDef) -> Vec<Finding> {
+        let ctx = StaticContext::new();
+        let mut findings = Vec::new();
+        check(def, &ctx, &mut findings);
+        findings
+            .into_iter()
+            .filter(|f| f.code == ARM_FALLTHROUGH_LEAK)
+            .collect()
+    }
+
+    /// The battery S1 post-6epl8-1 qwen def verbatim in shape: then-arm
+    /// success step placed directly before the else-arm's entry. The
+    /// success path falls into the failure steps (a false APRS transmit in
+    /// the real emission); exactly one warning, naming the branch.
+    #[test]
+    fn qwen_shape_then_path_leaks_into_else_arm() {
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    action("s1"),
+                    branch("b1", "s1.ok", vec!["s4"], vec!["s5"]),
+                    action("s4"),
+                    action("s5"),
+                    action("s6"),
+                    end("e1"),
+                ],
+            )],
+        );
+        let leaks = leak_findings(&def);
+        assert_eq!(leaks.len(), 1, "{leaks:?}");
+        assert_eq!(leaks[0].step, Some(StepId("b1".into())));
+        assert!(
+            leaks[0].message.contains("\"then\" path falls through into \"s5\""),
+            "{}",
+            leaks[0].message
+        );
+    }
+
+    /// The correct exclusive layout (glm/gpt S1 emissions): then steps
+    /// terminated by an end before the else steps begin; else runs off the
+    /// track end. No leak in either direction.
+    #[test]
+    fn exclusive_arm_layout_has_no_leak() {
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    action("s1"),
+                    branch("b1", "s1.ok", vec!["s8"], vec!["s5"]),
+                    action("s8"),
+                    end("e1"),
+                    action("s5"),
+                    action("s7"),
+                    end("e2"),
+                ],
+            )],
+        );
+        assert!(leak_findings(&def).is_empty());
+    }
+
+    /// The leak detector is direction-symmetric: an else-arm entry whose
+    /// fall-through reaches the then-arm's entry is the same defect.
+    #[test]
+    fn else_path_leaking_into_then_arm_is_detected() {
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    action("s1"),
+                    branch("b1", "s1.ok", vec!["t1s"], vec!["e1s"]),
+                    action("e1s"),
+                    action("t1s"),
+                    end("x1"),
+                ],
+            )],
+        );
+        let leaks = leak_findings(&def);
+        assert_eq!(leaks.len(), 1, "{leaks:?}");
+        assert!(
+            leaks[0].message.contains("\"else\" path falls through into \"t1s\""),
+            "{}",
+            leaks[0].message
+        );
+    }
+
+    /// A second branch between the arms is a new decision point, not a
+    /// leak: the walk stops there.
+    #[test]
+    fn walk_stops_at_an_intervening_branch() {
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    action("s1"),
+                    branch("b1", "s1.ok", vec!["t1s"], vec!["e1s"]),
+                    action("t1s"),
+                    branch("b2", "s1.ok", vec!["e1s"], vec!["e1s"]),
+                    action("e1s"),
+                    end("x1"),
+                ],
+            )],
+        );
+        assert!(leak_findings(&def).is_empty(), "{:?}", leak_findings(&def));
+    }
+
+    /// An empty arm falls through to the step after the branch; when the
+    /// other arm targets a later step past an end, there is no leak, and
+    /// converged arms (same entry) claim no exclusivity at all.
+    #[test]
+    fn empty_and_converged_arms_do_not_leak() {
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    action("s1"),
+                    branch("b1", "s1.ok", vec![], vec!["s5"]),
+                    action("s2"),
+                    end("e1"),
+                    action("s5"),
+                    end("e2"),
+                ],
+            )],
+        );
+        assert!(leak_findings(&def).is_empty());
+
+        let converged = routine_named(
+            "r2",
+            vec![track(
+                "t1",
+                vec![
+                    action("s1"),
+                    branch("b1", "s1.ok", vec!["s2"], vec!["s2"]),
+                    action("s2"),
+                    end("e1"),
+                ],
+            )],
+        );
+        assert!(leak_findings(&converged).is_empty());
+    }
+
+    /// Codex 2026-07-22 P2: a Retry on one arm's path whose target is the
+    /// other arm's entry executes that arm's first step - the same leak
+    /// through a different door. Shape verbatim from the review: then jumps
+    /// to a retry wrapping the else-arm's entry action.
+    #[test]
+    fn retry_targeting_the_other_arms_entry_is_a_leak() {
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    action("s1"),
+                    branch("b1", "s1.ok", vec!["r1"], vec!["else_tx"]),
+                    action("else_tx"),
+                    end("e_else"),
+                    retry("r1", "else_tx", 1),
+                    end("e_then"),
+                ],
+            )],
+        );
+        let leaks = leak_findings(&def);
+        assert_eq!(leaks.len(), 1, "{leaks:?}");
+        assert!(
+            leaks[0].message.contains("\"then\" path falls through into \"else_tx\""),
+            "{}",
+            leaks[0].message
+        );
+
+        // A retry wrapping a target on the SAME arm's path is not a leak.
+        let benign = routine_named(
+            "r2",
+            vec![track(
+                "t1",
+                vec![
+                    action("s1"),
+                    branch("b1", "s1.ok", vec!["t1s"], vec!["e1s"]),
+                    action("t1s"),
+                    retry("r1", "t1s", 1),
+                    end("e_then"),
+                    action("e1s"),
+                    end("e_else"),
+                ],
+            )],
+        );
+        assert!(leak_findings(&benign).is_empty(), "{:?}", leak_findings(&benign));
     }
 }

@@ -19,6 +19,43 @@ model-family-trend | ambiguous. Compat is the belt, prose the suspenders.
 
 ---
 
+## 2026-07-22 — Stage S1 RE-RUN, sweep post-6epl8-1 (post-absorption, 4-model roster)
+
+Run on merged main 9e111a67 (PR #1232: branch-dialect absorption belt +
+catalog/refusal teaching suspenders, 6epl8). Whole stage: ~8 minutes, ~$0.95
+(vs the pre-fix S1: 2 cancels at caps, ~$4.46).
+
+| model | verdict | turns to done | spend | notes |
+|---|---|---|---|---|
+| z-ai/glm-5.2 | **PASS clean** | 21 calls | $0.0571 | Correct branch (on s2.connected, flat shape, id-list arms) AND correct jump+fall-through layout (then-log, end-ok, else-log, aprs, end-failed). Chose automatic mode and surfaced AUTO_TX_UNACKED as blocking with the exact right framing ("can only be recorded in the Tuxlink UI - I can't grant it here"). Was: 40-turn cancel after 7 dialects. |
+| anthropic/claude-sonnet-5 | **PASS** | ~14 calls | $0.3880 | Correct layout; arm lists carry full path ids (harmless: executor jumps to arm.first()). Was: $2.21 cancel after 11 dialects. |
+| openai/gpt-5.5 | **PASS** | ~15 calls | $0.5020 | Correct layout + end-failed semantics on the no-gateway path. Was: false "completed" on a branchless stub. |
+| qwen/qwen3.5-122b-a10b | **FAIL (new class: layout)** | 8 calls | ~$0 (billing lag) | Authored a REAL branch (was: linear dodge) with the right condition, but storage layout [branch, then-log, else-aprs, log, end] leaks: the SUCCESS path falls through into radio.aprs_send - a false "no gateway" alert transmitted every successful cycle. validate said NOTHING (only ATTENDED_UNDER_SCHEDULE). |
+
+**THE DIALECT WALL IS DOWN.** Zero branch_dialect absorption markers in any
+transcript: all four families emitted the REAL flat shape natively - the
+teaching suspenders (catalog controls section, branch-in-situ template,
+honest refusals) sufficed, and the absorption belt sat unexercised (its
+table-driven tests remain its evidence). invalid_args across the whole
+sweep: 3 total (2 routine-name grammar, 1 patch key), all self-corrected
+next call. Compare: 20+ branch-dialect refusals across the pre-fix sweep.
+
+**qwen's FAIL attribution: tuxlink-design-gap + model-family-trend.** The
+def is structurally valid and validation-honesty-silent, yet transmits
+falsely. Filed bd tuxlink-ilrav (P1): ARM_FALLTHROUGH_LEAK validator
+finding (fall-through walk from each arm entry; reaching the other arm's
+entry warns, message teaches insert-an-end vs deliberate shared tail).
+Warning not error: exclusive-prefix-shared-tail convergence is only
+encodable in this exact shape. Fix + corpus fixture + tests on
+bd-tuxlink-ilrav/arm-fallthrough-leak (PR #1234). Per stage-gating, S1 is
+NOT fully addressed until the finding merges and the qwen cell re-runs
+against it.
+
+Also landed this session (CI-tax reduction, not battery-gated): PR #1233
+retries ETXTBSY in tuxlink-jt9 decode_slot spawns - the fake_jt9 flake
+that taxed both #1229 and #1232 with ~15-minute reruns (tuxlink-ux4t7
+closed; tuxlink-b5qfw tracks any non-ETXTBSY residue).
+
 ## 2026-07-21 — harness bring-up
 
 - Harness committed (2d32b7d8) + built clean on R2 first try (574 crates,

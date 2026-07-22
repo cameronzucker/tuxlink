@@ -1,0 +1,20 @@
+{
+  "routine": "arm-fallthrough-leak-demo",
+  "schema_version": 1,
+  "transmit_mode": "attended",
+  "on_interrupted": "stay",
+  "inputs": [],
+  "triggers": [{ "type": "manual" }],
+  "tracks": [
+    {
+      "name": "t1",
+      "steps": [
+        { "id": "s1", "action": "local.note", "params": {} },
+        { "id": "b1", "control": "branch", "on": "s1.ok", "then": ["s4"], "else": ["s5"] },
+        { "id": "s4", "action": "local.note", "params": {} },
+        { "id": "s5", "action": "local.note", "params": {} },
+        { "id": "e1", "control": "end", "failed": false }
+      ]
+    }
+  ]
+}
