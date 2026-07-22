@@ -31,6 +31,32 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.98.0](https://github.com/cameronzucker/tuxlink/compare/v0.97.0...v0.98.0) (2026-07-22)
+
+
+### Features
+
+* **elmer:** battery stage driver — one corpus stage across the five models ([9c1921d](https://github.com/cameronzucker/tuxlink/commit/9c1921dc6224ccf5fe21df7dacb93aa3bb571db1))
+* **elmer:** headless battery runner bin — cross-model routine-authoring harness ([2d32b7d](https://github.com/cameronzucker/tuxlink/commit/2d32b7d8b0865b2c537de738ef800914002d08ee))
+* **hooks:** deterministically ban sweep-staging and chained mutating git ops (tuxlink-18san) ([c3fb154](https://github.com/cameronzucker/tuxlink/commit/c3fb154886e8d09b9ca83caac81788e606323a96))
+* **routines:** absorb the Branch dialect wall — battery-driven 6epl8 fix (UNREVIEWED implementer output) ([48b4e03](https://github.com/cameronzucker/tuxlink/commit/48b4e03e8dd447d0b8850ce7a722a99a30f4cbeb))
+* **routines:** close the 6epl8 absorption gaps - arm hoisting, ref wrapper, control:if remap, controls catalog ([fe6bb17](https://github.com/cameronzucker/tuxlink/commit/fe6bb17b41359ee781fc9ad30396e55720f8ec04))
+
+
+### Bug Fixes
+
+* **battery:** allowlist denial is non-terminal (InvalidArgs, not Denied) (tuxlink-zvy6q) ([a652a2b](https://github.com/cameronzucker/tuxlink/commit/a652a2be169c9c5b3a607b6692a5d2153f460e80))
+* **battery:** credits baseline non-fatal for non-OpenRouter endpoints (tuxlink-g31en) ([70018f1](https://github.com/cameronzucker/tuxlink/commit/70018f14a4845bc1259003ee36fc85168dbfa581))
+* **cms:** scoped TEST-account carve-out so acceptance Test 1 targets validate (tuxlink-fhr4g) ([721d650](https://github.com/cameronzucker/tuxlink/commit/721d6500b3520c8dccfbed780f7c0a53b5fa0d35))
+* **elmer:** battery allowlist admits routines_journal_get + routines_run_status ([c32ab4d](https://github.com/cameronzucker/tuxlink/commit/c32ab4dbc73f294ef4333e34a7b7f927ff819fed))
+* **elmer:** battery harness stage-P2 fixes — enable in allowlist, abort-path states managed, live-credits cost gate ([4838c60](https://github.com/cameronzucker/tuxlink/commit/4838c600d1c0a1d36e7d1756f13225008b43d6ac))
+* **elmer:** battery stage driver needs xvfb-run; start the battery journal ([6a73ead](https://github.com/cameronzucker/tuxlink/commit/6a73ead581c40b73f8cb3b3b22ef7155a9aaf8bd))
+* **ft8:** deflake fake_jt9 suite - retry ETXTBSY in decode_slot's spawn (tuxlink-ux4t7) ([7b33eb6](https://github.com/cameronzucker/tuxlink/commit/7b33eb64b0f7eb625e1513805904d1ddc786e553))
+* **routines:** ARM_FALLTHROUGH_LEAK validator finding - branch arm falling into the other arm's steps (tuxlink-ilrav) ([cdf54d8](https://github.com/cameronzucker/tuxlink/commit/cdf54d8011c561ce4e48899bdec9680a25ad7195))
+* **routines:** harden 6epl8 absorption per Codex GPT-5.5 adversarial round (1 P1, 6 P2, 1 P3) ([80df4be](https://github.com/cameronzucker/tuxlink/commit/80df4be7d2633795f524ca415cae14f084a176ea))
+* **routines:** retry-mediated arm leak detection (Codex round P2) ([8a3c91f](https://github.com/cameronzucker/tuxlink/commit/8a3c91f06a89bb122d20aea2293b1cf5c7415748))
+* **wizard:** mirror the TEST-account carve-out in the frontend validator (tuxlink-fhr4g) ([54f9592](https://github.com/cameronzucker/tuxlink/commit/54f9592d19f320ef6e744e62cb93e02ede507cb6))
+
 ## [0.97.0](https://github.com/cameronzucker/tuxlink/compare/v0.96.0...v0.97.0) (2026-07-21)
 
 
