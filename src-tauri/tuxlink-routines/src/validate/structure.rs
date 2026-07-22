@@ -117,6 +117,17 @@ fn check_arm_fallthrough_leaks(def: &RoutineDef, track: &Track, findings: &mut V
                     Step::Control(c2) => match &c2.control {
                         Control::End { .. } => break false,
                         Control::Branch { .. } => break false,
+                        // Retry executes its wrapped target before advancing
+                        // (Codex 2026-07-22 P2): a retry on this arm's path
+                        // whose target IS the other arm's entry runs that
+                        // arm's first step - the same leak through a
+                        // different door.
+                        Control::Retry { step: target, .. } => {
+                            if find_index(track, target) == Some(other_entry) {
+                                break true;
+                            }
+                            j += 1;
+                        }
                         _ => j += 1,
                     },
                 }
@@ -1133,5 +1144,52 @@ mod tests {
             )],
         );
         assert!(leak_findings(&converged).is_empty());
+    }
+
+    /// Codex 2026-07-22 P2: a Retry on one arm's path whose target is the
+    /// other arm's entry executes that arm's first step - the same leak
+    /// through a different door. Shape verbatim from the review: then jumps
+    /// to a retry wrapping the else-arm's entry action.
+    #[test]
+    fn retry_targeting_the_other_arms_entry_is_a_leak() {
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    action("s1"),
+                    branch("b1", "s1.ok", vec!["r1"], vec!["else_tx"]),
+                    action("else_tx"),
+                    end("e_else"),
+                    retry("r1", "else_tx", 1),
+                    end("e_then"),
+                ],
+            )],
+        );
+        let leaks = leak_findings(&def);
+        assert_eq!(leaks.len(), 1, "{leaks:?}");
+        assert!(
+            leaks[0].message.contains("\"then\" path falls through into \"else_tx\""),
+            "{}",
+            leaks[0].message
+        );
+
+        // A retry wrapping a target on the SAME arm's path is not a leak.
+        let benign = routine_named(
+            "r2",
+            vec![track(
+                "t1",
+                vec![
+                    action("s1"),
+                    branch("b1", "s1.ok", vec!["t1s"], vec!["e1s"]),
+                    action("t1s"),
+                    retry("r1", "t1s", 1),
+                    end("e_then"),
+                    action("e1s"),
+                    end("e_else"),
+                ],
+            )],
+        );
+        assert!(leak_findings(&benign).is_empty(), "{:?}", leak_findings(&benign));
     }
 }
