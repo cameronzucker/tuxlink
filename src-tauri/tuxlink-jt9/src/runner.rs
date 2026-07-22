@@ -45,19 +45,36 @@ impl Jt9Runner {
                 return SlotOutcome::Failed(SlotFailure::BadWav(e))
             }
         }
-        let child = Command::new(&self.binary.jt9_path)
-            .args(["-8", "-d", "3", "-p", "15", "-w", "1"])
-            .arg("-a").arg(&self.data_dir)
-            .arg("-t").arg(slot_tmp)
-            .arg(wav)
-            .current_dir(slot_tmp)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn();
-        let mut child = match child {
-            Ok(c) => c,
-            Err(e) => return SlotOutcome::Failed(SlotFailure::SpawnFailed(e.to_string())),
+        // ETXTBSY retry window (raw errno 26 — io::ErrorKind::ExecutableFileBusy
+        // needs rustc > our 1.75 MSRV): the binary briefly has an "open
+        // writer". In production that is a package manager rewriting jt9
+        // mid-decode; under `cargo test` it is the multi-threaded fork/exec
+        // window (a sibling test's just-forked child holds inherited
+        // write-fds until its own exec) — the tuxlink-ux4t7 CI flake, same
+        // mechanism as the probe_version deflake (tuxlink-qxyim, PR #1090).
+        // Bounded well under the 15 s FT8 slot so a persistent ETXTBSY still
+        // classifies as SpawnFailed instead of eating the slot.
+        const ETXTBSY_RETRY_WINDOW: Duration = Duration::from_millis(500);
+        const ETXTBSY_POLL_INTERVAL: Duration = Duration::from_millis(25);
+        let spawn_deadline = Instant::now() + ETXTBSY_RETRY_WINDOW;
+        let mut child = loop {
+            match Command::new(&self.binary.jt9_path)
+                .args(["-8", "-d", "3", "-p", "15", "-w", "1"])
+                .arg("-a").arg(&self.data_dir)
+                .arg("-t").arg(slot_tmp)
+                .arg(wav)
+                .current_dir(slot_tmp)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+            {
+                Ok(c) => break c,
+                Err(e) if e.raw_os_error() == Some(26) && Instant::now() < spawn_deadline => {
+                    std::thread::sleep(ETXTBSY_POLL_INTERVAL);
+                }
+                Err(e) => return SlotOutcome::Failed(SlotFailure::SpawnFailed(e.to_string())),
+            }
         };
 
         // Drain threads: decode lines stream incrementally; draining also

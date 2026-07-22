@@ -373,3 +373,34 @@ fn nonzero_exit_with_decodes_salvages_too() {
     }
     let _ = std::fs::remove_dir_all(wav.parent().unwrap());
 }
+
+#[test]
+fn transient_etxtbsy_spawn_retries_within_window() {
+    // The tuxlink-ux4t7 CI flake, made deterministic: exec of a script that
+    // ANY process holds open for writing fails ETXTBSY. Hold a write fd on
+    // the shim across decode_slot's first spawn attempts and release it
+    // after ~150ms — inside the runner's 500ms retry window — so the retry
+    // loop (same mechanism as the probe_version deflake, tuxlink-qxyim)
+    // must recover to a clean decode instead of Failed(SpawnFailed).
+    let (runner, wav, tmp) = setup("etxtbsy", &format!(
+        "#!/bin/sh\necho '{DECODE_LINE}'\necho '{SENTINEL}'\nexit 0\n"));
+    let shim = std::env::temp_dir()
+        .join(format!("tuxlink-jt9-rt-etxtbsy-{}", std::process::id()))
+        .join("bin")
+        .join("jt9");
+    assert!(shim.is_file(), "shim path reconstruction must match setup()");
+    let writer = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&shim)
+        .unwrap();
+    let holder = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(150));
+        drop(writer); // releases the open-writer; exec can now succeed
+    });
+    match runner.decode_slot(&wav, &tmp, 0) {
+        SlotOutcome::Decoded(recs) => assert_eq!(recs.len(), 1),
+        other => panic!("want Decoded after transient ETXTBSY, got {other:?}"),
+    }
+    holder.join().unwrap();
+    let _ = std::fs::remove_dir_all(wav.parent().unwrap());
+}
