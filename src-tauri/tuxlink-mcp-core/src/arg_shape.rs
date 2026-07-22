@@ -1542,7 +1542,7 @@ mod tests {
         assert_eq!(ids, vec!["s1", "s2", "s5", "s3", "s7"]);
         assert_eq!(
             steps[2],
-            &nested,
+            nested,
             "the nested branch keeps its inline arm verbatim - validation refuses it"
         );
     }
