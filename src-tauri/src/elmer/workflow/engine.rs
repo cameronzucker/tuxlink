@@ -136,7 +136,41 @@ pub async fn run_workflow(
                     prompt_tokens: turn.prompt_tokens,
                     outcome: format!("captured {}", artifact.kind()),
                 });
+                // Feasibility gate (Task 1 honesty mechanism): a non-empty
+                // `missing_primitives` means the intent needs something the
+                // live catalog does not offer, so the intent is NOT
+                // expressible. Stop here with an honest gap report rather than
+                // drafting/emitting a routine against a capability that does
+                // not exist (the silent-stub / confabulated-proxy failure the
+                // honesty task measures against). The affordance catalog is
+                // deterministically enumerated from the live surface (Task 4),
+                // so `missing_primitives` is a checkable set-difference, not a
+                // model guess.
+                let capability_gap = if phase == PhaseName::Feasibility {
+                    match &artifact {
+                        CapturedArtifact::Affordances(aff)
+                            if !aff.missing_primitives.is_empty() =>
+                        {
+                            Some(aff.missing_primitives.join(", "))
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
                 collected.push(artifact);
+                if let Some(missing) = capability_gap {
+                    return WorkflowRun {
+                        depth,
+                        phases_run,
+                        saved_routine: None,
+                        present: None,
+                        stopped_reason: Some(format!(
+                            "capability gap: the intent needs primitives the catalog \
+                             does not offer: {missing}"
+                        )),
+                    };
+                }
             }
             Err(err) => {
                 phases_run.push(PhaseRecord {
@@ -627,5 +661,65 @@ mod tests {
             store.get("broken-routine").is_none(),
             "a Red-CI draft must be quarantined out of the store, not left addressable"
         );
+    }
+
+    // --- Feasibility gate: capability gap stops with an honest report ------
+    //
+    // Task 1's honesty mechanism: when the Feasibility phase's Affordances
+    // name a primitive the catalog lacks (`missing_primitives` non-empty),
+    // the run must STOP right there with a gap report that names the missing
+    // primitive — never draft/emit a routine against a fabricated capability,
+    // never save anything.
+    #[tokio::test]
+    async fn capability_gap_stops_at_feasibility_with_an_honest_report() {
+        let manifest = fixture_manifest();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = DefinitionStore::open(dir.path().to_path_buf());
+
+        let affordances_with_gap = Affordances {
+            actions: vec![],
+            missing_primitives: vec!["propagation.predict".to_string()],
+        };
+        let stub = StubModel::new(vec![
+            PhaseTurn::text("full", 5),
+            PhaseTurn::text(
+                &serde_json::to_string(&fixture_intent()).expect("serialize"),
+                10,
+            ),
+            PhaseTurn::text(
+                &serde_json::to_string(&affordances_with_gap).expect("serialize"),
+                10,
+            ),
+            // Draft/Emit turns scripted but must never be consumed — the
+            // feasibility gate stops the run before they run.
+            PhaseTurn::text("SHOULD-NOT-RUN", 99),
+        ]);
+
+        let run = run_workflow(
+            &manifest,
+            WorkflowInputs {
+                intent_text: "predict tomorrow's 20m opening and pre-stage a beacon".to_string(),
+            },
+            &stub,
+            &StaticContext::new(),
+            &store,
+        )
+        .await;
+
+        assert!(run.saved_routine.is_none());
+        assert!(run.present.is_none());
+        let reason = run.stopped_reason.expect("must stop on a capability gap");
+        assert!(
+            reason.contains("propagation.predict"),
+            "gap report must name the missing primitive: {reason}"
+        );
+        // Stopped BEFORE Draft/Emit: only Router, Intent, Feasibility ran.
+        let names: Vec<PhaseName> = run.phases_run.iter().map(|r| r.name).collect();
+        assert_eq!(
+            names,
+            vec![PhaseName::Router, PhaseName::Intent, PhaseName::Feasibility]
+        );
+        // The Draft turn was never consumed.
+        assert_eq!(stub.prompts_seen().len(), 3);
     }
 }
