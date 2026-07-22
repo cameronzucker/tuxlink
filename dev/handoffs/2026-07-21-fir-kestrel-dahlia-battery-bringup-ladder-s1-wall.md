@@ -65,7 +65,9 @@ checkout is lease-held by the operator's live session (race hook).
 
 ## IN FLIGHT at handoff time
 
-- **Implementer subagent** writing the 6epl8 fix in worktree
+- **Implementer subagent** (KILLED at session end BEFORE writing any files —
+  worktree is empty; the spec below is fully durable, re-dispatch it) was
+  writing the 6epl8 fix in worktree
   `worktrees/bd-tuxlink-6epl8-branch-dialect` (branch
   bd-tuxlink-6epl8/branch-dialect off origin/main): (1) branch-dialect
   absorption at the sq72z coercion site (carriers condition/if/when/expr/test;
@@ -76,8 +78,9 @@ checkout is lease-held by the operator's live session (race hook).
   NEXT after it returns: review diff → commit (parent commits; subagents
   never do) → single Codex GPT-5.5 round on the diff → PR → CI → merge →
   re-run S1 → judge → advance ladder.
-- **PR #1229** (harness): CI pending at handoff. Merge on green (standing
-  grant). NOTE: merging makes bd-tuxlink-hwgdi/elmer-battery merged-dead
+- **PR #1229** (harness): CI still pending at session end (all six checks).
+  FIRST ACTION next session: check `gh pr checks 1229`, merge on green
+  (standing grant, `gh pr merge` BARE never chained). NOTE: merging makes bd-tuxlink-hwgdi/elmer-battery merged-dead
   (ADR 0017) — further battery-side commits need a follow-up branch.
 - **R2**: battery build worktree ~/tuxlink-battery-build tracks the branch
   DETACHED (advance via `git fetch origin <branch> && git checkout -q
@@ -136,8 +139,13 @@ READ FIRST: dev/handoffs/2026-07-21-fir-kestrel-dahlia-battery-bringup-ladder-s1
 (on branch bd-tuxlink-hwgdi/elmer-battery until #1229 merges) + dev/battery/journal.md.
 
 PRIORITY: land the 6epl8 branch-dialect absorption (worktree
-bd-tuxlink-6epl8-branch-dialect — implementer output may be uncommitted:
-review → commit → ONE Codex round → PR → CI → merge), then RE-RUN stage S1
+bd-tuxlink-6epl8-branch-dialect is EMPTY — the implementer was killed at
+session end before writing files; RE-DISPATCH from the spec in
+dev/battery/journal.md stage-S1 entry + tuxlink-6epl8 notes: absorption of
+carriers condition/if/when/expr/test, shapes string/field-op-value/op-keyed,
+$-strip, markers, idempotent no-guessing, + embedded-$ref interpolation in
+executor resolve_params, + schema/refusal suspenders, table-driven tests
+from the thrash JSON; then ONE Codex round → PR → CI → merge), then RE-RUN stage S1
 (scripts/battery-stage.sh S1 <new-sweep-id> on R2 ~/tuxlink-battery-build,
 key: Pi keyring → 0600 file → env), judge, advance ladder S2→S4→S3→P3.
 GATES: stage-gated (fully address each before advancing); 4-model roster
