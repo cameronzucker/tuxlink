@@ -19,6 +19,46 @@ model-family-trend | ambiguous. Compat is the belt, prose the suspenders.
 
 ---
 
+## 2026-07-22 — Stage S2 (4/4 PASS) + Stage S4 (2/4): the composition-depth stage
+
+**S2 (edit-in-place: 40m-dial routine → 15m cadence, +80m fallback, record
+band).** All four PASS clean via routines_get + edit verbs (zero blind
+resaves, zero sibling-routine creation - the quality-FAIL signals). qwen the
+MOST efficient (5 calls, no thrash) and folded band+station into one
+interpolated log message using the embedded-ref interpolation shipped in
+6epl8 - a feature absorbed from ITS OWN earlier emission habit. Mode 4
+(edit-verb thrash) did NOT recur on this small task; P1's 16-edit thrash is
+plausibly task-size-dependent, not intrinsic.
+
+**S4 (daily check-in: preset + ATU + compose→W7EOC + connect + APRS - the
+deepest composition on the ladder).**
+
+| model | verdict | notes |
+|---|---|---|
+| openai/gpt-5.5 | **PASS** | All 5 actions, correct order, success-gated APRS. Only finding: the expected missing-preset UNRESOLVED_REF (predicate allows it). |
+| z-ai/glm-5.2 | **PASS** (harness-fix validated) | Complete correct def (apply_preset→tune_atu→compose to W7EOC w/ DM33→find→connect→aprs). ROUND 1 was harness-VOID (died turn 2 on a rig_status probe); after tuxlink-zvy6q it made the same probe (denied_calls:1), got the redirect, and CONTINUED to 30 turns and a clean authored routine. The fix turned a void into glm's best showing. |
+| anthropic/claude-sonnet-5 | **FAIL** | Dropped 3 of 5 required actions (no tune_atu, no compose, no aprs_send) and hallucinated `$s1.callsigns` as a rig.apply_preset output (REF_UNKNOWN_OUTPUT). Substantively incomplete. |
+| qwen/qwen3.5-122b-a10b | **FAIL (mode 1)** | Silent scope-narrowing in its PUREST form: 6 local.log steps NARRATING the task ("Applying 40m-digital preset and tuning ATU"...) with ZERO real actions. Validates clean because it does nothing. |
+
+**Attribution: MODEL-FAMILY-TREND (composition-depth), NOT tuxlink-design-defect.**
+Two failures, two different mechanisms (sonnet step-drop vs qwen narration);
+gpt AND glm handled the surface as-is. Critically NOT a frontier-vs-local
+split - glm (local target) PASSED while sonnet (frontier) FAILED - so the
+divergence is idiosyncratic to composition depth, not a capability tier. No
+Tuxlink code fix for the failures (no single missing affordance explains
+both). The one real code fix S4 produced was the HARNESS one (zvy6q): the
+allowlist denial was terminal, voiding glm's round-1 cell and biasing the
+battery against exploratory agent behavior. Fixed + validated inline this
+same stage.
+
+**Fine-tune catalog (tuxlink-77620):** qwen mode-1 RECURRED at S4 (strong -
+it is the deepest-composition, most-dangerous mode). glm competent at the
+same task = glm-5.2 is plausibly the stronger local target, or qwen needs
+mode-1-specific training. Modes 1 + 3 remain the live targets; mode 2
+(product-absorbed via ARM_FALLTHROUGH_LEAK) and the S2 data confirm the
+belt/suspenders + validator-teaching approach is closing the ADDRESSABLE
+modes, leaving the intent-level ones (narrate-instead-of-act) for fine-tuning.
+
 ## 2026-07-22 — Stage S1 COMPLETE (4/4): qwen re-run vs ARM_FALLTHROUGH_LEAK
 
 qwen cell re-run on main cba0d3f4 (PR #1234: the validator finding its
