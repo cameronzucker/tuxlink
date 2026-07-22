@@ -262,14 +262,12 @@ fn resolve_string(s: &str, vars: &RunVars) -> Result<serde_json::Value, StepErro
         match vars.resolve(rest) {
             Ok(v) => return Ok(v), // whole-value: the typed contract
             Err(e) => {
-                let spans_whole = matches!(
-                    tokens.as_slice(),
-                    [(0, path)] if 1 + path.len() == s.len()
-                );
-                if spans_whole || tokens.is_empty() {
+                if crate::refs::whole_ref(s) {
                     // A genuine whole-value ref that is unset: the hard
                     // verbatim error, exactly as before interpolation
-                    // existed (spec §10: never its own text).
+                    // existed (spec §10: never its own text). `whole_ref`
+                    // is the SHARED routing test - the validators use the
+                    // same one, so they cannot disagree with this branch.
                     return Err(e);
                 }
                 // "$ref plus trailing text" falls through to interpolation.

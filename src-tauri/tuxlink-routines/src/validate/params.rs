@@ -368,8 +368,12 @@ fn check_value(
             }
         }
         // Whole-string `$ref`: the referenced output's type IS the value's
-        // type after substitution.
-        Value::String(s) if s.starts_with('$') => match resolve_ref(s, steps_by_id, ctx) {
+        // type after substitution. The routing test is the SAME `whole_ref`
+        // the executor uses (Codex 2026-07-22 P2): "$s9.connected fallback"
+        // is interpolation at runtime, so it must fall through to the
+        // literal-string arm's embedded-ref checks below, never be refused
+        // with whole-ref errors.
+        Value::String(s) if crate::refs::whole_ref(s) => match resolve_ref(s, steps_by_id, ctx) {
             RefTarget::UnknownStep => push(Finding::error(
                 REF_UNKNOWN_STEP,
                 routine,
@@ -465,7 +469,12 @@ fn check_value(
         Value::Array(items) if want == Shape::List => {
             for item in items {
                 match item {
-                    Value::String(s) if s.starts_with('$') => {
+                    // Same `whole_ref` routing as the scalar arm (Codex
+                    // 2026-07-22 P2): the executor interpolates list
+                    // elements too (resolve_params recurses arrays into
+                    // resolve_string), so "$s1.x fallback" as an element is
+                    // interpolation, not a whole ref.
+                    Value::String(s) if crate::refs::whole_ref(s) => {
                         match resolve_ref(s, steps_by_id, ctx) {
                             RefTarget::UnknownStep => push(Finding::error(
                                 REF_UNKNOWN_STEP,
@@ -515,6 +524,29 @@ fn check_value(
                         }
                     }
                     Value::String(s) => {
+                        // Mirror the scalar Str arm: embedded tokens that
+                        // will NOT resolve stay literal text at runtime.
+                        for (_, path) in crate::refs::scan_embedded_refs(s) {
+                            match resolve_ref(path, steps_by_id, ctx) {
+                                RefTarget::UnknownStep => push(Finding::warning(
+                                    EMBEDDED_REF_IGNORED,
+                                    routine,
+                                    format!(
+                                        "step \"{}\" (action \"{}\"): param \"{}\" element embeds \"${path}\" but no step with that id exists — an embedded ref that cannot resolve stays literal text at runtime",
+                                        a.id.0, a.action, spec.key
+                                    ),
+                                )),
+                                RefTarget::UnknownOutput => push(Finding::warning(
+                                    EMBEDDED_REF_IGNORED,
+                                    routine,
+                                    format!(
+                                        "step \"{}\" (action \"{}\"): param \"{}\" element embeds \"${path}\" but the referenced action declares no such output — an embedded ref that cannot resolve stays literal text at runtime",
+                                        a.id.0, a.action, spec.key
+                                    ),
+                                )),
+                                RefTarget::Unknowable | RefTarget::Known(..) => {}
+                            }
+                        }
                         if let Some(allowed) = spec.allowed {
                             if !allowed_contains(spec, allowed, s) {
                                 push(not_allowed(routine, a, spec, s, allowed));
@@ -749,6 +781,40 @@ mod tests {
         let mut findings = Vec::new();
         check(def, &ctx(), &mut findings);
         findings
+    }
+
+    /// List ELEMENTS route through the same `whole_ref` test as scalars
+    /// (Codex 2026-07-22 P2 parity): the executor interpolates array
+    /// elements, so an element like "$s9.callsigns fallback" is
+    /// interpolation and must get the EMBEDDED_REF_IGNORED warning, never
+    /// the whole-ref REF_UNKNOWN_STEP error. A genuine whole-ref element
+    /// keeps the hard error.
+    #[test]
+    fn list_element_embedded_ref_warns_whole_ref_errors() {
+        let def = routine(vec![action_step(
+            "s2",
+            "radio.connect",
+            json!({"stations": ["$s9.callsigns fallback"], "bands": ["20m"]}),
+        )]);
+        let findings = run(&def);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0].code, EMBEDDED_REF_IGNORED);
+        assert_eq!(findings[0].severity, Severity::Warning);
+        assert!(
+            findings[0].message.contains("$s9.callsigns")
+                && findings[0].message.contains("literal text"),
+            "{}",
+            findings[0].message
+        );
+
+        let def = routine(vec![action_step(
+            "s2",
+            "radio.connect",
+            json!({"stations": ["$s9.callsigns"], "bands": ["20m"]}),
+        )]);
+        let findings = run(&def);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0].code, REF_UNKNOWN_STEP, "{findings:?}");
     }
 
     /// THE motivating lint: `["$s1.callsigns"]` where `callsigns` is a list
@@ -1027,6 +1093,26 @@ mod tests {
         let mut findings = Vec::new();
         check(&def, &ctx, &mut findings);
         assert!(findings.is_empty(), "{findings:?}");
+
+        // "$ref plus trailing text" is INTERPOLATION at runtime
+        // (executor::resolve_string routes through the same whole_ref test),
+        // so it must be validated under the embedded-ref rules - a warning
+        // naming the token - NOT refused with whole-ref errors
+        // (Codex 2026-07-22 P2).
+        let def = routine(vec![action_step(
+            "s2",
+            "local.log",
+            json!({"message": "$s9.connected fallback"}),
+        )]);
+        let mut findings = Vec::new();
+        check(&def, &ctx, &mut findings);
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0].code, EMBEDDED_REF_IGNORED, "{findings:?}");
+        assert_eq!(findings[0].severity, Severity::Warning);
+        assert!(
+            !findings.iter().any(|f| f.code == REF_UNKNOWN_STEP),
+            "no whole-ref error for an interpolation string: {findings:?}"
+        );
     }
 
     /// `@entity:` refs are shape-checked by KIND where the resolved shape is

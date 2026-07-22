@@ -170,6 +170,39 @@ fn strip_one_dollar(s: &str) -> Option<&str> {
     }
 }
 
+/// Path-shaped per the runtime ref grammar (tuxlink-routines
+/// `refs::scan_embedded_refs`): dot-separated non-empty segments, first
+/// segment `[a-z0-9_]`, later segments alphanumeric/underscore. Anything
+/// else - `"s1.connected == true"`, embedded-ref sentences, whitespace - is
+/// an EXPRESSION, not a path: `Control::Branch.on` would store it verbatim
+/// and the run would die resolving it, so it is not absorbable (Codex
+/// 2026-07-22 P2). The bare (dot-less) single segment stays legal: routine
+/// INPUT names are branchable.
+fn is_path_shaped(s: &str) -> bool {
+    let mut segments = s.split('.');
+    let first_ok = segments.next().is_some_and(|seg| {
+        !seg.is_empty()
+            && seg
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+    });
+    first_ok
+        && segments.all(|seg| {
+            !seg.is_empty() && seg.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        })
+}
+
+/// A classified condition path, path-shape-checked with its optional `$`
+/// sigil tolerated: `Some` only when the remainder is a real ref path.
+fn path_shaped_condition(s: &str) -> Option<String> {
+    let bare = s.strip_prefix('$').unwrap_or(s);
+    if is_path_shaped(bare) {
+        Some(s.to_string())
+    } else {
+        None
+    }
+}
+
 /// Classify one observed condition-carrier VALUE into
 /// `(path, op, value, marker)`. `None` = not an observed shape — the caller
 /// leaves the step untouched. The four shapes are exactly the battery's
@@ -177,23 +210,33 @@ fn strip_one_dollar(s: &str) -> Option<&str> {
 /// value}`, (c) op-keyed `{"eq": [ref, value]}` (JSONLogic-ish; op key ∈
 /// eq/ne/lt/lte/gt/gte), (d) `{"ref": "$path"}` (gpt-5.5 seq 14,
 /// strict-boolean).
+///
+/// Two refusals harden every shape (Codex 2026-07-22 P2 x2): the ref must
+/// be PATH-SHAPED ([`is_path_shaped`] - `"s1.connected == true"` is an
+/// expression the runtime would die resolving), and a comparison value of
+/// JSON null refuses (`Control::Branch.value` is `Option<Value>`; serde
+/// turns `value: null` into `None`, silently converting a null comparison
+/// into op-without-value, which the executor rejects as a lone half).
 #[allow(clippy::type_complexity)] // one internal classifier, named by its doc
 fn classify_condition(
     cond: &Value,
 ) -> Option<(String, Option<String>, Option<Value>, &'static str)> {
     match cond {
-        Value::String(s) if !s.is_empty() => {
-            Some((s.clone(), None, None, BRANCH_CONDITION_STRING))
-        }
+        Value::String(s) if !s.is_empty() => Some((
+            path_shaped_condition(s)?,
+            None,
+            None,
+            BRANCH_CONDITION_STRING,
+        )),
         Value::Object(m) if m.len() == 3 => {
             let field = m.get("field")?.as_str()?;
             let op = m.get("op")?.as_str()?;
             let value = m.get("value")?;
-            if field.is_empty() || !CMP_OP_NAMES.contains(&op) {
+            if !CMP_OP_NAMES.contains(&op) || value.is_null() {
                 return None;
             }
             Some((
-                field.to_string(),
+                path_shaped_condition(field)?,
                 Some(op.to_string()),
                 Some(value.clone()),
                 BRANCH_CONDITION_OBJECT,
@@ -205,24 +248,23 @@ fn classify_condition(
                 // gpt-5.5's `{"ref": "$s3.connected"}` wrapper: strict-bool
                 // on the wrapped path.
                 let path = rhs.as_str()?;
-                if path.is_empty() {
-                    return None;
-                }
-                return Some((path.to_string(), None, None, BRANCH_CONDITION_REF));
+                return Some((
+                    path_shaped_condition(path)?,
+                    None,
+                    None,
+                    BRANCH_CONDITION_REF,
+                ));
             }
             if !CMP_OP_NAMES.contains(&op.as_str()) {
                 return None;
             }
             let pair = rhs.as_array()?;
-            if pair.len() != 2 {
+            if pair.len() != 2 || pair[1].is_null() {
                 return None;
             }
             let path = pair[0].as_str()?;
-            if path.is_empty() {
-                return None;
-            }
             Some((
-                path.to_string(),
+                path_shaped_condition(path)?,
                 Some(op.clone()),
                 Some(pair[1].clone()),
                 BRANCH_CONDITION_OPKEYED,
@@ -380,17 +422,17 @@ pub fn absorb_branch_dialect(step: &mut Value, shape: BranchShape) -> Vec<&'stat
         None => {
             // No carrier: the flat shape may still carry a `$`-prefixed `on`
             // (models emit the REAL field with the ref sigil), and the
-            // control kind may still be the invented `"if"`.
-            if let Some(on) = obj.get("on").and_then(Value::as_str) {
-                if on.starts_with('$') && strip_one_dollar(on).is_none() {
-                    return Vec::new(); // "$" / "$$…" - unstrippable, untouched
-                }
+            // control kind may still be the invented `"if"`. Either rewrite
+            // requires a USABLE condition - an `on` that is a ref path
+            // (optionally `$`-prefixed). A bare `{"control": "if", "then":
+            // …}` or an expression `on` passes through untouched so the
+            // refusal names the original emission (Codex 2026-07-22 P2).
+            let on = obj.get("on").and_then(Value::as_str);
+            let usable = on.is_some_and(|on| path_shaped_condition(on).is_some());
+            if !usable {
+                return Vec::new();
             }
-            let stripped = obj
-                .get("on")
-                .and_then(Value::as_str)
-                .and_then(strip_one_dollar)
-                .map(str::to_string);
+            let stripped = on.and_then(strip_one_dollar).map(str::to_string);
             let obj = step.as_object_mut().expect("checked as_object above");
             if map_if {
                 obj.insert("control".into(), Value::String("branch".into()));
@@ -410,26 +452,53 @@ enum HoistOutcome {
     /// Arms hold no inline step objects (or this is not a flat branch) -
     /// nothing to do.
     NotApplicable,
-    /// Arms held inline step objects; they were replaced by their id lists
-    /// and the extracted steps (then-arm first, in emission order) must be
-    /// spliced in immediately after the branch.
-    Hoisted(Vec<Value>),
-    /// Arms hold inline objects the rule refuses to guess at (an object
-    /// without an `id`, a colliding id, a non-string non-object element) -
-    /// the caller reverts the WHOLE step to its original bytes.
+    /// Arms held inline step objects; the arms were rewritten to id lists
+    /// and the extracted steps must be spliced per the ONE provably-correct
+    /// layout: then-arm steps immediately after the branch (before its
+    /// trailing end), else-arm steps appended after the end, at track end.
+    Hoisted {
+        then_steps: Vec<Value>,
+        else_steps: Vec<Value>,
+    },
+    /// Inline arms the rule refuses to guess at - the caller reverts the
+    /// WHOLE step to its original bytes so validation refuses the verbatim
+    /// emission.
     Refused,
 }
 
 /// glm-5.2's inline-arm dialect (battery S1 seq 16-18): full step objects
 /// inside a branch's `then`/`else` where the real shape wants step-id LISTS.
 /// Only a surrounding track gives the objects somewhere to live, so this
-/// runs exclusively from [`absorb_branch_dialects_in_def`]. The step must
-/// already be in the flat branch vocabulary (any leftover carrier or
-/// `params` means the condition absorption refused - do not hoist arms of a
-/// step that will be refused anyway). Strings mixed among inline objects
-/// stay as the ids they are.
+/// runs exclusively from [`absorb_branch_dialects_in_def`].
+///
+/// **Branch arms are jump targets, not execute-lists** (Codex 2026-07-22
+/// P1): the executor jumps to `arm.first()` and then FALLS THROUGH in
+/// storage order; an empty arm falls through to the next stored step, and
+/// running past the last step completes the track. A naive
+/// `[branch, t1..tn, e1..em]` splice therefore lets the then path fall
+/// through into the else steps. Exactly ONE layout is provably rewritable -
+/// the one glm actually emitted (`[.., branch, end]`):
+///
+/// - The branch is immediately followed by a `control: "end"` step that is
+///   the LAST step of its track and has a usable id (`end_id`; the walk
+///   passes `None` otherwise, which refuses).
+/// - Each arm is either empty or ALL inline objects. A string mixed into
+///   the arms once hoisting engages is Refused: an id entry's jump target
+///   cannot be reconciled with the rewritten storage order.
+/// - Rewrite: then-arm steps splice between branch and end; else-arm steps
+///   append after the end. An EMPTY arm becomes `[end_id]` - under
+///   fall-through an empty arm would otherwise fall into the hoisted
+///   then-steps. Semantics: cond true -> t1 .. tn -> end (terminates);
+///   cond false -> e1 .. em -> off track end (completes). Appending after
+///   a track-final end cannot break pre-existing fall-through because
+///   nothing followed the end.
+/// - The step must already be in the flat branch vocabulary (a leftover
+///   carrier or `params` means condition absorption refused - do not hoist
+///   arms of a step that will be refused anyway), and every inline object
+///   needs a fresh, unique, non-empty string id.
 fn hoist_inline_arms(
     step: &mut Value,
+    end_id: Option<&str>,
     used_ids: &mut std::collections::HashSet<String>,
 ) -> HoistOutcome {
     let Some(obj) = step.as_object() else {
@@ -450,64 +519,85 @@ fn hoist_inline_arms(
     if !has_inline {
         return HoistOutcome::NotApplicable;
     }
-    // Dry pass: every arm element must be a string (kept as an id) or an
-    // object with a fresh, unique, non-empty string id.
-    let mut hoisted_ids: Vec<String> = Vec::new();
+    let Some(end_id) = end_id else {
+        // Not the [branch, track-final end] layout - no provably-correct
+        // rewrite exists under jump+fall-through semantics.
+        return HoistOutcome::Refused;
+    };
+    // Dry pass: per arm, empty or ALL objects with fresh unique ids; the
+    // rewritten id list is computed here (empty arm -> [end_id]).
+    let mut arm_id_lists: Vec<Vec<String>> = Vec::with_capacity(2);
+    let mut fresh_ids: Vec<String> = Vec::new();
     for arm in ["then", "else"] {
-        let Some(items) = obj.get(arm).and_then(Value::as_array) else {
-            continue;
+        let items: &[Value] = match obj.get(arm) {
+            None => &[],
+            Some(Value::Array(a)) => a.as_slice(),
+            Some(_) => return HoistOutcome::Refused,
         };
+        if !items.is_empty() && !items.iter().all(Value::is_object) {
+            return HoistOutcome::Refused; // mixed or non-object entries
+        }
+        let mut ids: Vec<String> = Vec::with_capacity(items.len().max(1));
         for item in items {
-            match item {
-                Value::String(_) => {}
-                Value::Object(m) => match m.get("id").and_then(Value::as_str) {
-                    Some(id)
-                        if !id.is_empty()
-                            && !used_ids.contains(id)
-                            && !hoisted_ids.iter().any(|h| h == id) =>
-                    {
-                        hoisted_ids.push(id.to_string());
-                    }
-                    _ => return HoistOutcome::Refused,
-                },
+            match item.get("id").and_then(Value::as_str) {
+                Some(id)
+                    if !id.is_empty()
+                        && !used_ids.contains(id)
+                        && !fresh_ids.iter().any(|h| h == id) =>
+                {
+                    fresh_ids.push(id.to_string());
+                    ids.push(id.to_string());
+                }
                 _ => return HoistOutcome::Refused,
             }
         }
+        if ids.is_empty() {
+            // Empty arm: jump straight to the end - fall-through would land
+            // in the hoisted then-steps instead.
+            ids.push(end_id.to_string());
+        }
+        arm_id_lists.push(ids);
     }
-    // Commit: rewrite both arms to id lists, extract the objects in order.
-    let mut extracted: Vec<Value> = Vec::new();
+    // Commit: extract the objects, overwrite both arms with their id lists.
     let obj = step.as_object_mut().expect("checked as_object above");
-    for arm in ["then", "else"] {
-        let Some(items) = obj.get_mut(arm).and_then(Value::as_array_mut) else {
-            continue;
-        };
-        for item in items.iter_mut() {
-            if item.is_object() {
-                let id = item
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .expect("dry pass verified the id")
-                    .to_string();
-                extracted.push(std::mem::replace(item, Value::String(id)));
+    let mut then_steps: Vec<Value> = Vec::new();
+    let mut else_steps: Vec<Value> = Vec::new();
+    let mut arm_id_lists = arm_id_lists.into_iter();
+    for (arm, bucket) in [("then", &mut then_steps), ("else", &mut else_steps)] {
+        if let Some(Value::Array(items)) = obj.get_mut(arm) {
+            for item in items.iter_mut() {
+                if item.is_object() {
+                    bucket.push(item.take());
+                }
             }
         }
+        let ids = arm_id_lists.next().expect("two arms computed above");
+        obj.insert(
+            arm.into(),
+            Value::Array(ids.into_iter().map(Value::String).collect()),
+        );
     }
-    used_ids.extend(hoisted_ids);
-    HoistOutcome::Hoisted(extracted)
+    used_ids.extend(fresh_ids);
+    HoistOutcome::Hoisted {
+        then_steps,
+        else_steps,
+    }
 }
 
 /// Apply [`absorb_branch_dialect`] to every step of a WHOLE routine
 /// definition (`routines_save`), then hoist inline-arm step objects
-/// ([`hoist_inline_arms`], glm-5.2 seq 16-18): extracted steps land in the
-/// surrounding track immediately after their branch (then-arm first,
-/// emission order preserved) and the arms become the id lists the real
-/// shape wants. Hoisted steps re-enter the walk, so a hoisted step that is
-/// itself a dialect branch absorbs too. Markers aggregate in document
-/// order. No-guessing survives whole-step-wise: when an arm holds an
-/// id-less or id-colliding object, the ENTIRE step reverts to its original
-/// bytes (condition absorption included) so validation refuses the verbatim
-/// emission. A def that is not object-shaped (or has no tracks) returns
-/// empty and stays untouched - the parser's refusal fires.
+/// ([`hoist_inline_arms`], glm-5.2 seq 16-18) in the ONE layout that is
+/// correct under the executor's jump+fall-through semantics: then-arm
+/// steps land between the branch and its track-final end, else-arm steps
+/// land after the end, and the arms become id lists (an empty arm becomes
+/// `[end_id]`). Hoisted steps re-enter the walk, so a hoisted step that is
+/// itself a dialect branch absorbs its condition too - though its own
+/// inline arms then REFUSE (its end is no longer track-final) and only
+/// that step reverts. Markers aggregate in document order. No-guessing
+/// survives whole-step-wise: any refusal reverts the ENTIRE step to its
+/// original bytes (condition absorption included) so validation refuses
+/// the verbatim emission. A def that is not object-shaped (or has no
+/// tracks) returns empty and stays untouched - the parser's refusal fires.
 pub fn absorb_branch_dialects_in_def(def: &mut Value) -> Vec<&'static str> {
     let mut markers = Vec::new();
     let Some(tracks) = def.get_mut("tracks").and_then(Value::as_array_mut) else {
@@ -530,12 +620,32 @@ pub fn absorb_branch_dialects_in_def(def: &mut Value) -> Vec<&'static str> {
         while i < steps.len() {
             let original = steps[i].clone();
             let mut step_markers = absorb_branch_dialect(&mut steps[i], BranchShape::WholeStep);
-            match hoist_inline_arms(&mut steps[i], &mut used_ids) {
+            // Hoist precondition (Codex 2026-07-22 P1): the branch must be
+            // immediately followed by the track's FINAL step, a
+            // `control: "end"` with a usable string id.
+            let end_id: Option<String> = if i + 2 == steps.len()
+                && steps[i + 1].get("control").and_then(Value::as_str) == Some("end")
+            {
+                steps[i + 1]
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_string)
+            } else {
+                None
+            };
+            match hoist_inline_arms(&mut steps[i], end_id.as_deref(), &mut used_ids) {
                 HoistOutcome::NotApplicable => {}
-                HoistOutcome::Hoisted(extracted) => {
+                HoistOutcome::Hoisted {
+                    then_steps,
+                    else_steps,
+                } => {
                     step_markers.push(BRANCH_ARMS_HOISTED);
-                    for (offset, hoisted) in extracted.into_iter().enumerate() {
+                    for (offset, hoisted) in then_steps.into_iter().enumerate() {
                         steps.insert(i + 1 + offset, hoisted);
+                    }
+                    for hoisted in else_steps {
+                        steps.push(hoisted);
                     }
                 }
                 HoistOutcome::Refused => {
@@ -583,6 +693,12 @@ pub fn branch_dialect_params(tool: &str, args: &Value) -> Vec<(&'static str, Vec
             }
         }
         "routines_save" => {
+            // Mirror resolve_save_def's exclusivity (Codex 2026-07-22 P3):
+            // a call providing BOTH def and def_json is rejected at the
+            // boundary before any absorption runs - no markers.
+            if args.get("def").is_some() && args.get("def_json").is_some() {
+                return out;
+            }
             if let Some(def) = args.get("def") {
                 let m = def_markers(def);
                 if !m.is_empty() {
@@ -1180,10 +1296,12 @@ mod tests {
     }
 
     /// glm-5.2 seq 16 structural: the whole `routines_save` def with a
-    /// carrier condition AND inline step objects in both arms. The def walk
-    /// flattens the condition, hoists the inline steps into the track right
-    /// after the branch (then-arm first, order preserved), and rewrites the
-    /// arms as id lists. Second pass: no-op (idempotent).
+    /// carrier condition AND inline step objects in both arms, in glm's
+    /// exact `[.., branch, end]` layout. The def walk flattens the
+    /// condition and hoists per the jump+fall-through-correct layout:
+    /// then-arm steps between branch and end, else-arm steps AFTER the
+    /// track-final end, arms rewritten as id lists. Second pass: no-op
+    /// (idempotent).
     #[test]
     fn glm_inline_arm_def_absorbs_and_hoists() {
         let mut def = json!({
@@ -1222,16 +1340,18 @@ mod tests {
         let ids: Vec<&str> = steps.iter().map(|s| s["id"].as_str().unwrap()).collect();
         assert_eq!(
             ids,
-            vec!["s1", "s3", "s4", "s5", "s6", "s7", "s2"],
-            "then-arm steps first, right after the branch: {def}"
+            vec!["s1", "s3", "s4", "s5", "s2", "s6", "s7"],
+            "then-arm before the end, else-arm after the track-final end: {def}"
         );
         let branch = &steps[2];
         assert_eq!(branch["on"], "s3.connected");
         assert!(branch.get("condition").is_none());
         assert_eq!(branch["then"], json!(["s5"]));
         assert_eq!(branch["else"], json!(["s6", "s7"]));
-        assert_eq!(steps[3]["action"], "local.log", "hoisted step kept whole");
-        assert_eq!(steps[4]["action"], "radio.aprs_send");
+        assert_eq!(steps[3]["action"], "local.log", "hoisted then step kept whole");
+        assert_eq!(steps[4]["control"], "end", "the end stays put");
+        assert_eq!(steps[5]["action"], "radio.aprs_send");
+        assert_eq!(steps[6]["action"], "local.log");
 
         // Idempotent: the absorbed def re-enters and leaves untouched.
         let after_once = def.clone();
@@ -1239,23 +1359,28 @@ mod tests {
         assert_eq!(def, after_once);
     }
 
-    /// No-guessing on arms: an inline object without an `id`, or one whose
-    /// id collides with an existing step, reverts the WHOLE step - the
-    /// condition absorption included - so validation refuses the verbatim
-    /// emission. A lone step (step_add/step_update) never hoists: there is
-    /// no track to hoist into.
-    #[test]
-    fn inline_arm_hoisting_refuses_without_ids_and_never_runs_on_lone_steps() {
-        let idless = json!({
+    /// Wrap `steps` in a one-track def envelope for the hoist tests.
+    fn def_with_steps(steps: serde_json::Value) -> serde_json::Value {
+        json!({
             "routine": "r", "schema_version": 1, "transmit_mode": "attended",
             "triggers": [{"type": "manual"}],
-            "tracks": [{"name": "main", "steps": [
-                {"id": "s1", "action": "radio.connect", "params": {}},
-                {"id": "s2", "control": "branch", "when": "$s1.connected",
-                 "then": [{"action": "local.log", "params": {"message": "hi"}}],
-                 "else": []}
-            ]}]
-        });
+            "tracks": [{"name": "main", "steps": steps}]
+        })
+    }
+
+    /// No-guessing on arms, all reverting the WHOLE step (condition
+    /// absorption included) so validation refuses the verbatim emission:
+    /// an inline object without an `id`, a colliding id, and a lone step
+    /// (step_add/step_update), which never hoists - there is no track.
+    #[test]
+    fn inline_arm_hoisting_refuses_without_ids_and_never_runs_on_lone_steps() {
+        let idless = def_with_steps(json!([
+            {"id": "s1", "action": "radio.connect", "params": {}},
+            {"id": "s2", "control": "branch", "when": "$s1.connected",
+             "then": [{"action": "local.log", "params": {"message": "hi"}}],
+             "else": []},
+            {"id": "s3", "control": "end"}
+        ]));
         let mut def = idless.clone();
         assert!(
             absorb_branch_dialects_in_def(&mut def).is_empty(),
@@ -1263,16 +1388,13 @@ mod tests {
         );
         assert_eq!(def, idless);
 
-        let colliding = json!({
-            "routine": "r", "schema_version": 1, "transmit_mode": "attended",
-            "triggers": [{"type": "manual"}],
-            "tracks": [{"name": "main", "steps": [
-                {"id": "s1", "action": "radio.connect", "params": {}},
-                {"id": "s2", "control": "branch", "on": "s1.connected",
-                 "then": [{"id": "s1", "action": "local.log", "params": {}}],
-                 "else": []}
-            ]}]
-        });
+        let colliding = def_with_steps(json!([
+            {"id": "s1", "action": "radio.connect", "params": {}},
+            {"id": "s2", "control": "branch", "on": "s1.connected",
+             "then": [{"id": "s1", "action": "local.log", "params": {}}],
+             "else": []},
+            {"id": "s3", "control": "end"}
+        ]));
         let mut def = colliding.clone();
         assert!(absorb_branch_dialects_in_def(&mut def).is_empty());
         assert_eq!(def, colliding);
@@ -1295,26 +1417,211 @@ mod tests {
         );
     }
 
-    /// Mixed arms (id strings alongside inline objects) hoist only the
-    /// objects and keep the strings in place.
+    /// Jump+fall-through refusals (Codex 2026-07-22 P1): a string mixed
+    /// into arms once hoisting engages cannot keep its jump semantics under
+    /// the rewrite, and a branch NOT immediately followed by the track's
+    /// final end has no provably-correct layout at all. Both revert the
+    /// whole step (here: the whole def stays byte-identical).
     #[test]
-    fn mixed_inline_and_id_arms_hoist_only_the_objects() {
-        let mut def = json!({
-            "routine": "r", "schema_version": 1, "transmit_mode": "attended",
-            "triggers": [{"type": "manual"}],
-            "tracks": [{"name": "main", "steps": [
-                {"id": "s1", "action": "radio.connect", "params": {}},
-                {"id": "s2", "control": "branch", "on": "s1.connected",
-                 "then": ["s9", {"id": "s5", "action": "local.log", "params": {}}],
-                 "else": []},
-                {"id": "s9", "action": "local.log", "params": {}}
-            ]}]
-        });
+    fn mixed_arms_and_missing_final_end_refuse() {
+        let mixed = def_with_steps(json!([
+            {"id": "s1", "action": "radio.connect", "params": {}},
+            {"id": "s9", "action": "local.log", "params": {}},
+            {"id": "s2", "control": "branch", "on": "s1.connected",
+             "then": ["s9", {"id": "s5", "action": "local.log", "params": {}}],
+             "else": []},
+            {"id": "s3", "control": "end"}
+        ]));
+        let mut def = mixed.clone();
+        assert!(
+            absorb_branch_dialects_in_def(&mut def).is_empty(),
+            "a string mixed into an inline arm refuses"
+        );
+        assert_eq!(def, mixed);
+
+        // Same for a pure-id arm BESIDE an inline arm.
+        let id_beside_inline = def_with_steps(json!([
+            {"id": "s1", "action": "radio.connect", "params": {}},
+            {"id": "s9", "action": "local.log", "params": {}},
+            {"id": "s2", "control": "branch", "on": "s1.connected",
+             "then": [{"id": "s5", "action": "local.log", "params": {}}],
+             "else": ["s9"]},
+            {"id": "s3", "control": "end"}
+        ]));
+        let mut def = id_beside_inline.clone();
+        assert!(absorb_branch_dialects_in_def(&mut def).is_empty());
+        assert_eq!(def, id_beside_inline);
+
+        // Branch followed by more steps (not the track-final end): the
+        // condition would absorb, but the arms cannot - whole step reverts,
+        // carrier included.
+        let no_final_end = def_with_steps(json!([
+            {"id": "s1", "action": "radio.connect", "params": {}},
+            {"id": "s2", "control": "branch", "condition": "$s1.connected",
+             "then": [{"id": "s5", "action": "local.log", "params": {}}],
+             "else": []},
+            {"id": "s4", "action": "local.log", "params": {}},
+            {"id": "s3", "control": "end"}
+        ]));
+        let mut def = no_final_end.clone();
+        assert!(absorb_branch_dialects_in_def(&mut def).is_empty());
+        assert_eq!(def, no_final_end);
+    }
+
+    /// An EMPTY arm rewrites to `[end_id]`: under fall-through an empty
+    /// then-arm would otherwise fall into the hoisted else... and an empty
+    /// else-arm into the then-steps. Layout: else steps live AFTER the end.
+    #[test]
+    fn empty_arm_rewrites_to_the_end_id() {
+        let mut def = def_with_steps(json!([
+            {"id": "s1", "action": "radio.connect", "params": {}},
+            {"id": "s2", "control": "branch", "condition": "$s1.connected",
+             "then": [{"id": "s5", "action": "local.log", "params": {"message": "up"}}],
+             "else": []},
+            {"id": "s3", "control": "end"}
+        ]));
+        let markers = absorb_branch_dialects_in_def(&mut def);
+        assert_eq!(
+            markers,
+            vec![
+                BRANCH_CONDITION_STRING,
+                BRANCH_REF_DOLLAR_STRIPPED,
+                BRANCH_ARMS_HOISTED
+            ]
+        );
+        let steps = def["tracks"][0]["steps"].as_array().unwrap();
+        let ids: Vec<&str> = steps.iter().map(|s| s["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, vec!["s1", "s2", "s5", "s3"]);
+        assert_eq!(steps[1]["then"], json!(["s5"]));
+        assert_eq!(
+            steps[1]["else"],
+            json!(["s3"]),
+            "empty else jumps the end, never falls into the then-steps"
+        );
+
+        // And the mirror: empty THEN with an inline else - the else steps
+        // land after the end; cond true jumps straight to it.
+        let mut def = def_with_steps(json!([
+            {"id": "s1", "action": "radio.connect", "params": {}},
+            {"id": "s2", "control": "branch", "on": "s1.connected",
+             "then": [],
+             "else": [{"id": "s6", "action": "local.log", "params": {"message": "down"}}]},
+            {"id": "s3", "control": "end"}
+        ]));
         let markers = absorb_branch_dialects_in_def(&mut def);
         assert_eq!(markers, vec![BRANCH_ARMS_HOISTED]);
         let steps = def["tracks"][0]["steps"].as_array().unwrap();
         let ids: Vec<&str> = steps.iter().map(|s| s["id"].as_str().unwrap()).collect();
-        assert_eq!(ids, vec!["s1", "s2", "s5", "s9"]);
-        assert_eq!(steps[1]["then"], json!(["s9", "s5"]));
+        assert_eq!(ids, vec!["s1", "s2", "s3", "s6"], "else steps after the end");
+        assert_eq!(steps[1]["then"], json!(["s3"]));
+        assert_eq!(steps[1]["else"], json!(["s6"]));
+    }
+
+    /// A hoisted step that is ITSELF an inline-arm branch refuses on
+    /// re-entry - after the outer hoist its end is no longer track-final -
+    /// and only that step reverts (keeping its inline arms so validation
+    /// refuses it); the outer rewrite stands.
+    #[test]
+    fn nested_inline_branch_refuses_on_reentry() {
+        let nested = json!({
+            "id": "s5", "control": "branch", "on": "s1.connected",
+            "then": [{"id": "s6", "action": "local.log", "params": {}}],
+            "else": []
+        });
+        let mut def = def_with_steps(json!([
+            {"id": "s1", "action": "radio.connect", "params": {}},
+            {"id": "s2", "control": "branch", "on": "s1.connected",
+             "then": [nested],
+             "else": [{"id": "s7", "action": "local.log", "params": {}}]},
+            {"id": "s3", "control": "end"}
+        ]));
+        let markers = absorb_branch_dialects_in_def(&mut def);
+        assert_eq!(markers, vec![BRANCH_ARMS_HOISTED], "outer hoist only");
+        let steps = def["tracks"][0]["steps"].as_array().unwrap();
+        let ids: Vec<&str> = steps.iter().map(|s| s["id"].as_str().unwrap()).collect();
+        assert_eq!(ids, vec!["s1", "s2", "s5", "s3", "s7"]);
+        assert_eq!(
+            steps[2],
+            &nested,
+            "the nested branch keeps its inline arm verbatim - validation refuses it"
+        );
+    }
+
+    /// Codex 2026-07-22 P2 pair: an EXPRESSION string is not a path - not
+    /// absorbable in any shape - and a comparison against JSON null is not
+    /// representable (`op` without `value` after serde) - also refused.
+    /// Everything stays byte-identical.
+    #[test]
+    fn expression_conditions_and_null_comparison_values_refuse() {
+        let cases = [
+            json!({"control": "branch", "condition": "s1.connected == true",
+                   "then": [], "else": []}),
+            json!({"control": "branch",
+                   "condition": "$s3.connected, station=$s3.station",
+                   "then": [], "else": []}),
+            json!({"control": "branch",
+                   "condition": {"field": "s1.connected == true", "op": "eq", "value": true},
+                   "then": [], "else": []}),
+            json!({"control": "branch",
+                   "condition": {"field": "$s1.x", "op": "eq", "value": null},
+                   "then": [], "else": []}),
+            json!({"control": "branch", "condition": {"eq": ["$s1.x", null]},
+                   "then": [], "else": []}),
+            json!({"control": "branch", "condition": {"ref": "$s1.x || $s2.y"},
+                   "then": [], "else": []}),
+        ];
+        for case in cases {
+            let mut v = case.clone();
+            assert!(
+                absorb_branch_dialect(&mut v, BranchShape::WholeStep).is_empty(),
+                "{case}"
+            );
+            assert_eq!(v, case, "{case}");
+        }
+    }
+
+    /// Codex 2026-07-22 P2: `control: "if"` remaps ONLY with a usable
+    /// condition. A bare `{"control": "if", "then": …}` (and a non-string
+    /// or expression `on`) passes through untouched, marker-free, so the
+    /// refusal names the original emission.
+    #[test]
+    fn control_if_without_usable_condition_stays_untouched() {
+        let cases = [
+            json!({"control": "if", "then": ["s2"], "else": []}),
+            json!({"control": "if", "on": 7, "then": [], "else": []}),
+            json!({"control": "if", "on": "s1.connected == true", "then": [], "else": []}),
+            json!({"control": "if"}),
+        ];
+        for case in cases {
+            let mut v = case.clone();
+            assert!(
+                absorb_branch_dialect(&mut v, BranchShape::WholeStep).is_empty(),
+                "{case}"
+            );
+            assert_eq!(v, case, "{case}");
+        }
+    }
+
+    /// Codex 2026-07-22 P3: `routines_save` with BOTH def and def_json is
+    /// rejected by `resolve_save_def` before any absorption - the marker
+    /// mirrors that and reports nothing.
+    #[test]
+    fn branch_dialect_params_mirrors_def_exclusivity() {
+        let dialect_def = json!({"routine": "r", "schema_version": 1, "tracks": [
+            {"name": "m", "steps": [
+                {"id": "s2", "control": "branch", "test": "$s1.ok", "then": [], "else": []}
+            ]}
+        ]});
+        let both = json!({
+            "def": dialect_def,
+            "def_json": serde_json::to_string(&dialect_def).unwrap()
+        });
+        assert!(
+            branch_dialect_params("routines_save", &both).is_empty(),
+            "both def and def_json: the boundary rejects before absorbing"
+        );
+        // Sanity: the same def alone still reports.
+        let alone = json!({"def": dialect_def});
+        assert!(!branch_dialect_params("routines_save", &alone).is_empty());
     }
 }

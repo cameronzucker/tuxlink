@@ -342,12 +342,14 @@ impl RadioConnect {
     }
 }
 
-#[async_trait]
-impl Action for RadioConnect {
-    fn descriptor(&self) -> ActionDescriptor {
-        ActionDescriptor {
-            writes_config: false,
-            name: RADIO_CONNECT,
+/// `radio.connect`'s catalog descriptor as a free fn (no services needed):
+/// the definition_template branch lock in `mcp_ports.rs` asserts the
+/// template's branch tests a DECLARED output of this action - executable
+/// teaching, not merely parseable (Codex 2026-07-22 P2).
+pub(crate) fn radio_connect_descriptor() -> ActionDescriptor {
+    ActionDescriptor {
+        writes_config: false,
+        name: RADIO_CONNECT,
             label: "Connect to gateway",
             // Contract facts models kept asking the operator for (tuxlink-591dw
             // run-3/run-4 evidence): owns the whole connect (no pre-tune or
@@ -433,6 +435,12 @@ impl Action for RadioConnect {
             ],
             dry_run_shape: None,
         }
+}
+
+#[async_trait]
+impl Action for RadioConnect {
+    fn descriptor(&self) -> ActionDescriptor {
+        radio_connect_descriptor()
     }
 
     async fn execute(

@@ -4475,15 +4475,19 @@ impl MonolithRoutinesPort {
 /// routine). This puts that example in the tool the model reaches FIRST.
 /// Locked to the real parser by `definition_template_parses_as_routine_def`
 /// below — a template the parser rejects would teach the exact failure it
-/// exists to end. Deliberately non-transmitting (local.log) so the example
-/// carries no consent baggage.
+/// exists to end.
 ///
 /// Carries a branch IN SITU (tuxlink-6epl8): battery S1 proved the flat
 /// branch shape is guessed by nobody, and a shape shown only in the
 /// `controls` section is one hop further from the model than the template
-/// it bootstraps from. s2 shows the strict-boolean form with then/else as
-/// step-id lists; the illustrative "s1.ok" path stands in for a real
-/// boolean output such as radio.connect's "connected".
+/// it bootstraps from. The flow is the canonical find -> connect -> branch
+/// the battery itself asked for, and the branch tests `s2.connected` - a
+/// DECLARED boolean output of the `radio.connect` step it references, so
+/// the taught routine is executable, not merely parseable (Codex
+/// 2026-07-22 P2; the lock test pins the output against the real
+/// descriptor). transmit_mode stays "attended": the connect pauses for the
+/// operator's per-transmission go-ahead, so the example still carries no
+/// automatic-transmit consent baggage.
 const DEFINITION_TEMPLATE_JSON: &str = r#"{
   "routine": "my-routine-name",
   "schema_version": 1,
@@ -4495,10 +4499,12 @@ const DEFINITION_TEMPLATE_JSON: &str = r#"{
     {
       "name": "track-1",
       "steps": [
-        { "id": "s1", "action": "local.log", "on_radio_busy": "wait", "params": { "message": "hello from my-routine-name" } },
-        { "id": "s2", "control": "branch", "on": "s1.ok", "then": ["s3"], "else": [] },
-        { "id": "s3", "action": "local.log", "params": { "message": "s1 reported ok" } },
-        { "id": "s4", "control": "end" }
+        { "id": "s1", "action": "data.find_stations", "params": { "modes": ["vara-hf"], "bands": ["20m"], "limit": 3 } },
+        { "id": "s2", "action": "radio.connect", "on_radio_busy": "wait", "params": { "stations": "$s1.callsigns", "bands": ["20m"] } },
+        { "id": "s3", "control": "branch", "on": "s2.connected", "then": ["s4"], "else": ["s5"] },
+        { "id": "s4", "control": "end" },
+        { "id": "s5", "action": "local.log", "params": { "message": "no gateway reachable this cycle" } },
+        { "id": "s6", "control": "end", "failed": true, "reason": "no gateway reachable" }
       ]
     }
   ]
@@ -5135,7 +5141,8 @@ mod tests {
             let branch = def.tracks[0]
                 .steps
                 .iter()
-                .find_map(|s| match s {
+                .enumerate()
+                .find_map(|(idx, s)| match s {
                     Step::Control(c) => match &c.control {
                         Control::Branch {
                             on,
@@ -5143,17 +5150,50 @@ mod tests {
                             value,
                             then,
                             r#else,
-                        } => Some((on, *op, value.clone(), then.clone(), r#else.clone())),
+                        } => Some((idx, on, *op, value.clone(), then.clone(), r#else.clone())),
                         _ => None,
                     },
                     Step::Action(_) => None,
                 })
                 .expect("the template must carry a branch step in situ");
-            let (on, op, value, then, r#else) = branch;
-            assert_eq!(on, "s1.ok", "bare path, no $ prefix");
+            let (branch_idx, on, op, value, then, r#else) = branch;
+            assert_eq!(on, "s2.connected", "bare path, no $ prefix");
             assert_eq!((op, value), (None, None), "strict-boolean form");
-            assert_eq!(then, vec![StepId("s3".into())], "then is a step-id list");
-            assert!(r#else.is_empty(), "empty else arm is legal and shown");
+            assert_eq!(then, vec![StepId("s4".into())], "then is a step-id list");
+            assert_eq!(r#else, vec![StepId("s5".into())], "else is a step-id list");
+            for arm_id in then.iter().chain(r#else.iter()) {
+                assert!(
+                    def.tracks[0].steps.iter().any(|s| s.id() == arm_id),
+                    "arm id {arm_id:?} names a real step in the template"
+                );
+            }
+
+            // EXECUTABLE teaching (Codex 2026-07-22 P2): the branch's `on`
+            // path names a DECLARED output of the EARLIER step it
+            // references - pinned against the real radio.connect
+            // descriptor, so a renamed output or reshuffled template fails
+            // here instead of teaching a routine that cannot run.
+            let (ref_step, output) = on.split_once('.').expect("on is step.output");
+            let (ref_idx, referenced) = def.tracks[0]
+                .steps
+                .iter()
+                .enumerate()
+                .find(|(_, s)| s.id().0 == ref_step)
+                .expect("the branch references a step that exists in the template");
+            assert!(
+                ref_idx < branch_idx,
+                "the referenced step runs before the branch"
+            );
+            let action = match referenced {
+                Step::Action(a) => &a.action,
+                other => panic!("the branch must test an ACTION step's output, got {other:?}"),
+            };
+            let desc = crate::routines::actions::radio::radio_connect_descriptor();
+            assert_eq!(action, desc.name, "the template branches on radio.connect");
+            assert!(
+                desc.outputs.iter().any(|o| o.key == output),
+                "\"{output}\" must be a declared radio.connect output"
+            );
         }
 
         /// tuxlink-6epl8: every control-kind example in the catalog parses
@@ -5255,7 +5295,9 @@ mod tests {
             .iter()
             .map(|s| s.id().0.as_str())
             .collect();
-        assert_eq!(ids, vec!["s1", "s3", "s4", "s5", "s6", "s7", "s2"]);
+        // Jump+fall-through-correct layout (Codex 2026-07-22 P1): then-arm
+        // before the track-final end, else-arm appended after it.
+        assert_eq!(ids, vec!["s1", "s3", "s4", "s5", "s2", "s6", "s7"]);
         match &parsed.tracks[0].steps[2] {
             Step::Control(c) => match &c.control {
                 Control::Branch {

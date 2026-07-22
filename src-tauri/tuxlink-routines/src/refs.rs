@@ -105,6 +105,26 @@ pub fn scan_embedded_refs(s: &str) -> Vec<(usize, &str)> {
     out
 }
 
+/// True when `s` is the WHOLE-VALUE ref shape the executor resolves typed:
+/// a `$`-prefixed string whose scannable token either spans the entire
+/// remainder or does not exist at all (in which case the runtime
+/// hard-resolves the remainder and errors verbatim when unset). False for
+/// "$ref plus trailing text", which the runtime treats as interpolation.
+/// Shared by `executor::resolve_string` and the validators so the two can
+/// never disagree about which strings get whole-ref semantics (Codex
+/// 2026-07-22 P2: validation refused with whole-ref errors what the runtime
+/// interpolates).
+pub fn whole_ref(s: &str) -> bool {
+    if !s.starts_with('$') {
+        return false;
+    }
+    match scan_embedded_refs(s).as_slice() {
+        [] => true, // no scannable token: the runtime hard-resolves s[1..]
+        [(0, path)] => 1 + path.len() == s.len(),
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,5 +181,18 @@ mod tests {
             scan_embedded_refs("k=$s1.indices.k_index!"),
             vec![(2, "s1.indices.k_index")]
         );
+    }
+
+    /// `whole_ref` mirrors the executor's routing exactly: whole-value for a
+    /// spanning token or an unscannable remainder, interpolation otherwise.
+    #[test]
+    fn whole_ref_matches_executor_routing() {
+        assert!(whole_ref("$s1.connected"));
+        assert!(whole_ref("$band_plan"));
+        assert!(whole_ref("$WEIRD"), "unscannable remainder hard-resolves");
+        assert!(!whole_ref("$s9.connected fallback"), "trailing text = interpolation");
+        assert!(!whole_ref("connected=$s3.connected"), "no leading $");
+        assert!(!whole_ref("plain text"));
+        assert!(!whole_ref(""));
     }
 }
