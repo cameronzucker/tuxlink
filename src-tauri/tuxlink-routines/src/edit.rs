@@ -325,9 +325,30 @@ pub fn step_update(def: &RoutineDef, step_id: &str, patch: &Value) -> Result<Rou
         .expect("a serialized step is a JSON object");
     for (k, v) in patch_obj {
         if !v.is_null() && !out_obj.contains_key(k) {
+            // The battery's invented branch-condition carriers (tuxlink-6epl8;
+            // list mirrors tuxlink-mcp-core arg_shape's
+            // BRANCH_CONDITION_CARRIERS — this leaf crate cannot depend on
+            // the boundary crate) land HERE when the patch omits
+            // `control: "branch"`, since the boundary absorber only acts on
+            // the explicit discriminator. A bare "unknown field" teaches
+            // nothing; the flat shape does.
+            const BRANCH_CONDITION_CARRIERS: [&str; 5] =
+                ["condition", "if", "when", "expr", "test"];
+            let is_branch = matches!(
+                current,
+                Step::Control(c) if matches!(c.control, Control::Branch { .. })
+            );
+            let carrier_hint = if is_branch && BRANCH_CONDITION_CARRIERS.contains(&k.as_str()) {
+                ". A branch condition is FLAT fields on the step itself — patch \
+                 {\"control\": \"branch\", \"on\": \"s1.connected\"} (a bare path, no \"$\"), \
+                 adding op (eq|ne|lt|lte|gt|gte) and value together for a comparison; \
+                 then/else are lists of step ids"
+            } else {
+                ""
+            };
             return Err(EditError::InvalidPatch(format!(
                 "step \"{step_id}\": unknown field \"{k}\" for this step kind — it would be \
-                 silently ignored, not applied"
+                 silently ignored, not applied{carrier_hint}"
             )));
         }
     }
@@ -1130,6 +1151,32 @@ mod tests {
         );
         // real fields still patch
         assert!(step_update(&def, "s1", &json!({"timeout_s": 30})).is_ok());
+    }
+
+    /// tuxlink-6epl8: a condition-carrier key on a branch patch (the battery's
+    /// invented dialect, arriving here when the patch omits `control:
+    /// "branch"` and the boundary absorber therefore stands down) refuses
+    /// with the FLAT shape named — not a bare "unknown field". The same key
+    /// on an action step stays a plain unknown-field refusal.
+    #[test]
+    fn update_carrier_key_on_branch_teaches_the_flat_shape() {
+        let def = one_track(vec![action("s1", "a"), branch("s2", "x", &[], &[])]);
+        let err = step_update(&def, "s2", &json!({"condition": "$s1.ok"})).unwrap_err();
+        match &err {
+            EditError::InvalidPatch(m) => {
+                assert!(m.contains("unknown field \"condition\""), "{m}");
+                assert!(m.contains("\"on\""), "teaches the flat field: {m}");
+                assert!(m.contains("eq|ne|lt|lte|gt|gte"), "teaches the ops: {m}");
+            }
+            other => panic!("expected InvalidPatch, got {other:?}"),
+        }
+        // Not a branch: no branch teaching on the same key.
+        let err = step_update(&def, "s1", &json!({"condition": "$s1.ok"})).unwrap_err();
+        assert!(
+            matches!(&err, EditError::InvalidPatch(m)
+                if m.contains("unknown field \"condition\"") && !m.contains("eq|ne")),
+            "got {err:?}"
+        );
     }
 
     // ---- purity -------------------------------------------------------

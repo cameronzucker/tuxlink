@@ -19,6 +19,13 @@
 //! string-coerced call countable while the transcript keeps the redacted,
 //! shape-preserved emission as the fine-tune target and regression metric:
 //! the string-coercion rate per run trending to zero.
+//!
+//! This file also owns the SIBLING rule at the same boundary: branch-dialect
+//! absorption ([`absorb_branch_dialect`], tuxlink-6epl8) — see its docs for
+//! the battery evidence and the exact observed dialect inventory. Same
+//! architecture: one deterministic rewrite where step objects enter, honest
+//! refusals for everything outside the observed set, kind-precise transcript
+//! markers ([`branch_dialect_params`] → the sink's `branch_dialect` field).
 
 use serde_json::Value;
 
@@ -107,6 +114,366 @@ pub fn string_coerced_params(tool: &str, args: &Value) -> Vec<(&'static str, Com
             args.get(*p).and_then(stringified_kind).map(|k| (*p, k))
         })
         .collect()
+}
+
+// ─── Branch-dialect absorption (tuxlink-6epl8) ──────────────────────────────
+
+/// The condition-carrier keys the cross-model battery observed for
+/// `Control::Branch` (bd tuxlink-hwgdi stage S1, 2026-07-21): 4/4 models
+/// failed to author the real flat shape; glm-5.2 and sonnet-5 thrashed 7-11
+/// invented dialects built from these carriers, at the step's top level and
+/// nested inside `params`. This list is the CLOSED observed set — extending
+/// it takes new battery evidence, not intuition. `tuxlink-routines`'
+/// `edit.rs` mirrors it for its teaching refusal (that leaf crate cannot
+/// depend on this boundary crate).
+pub const BRANCH_CONDITION_CARRIERS: &[&str] = &["condition", "if", "when", "expr", "test"];
+
+/// `CmpOp`'s wire names (`tuxlink-routines::types::CmpOp`), needed to
+/// classify op-keyed conditions without a routines-crate dependency.
+const CMP_OP_NAMES: &[&str] = &["eq", "ne", "lt", "lte", "gt", "gte"];
+
+/// Every non-carrier key a branch step (or branch patch) may carry. A key in
+/// neither list means the emission is outside the observed dialect set — the
+/// absorber leaves the whole step alone and validation refuses honestly.
+const BRANCH_KNOWN_KEYS: &[&str] = &["id", "control", "on", "op", "value", "then", "else", "params"];
+
+/// Kind-precise transcript markers, one per observed condition shape plus
+/// the `$`-strip, the `control: "if"` remap, and the inline-arm hoist — the
+/// `branch_dialect` sibling of `arg_shape`'s `string-to-object` vocabulary.
+pub const BRANCH_CONDITION_STRING: &str = "branch-condition-string";
+pub const BRANCH_CONDITION_OBJECT: &str = "branch-condition-object";
+pub const BRANCH_CONDITION_OPKEYED: &str = "branch-condition-opkeyed";
+pub const BRANCH_CONDITION_REF: &str = "branch-condition-ref";
+pub const BRANCH_REF_DOLLAR_STRIPPED: &str = "branch-ref-dollar-stripped";
+pub const BRANCH_CONTROL_IF_MAPPED: &str = "branch-control-if-mapped";
+pub const BRANCH_ARMS_HOISTED: &str = "branch-arms-hoisted";
+
+/// Where a branch value entered: a WHOLE step object (`routines_save` defs,
+/// `routines_step_add.step`) or a shallow-merge PATCH
+/// (`routines_step_update.patch`). Patch is the one place a strict-boolean
+/// absorption must write explicit `op: null` / `value: null`: null clears an
+/// optional through the merge, where omission would leave a stale comparison
+/// half on the stored step and silently flip the branch's semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BranchShape {
+    WholeStep,
+    Patch,
+}
+
+/// Strip exactly ONE leading `$` from a ref path. `None` when there is no
+/// single-`$` prefix to strip: bare paths, a lone `"$"`, and `"$$…"` (a
+/// second application would strip again, breaking idempotency) all decline.
+fn strip_one_dollar(s: &str) -> Option<&str> {
+    match s.strip_prefix('$') {
+        Some(rest) if !rest.is_empty() && !rest.starts_with('$') => Some(rest),
+        _ => None,
+    }
+}
+
+/// Classify one observed condition-carrier VALUE into
+/// `(path, op, value, marker)`. `None` = not an observed shape — the caller
+/// leaves the step untouched. The four shapes are exactly the battery's
+/// inventory: (a) bare string ref (strict-boolean), (b) `{field, op,
+/// value}`, (c) op-keyed `{"eq": [ref, value]}` (JSONLogic-ish; op key ∈
+/// eq/ne/lt/lte/gt/gte), (d) `{"ref": "$path"}` (gpt-5.5 seq 14,
+/// strict-boolean).
+#[allow(clippy::type_complexity)] // one internal classifier, named by its doc
+fn classify_condition(
+    cond: &Value,
+) -> Option<(String, Option<String>, Option<Value>, &'static str)> {
+    match cond {
+        Value::String(s) if !s.is_empty() => {
+            Some((s.clone(), None, None, BRANCH_CONDITION_STRING))
+        }
+        Value::Object(m) if m.len() == 3 => {
+            let field = m.get("field")?.as_str()?;
+            let op = m.get("op")?.as_str()?;
+            let value = m.get("value")?;
+            if field.is_empty() || !CMP_OP_NAMES.contains(&op) {
+                return None;
+            }
+            Some((
+                field.to_string(),
+                Some(op.to_string()),
+                Some(value.clone()),
+                BRANCH_CONDITION_OBJECT,
+            ))
+        }
+        Value::Object(m) if m.len() == 1 => {
+            let (op, rhs) = m.iter().next()?;
+            if op == "ref" {
+                // gpt-5.5's `{"ref": "$s3.connected"}` wrapper: strict-bool
+                // on the wrapped path.
+                let path = rhs.as_str()?;
+                if path.is_empty() {
+                    return None;
+                }
+                return Some((path.to_string(), None, None, BRANCH_CONDITION_REF));
+            }
+            if !CMP_OP_NAMES.contains(&op.as_str()) {
+                return None;
+            }
+            let pair = rhs.as_array()?;
+            if pair.len() != 2 {
+                return None;
+            }
+            let path = pair[0].as_str()?;
+            if path.is_empty() {
+                return None;
+            }
+            Some((
+                path.to_string(),
+                Some(op.clone()),
+                Some(pair[1].clone()),
+                BRANCH_CONDITION_OPKEYED,
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// The ONE branch-dialect rule (tuxlink-6epl8, sibling of [`parse_if_string`]):
+/// a step that EXPLICITLY says `control: "branch"` (or the invented
+/// `control: "if"`, 2026-07-19 probe, remapped to `branch`) and carries an
+/// observed condition dialect is rewritten to the real flat shape — carrier
+/// keys (`condition`/`if`/`when`/`expr`/`test`, top level or inside
+/// `params`) become `on`/`op`/`value`, `params`-nested `then`/`else` lift to
+/// the step's top level, and a single leading `$` is stripped from the ref
+/// path (also when `on` came directly). Returns the kind-precise markers
+/// applied; empty = untouched.
+///
+/// Constraints, all load-bearing:
+/// - A carrier key WITHOUT an explicit `control: "branch"` / `"if"` never
+///   invents a branch — only the explicit discriminator activates the rule.
+/// - Ambiguity refuses to guess: a carrier alongside `on`/`op`/`value`,
+///   multiple carriers, keys beyond the observed set, a `params` holding
+///   anything beyond one carrier plus `then`/`else`, arms present BOTH in
+///   `params` and at top level, an unclassifiable carrier value, or an
+///   unstrippable `$`-path all leave the step byte-identical so
+///   validation's instructive refusal fires on the original emission.
+/// - Idempotent: absorbed output re-enters and leaves untouched (`"if"` is
+///   never a valid control kind, so the remap can never touch valid input).
+/// - INLINE STEP OBJECTS inside arms are NOT absorbed here — a lone step
+///   has no surrounding track to hoist them into. The whole-def walk
+///   ([`absorb_branch_dialects_in_def`]) owns that absorption (glm-5.2
+///   battery S1 seq 16-18 evidence).
+pub fn absorb_branch_dialect(step: &mut Value, shape: BranchShape) -> Vec<&'static str> {
+    let Some(obj) = step.as_object() else {
+        return Vec::new();
+    };
+    let map_if = match obj.get("control").and_then(Value::as_str) {
+        Some("branch") => false,
+        Some("if") => true,
+        _ => return Vec::new(),
+    };
+    if obj.keys().any(|k| {
+        !BRANCH_KNOWN_KEYS.contains(&k.as_str()) && !BRANCH_CONDITION_CARRIERS.contains(&k.as_str())
+    }) {
+        return Vec::new();
+    }
+    // Locate the carrier: top level, or inside `params` (glm emitted
+    // `params: {"if": "$s3.connected"}`; the 2026-07-19 probe put the whole
+    // condition+then+else payload under `params`). `params` is not a branch
+    // field, so a `params` holding anything beyond exactly one carrier plus
+    // `then`/`else` is outside the observed set — as are arms present both
+    // in `params` and at top level (ambiguous, no guessing).
+    let top_carriers: Vec<&'static str> = BRANCH_CONDITION_CARRIERS
+        .iter()
+        .copied()
+        .filter(|c| obj.contains_key(*c))
+        .collect();
+    let mut params_arms: Vec<(&'static str, Value)> = Vec::new();
+    let params_carrier: Option<&'static str> = match obj.get("params") {
+        None => None,
+        Some(Value::Object(p)) => {
+            let carriers: Vec<&'static str> = BRANCH_CONDITION_CARRIERS
+                .iter()
+                .copied()
+                .filter(|c| p.contains_key(*c))
+                .collect();
+            let only_known = p.keys().all(|k| {
+                k == "then"
+                    || k == "else"
+                    || BRANCH_CONDITION_CARRIERS.contains(&k.as_str())
+            });
+            match (carriers.as_slice(), only_known) {
+                ([c], true) => {
+                    for arm in ["then", "else"] {
+                        if let Some(v) = p.get(arm) {
+                            if obj.contains_key(arm) {
+                                return Vec::new(); // arm in params AND top level
+                            }
+                            params_arms.push((arm, v.clone()));
+                        }
+                    }
+                    Some(*c)
+                }
+                _ => return Vec::new(),
+            }
+        }
+        Some(_) => return Vec::new(),
+    };
+    let carrier = match (top_carriers.as_slice(), params_carrier) {
+        ([], None) => None,
+        ([c], None) => Some((*c, false)),
+        ([], Some(c)) => Some((c, true)),
+        _ => return Vec::new(), // multiple carriers — ambiguous
+    };
+
+    let mut markers = Vec::new();
+    match carrier {
+        Some((key, in_params)) => {
+            // A carrier alongside any flat condition field is a mixed,
+            // never-observed emission — no guessing.
+            if obj.contains_key("on") || obj.contains_key("op") || obj.contains_key("value") {
+                return Vec::new();
+            }
+            let cond = if in_params {
+                obj.get("params").and_then(|p| p.get(key))
+            } else {
+                obj.get(key)
+            };
+            let Some(cond) = cond else {
+                return Vec::new();
+            };
+            let Some((raw_path, op, value, marker)) = classify_condition(cond) else {
+                return Vec::new();
+            };
+            let (path, stripped) = match strip_one_dollar(&raw_path) {
+                Some(rest) => (rest.to_string(), true),
+                None if raw_path.starts_with('$') => return Vec::new(), // "$" / "$$…"
+                None => (raw_path, false),
+            };
+            let obj = step.as_object_mut().expect("checked as_object above");
+            if in_params {
+                obj.remove("params");
+                for (arm, v) in params_arms {
+                    obj.insert(arm.into(), v);
+                }
+            } else {
+                obj.remove(key);
+            }
+            obj.insert("on".into(), Value::String(path));
+            match (op, value) {
+                (Some(op), Some(value)) => {
+                    obj.insert("op".into(), Value::String(op));
+                    obj.insert("value".into(), value);
+                }
+                _ => {
+                    // Strict-boolean: a PATCH must actively CLEAR any stored
+                    // comparison halves; a whole step simply omits them.
+                    if shape == BranchShape::Patch {
+                        obj.insert("op".into(), Value::Null);
+                        obj.insert("value".into(), Value::Null);
+                    }
+                }
+            }
+            if map_if {
+                obj.insert("control".into(), Value::String("branch".into()));
+                markers.push(BRANCH_CONTROL_IF_MAPPED);
+            }
+            markers.push(marker);
+            if stripped {
+                markers.push(BRANCH_REF_DOLLAR_STRIPPED);
+            }
+        }
+        None => {
+            // No carrier: the flat shape may still carry a `$`-prefixed `on`
+            // (models emit the REAL field with the ref sigil), and the
+            // control kind may still be the invented `"if"`.
+            if let Some(on) = obj.get("on").and_then(Value::as_str) {
+                if on.starts_with('$') && strip_one_dollar(on).is_none() {
+                    return Vec::new(); // "$" / "$$…" — unstrippable, untouched
+                }
+            }
+            let stripped = obj
+                .get("on")
+                .and_then(Value::as_str)
+                .and_then(strip_one_dollar)
+                .map(str::to_string);
+            let obj = step.as_object_mut().expect("checked as_object above");
+            if map_if {
+                obj.insert("control".into(), Value::String("branch".into()));
+                markers.push(BRANCH_CONTROL_IF_MAPPED);
+            }
+            if let Some(path) = stripped {
+                obj.insert("on".into(), Value::String(path));
+                markers.push(BRANCH_REF_DOLLAR_STRIPPED);
+            }
+        }
+    }
+    markers
+}
+
+/// Apply [`absorb_branch_dialect`] to every step of a WHOLE routine
+/// definition (`routines_save`): walk `tracks[].steps[]`, aggregating
+/// markers in document order. A def that is not object-shaped (or has no
+/// tracks) returns empty and stays untouched — the parser's refusal fires.
+pub fn absorb_branch_dialects_in_def(def: &mut Value) -> Vec<&'static str> {
+    let mut markers = Vec::new();
+    let Some(tracks) = def.get_mut("tracks").and_then(Value::as_array_mut) else {
+        return markers;
+    };
+    for track in tracks {
+        let Some(steps) = track.get_mut("steps").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        for step in steps {
+            markers.extend(absorb_branch_dialect(step, BranchShape::WholeStep));
+        }
+    }
+    markers
+}
+
+/// The branch-dialect markers `tool`'s call absorbs, per param — the
+/// transcript's per-call `branch_dialect` marker. Pure: clones and runs the
+/// absorber exactly as the port boundary does (including the ONE
+/// parse-if-string on a stringified composite first), so the marker cannot
+/// drift from the behavior. Empty for well-shaped calls and other tools.
+pub fn branch_dialect_params(tool: &str, args: &Value) -> Vec<(&'static str, Vec<&'static str>)> {
+    fn step_markers(v: &Value, shape: BranchShape) -> Vec<&'static str> {
+        let mut owned = parse_if_string(v.clone(), CompositeKind::Object);
+        absorb_branch_dialect(&mut owned, shape)
+    }
+    fn def_markers(v: &Value) -> Vec<&'static str> {
+        let mut owned = parse_if_string(v.clone(), CompositeKind::Object);
+        absorb_branch_dialects_in_def(&mut owned)
+    }
+    let mut out = Vec::new();
+    match tool {
+        "routines_step_add" => {
+            if let Some(step) = args.get("step") {
+                let m = step_markers(step, BranchShape::WholeStep);
+                if !m.is_empty() {
+                    out.push(("step", m));
+                }
+            }
+        }
+        "routines_step_update" => {
+            if let Some(patch) = args.get("patch") {
+                let m = step_markers(patch, BranchShape::Patch);
+                if !m.is_empty() {
+                    out.push(("patch", m));
+                }
+            }
+        }
+        "routines_save" => {
+            if let Some(def) = args.get("def") {
+                let m = def_markers(def);
+                if !m.is_empty() {
+                    out.push(("def", m));
+                }
+            }
+            if let Some(def_json) = args.get("def_json") {
+                let m = def_markers(def_json);
+                if !m.is_empty() {
+                    out.push(("def_json", m));
+                }
+            }
+        }
+        _ => {}
+    }
+    out
 }
 
 #[cfg(test)]
@@ -264,5 +631,320 @@ mod tests {
                 "{tool}.{field}: schema type must match the coercion table"
             );
         }
+    }
+
+    // ── tuxlink-6epl8: branch-dialect absorption (battery S1, 2026-07-21) ──
+
+    /// Every observed top-level carrier key (glm-5.2's thrash inventory)
+    /// rewrites to the flat strict-boolean shape with the `$` stripped.
+    #[test]
+    fn battery_carrier_keys_absorb_to_flat_on() {
+        for carrier in ["condition", "if", "when", "expr", "test"] {
+            let mut step = json!({
+                "id": "s4", "control": "branch", "then": ["s5"], "else": ["s6"]
+            });
+            step.as_object_mut()
+                .unwrap()
+                .insert(carrier.into(), json!("$s3.connected"));
+            let markers = absorb_branch_dialect(&mut step, BranchShape::WholeStep);
+            assert_eq!(
+                markers,
+                vec![BRANCH_CONDITION_STRING, BRANCH_REF_DOLLAR_STRIPPED],
+                "{carrier}"
+            );
+            assert_eq!(
+                step,
+                json!({
+                    "id": "s4", "control": "branch", "on": "s3.connected",
+                    "then": ["s5"], "else": ["s6"]
+                }),
+                "{carrier}"
+            );
+        }
+    }
+
+    /// glm-5.2 also nested the carrier inside `params` — absorbed only when
+    /// `params` holds EXACTLY the carrier; the empty shell goes with it.
+    #[test]
+    fn glm_params_nested_if_absorbs() {
+        let mut step = json!({
+            "id": "s4", "control": "branch",
+            "params": {"if": "$s3.connected"},
+            "then": ["s5"], "else": ["s6"]
+        });
+        let markers = absorb_branch_dialect(&mut step, BranchShape::WholeStep);
+        assert_eq!(
+            markers,
+            vec![BRANCH_CONDITION_STRING, BRANCH_REF_DOLLAR_STRIPPED]
+        );
+        assert!(step.get("params").is_none(), "{step}");
+        assert_eq!(step["on"], "s3.connected");
+    }
+
+    /// Sonnet-5's condition-object dialect flattens to on/op/value. The
+    /// empty arms are ALSO from the battery (sonnet emitted them empty in
+    /// most probes, intending to populate after) — they must survive.
+    #[test]
+    fn sonnet_condition_object_absorbs() {
+        let mut step = json!({
+            "id": "s4", "control": "branch",
+            "condition": {"field": "$s3.connected", "op": "eq", "value": true},
+            "then": [], "else": []
+        });
+        let markers = absorb_branch_dialect(&mut step, BranchShape::WholeStep);
+        assert_eq!(
+            markers,
+            vec![BRANCH_CONDITION_OBJECT, BRANCH_REF_DOLLAR_STRIPPED]
+        );
+        assert_eq!(
+            step,
+            json!({
+                "id": "s4", "control": "branch", "on": "s3.connected",
+                "op": "eq", "value": true, "then": [], "else": []
+            })
+        );
+    }
+
+    /// The JSONLogic-ish op-keyed form: `{"eq": [ref, value]}`.
+    #[test]
+    fn jsonlogic_opkeyed_condition_absorbs() {
+        let mut step = json!({
+            "id": "s4", "control": "branch",
+            "condition": {"eq": ["$s3.connected", true]},
+            "then": ["s5"], "else": []
+        });
+        let markers = absorb_branch_dialect(&mut step, BranchShape::WholeStep);
+        assert_eq!(
+            markers,
+            vec![BRANCH_CONDITION_OPKEYED, BRANCH_REF_DOLLAR_STRIPPED]
+        );
+        assert_eq!(step["on"], "s3.connected");
+        assert_eq!(step["op"], "eq");
+        assert_eq!(step["value"], json!(true));
+        assert!(step.get("condition").is_none());
+    }
+
+    /// Models also emit the REAL `on` field with the `$` sigil — strip it
+    /// there too. Exactly one `$`: a lone "$" and "$$…" pass through (a
+    /// second strip would break idempotency); bare paths are never touched.
+    #[test]
+    fn direct_on_dollar_prefix_strips() {
+        let mut step = json!({
+            "id": "s2", "control": "branch", "on": "$s1.connected",
+            "then": ["s3"], "else": []
+        });
+        let markers = absorb_branch_dialect(&mut step, BranchShape::WholeStep);
+        assert_eq!(markers, vec![BRANCH_REF_DOLLAR_STRIPPED]);
+        assert_eq!(step["on"], "s1.connected");
+
+        for odd in ["$", "$$s1.connected"] {
+            let mut step = json!({
+                "id": "s2", "control": "branch", "on": odd,
+                "then": [], "else": []
+            });
+            assert!(absorb_branch_dialect(&mut step, BranchShape::WholeStep).is_empty());
+            assert_eq!(step["on"], odd);
+        }
+    }
+
+    /// Already-flat valid shapes are untouched, and the rule is IDEMPOTENT:
+    /// absorbing an absorbed step is a marker-free no-op, in both contexts.
+    #[test]
+    fn already_flat_untouched_and_absorption_is_idempotent() {
+        let flat = json!({
+            "id": "s2", "control": "branch", "on": "s1.connected",
+            "op": "gte", "value": 4, "then": ["s3"], "else": ["s4"]
+        });
+        let mut v = flat.clone();
+        assert!(absorb_branch_dialect(&mut v, BranchShape::WholeStep).is_empty());
+        assert_eq!(v, flat);
+
+        let dialects = [
+            (
+                json!({"control": "branch", "if": "$s3.connected", "then": [], "else": []}),
+                BranchShape::WholeStep,
+            ),
+            (
+                json!({"control": "branch",
+                       "condition": {"field": "$s3.connected", "op": "eq", "value": true},
+                       "then": [], "else": []}),
+                BranchShape::WholeStep,
+            ),
+            (
+                json!({"control": "branch", "condition": {"lt": ["$s1.count", 3]},
+                       "then": [], "else": []}),
+                BranchShape::WholeStep,
+            ),
+            (
+                json!({"control": "branch", "when": "$s3.connected"}),
+                BranchShape::Patch,
+            ),
+        ];
+        for (dialect, shape) in dialects {
+            let mut once = dialect.clone();
+            assert!(
+                !absorb_branch_dialect(&mut once, shape).is_empty(),
+                "first pass must absorb: {dialect}"
+            );
+            let after_once = once.clone();
+            assert!(
+                absorb_branch_dialect(&mut once, shape).is_empty(),
+                "second pass must be a no-op: {after_once}"
+            );
+            assert_eq!(once, after_once, "second pass must not mutate");
+        }
+    }
+
+    /// A carrier key with NO explicit `control: "branch"` never invents a
+    /// branch — carrier-bearing patches and action steps pass through.
+    #[test]
+    fn carrier_without_explicit_branch_control_never_invents_a_branch() {
+        let cases = [
+            json!({"if": "$s3.connected", "then": ["s5"], "else": []}),
+            json!({"id": "s1", "action": "local.log", "params": {"if": "$s3.connected"}}),
+        ];
+        for case in cases {
+            let mut v = case.clone();
+            assert!(
+                absorb_branch_dialect(&mut v, BranchShape::Patch).is_empty(),
+                "{case}"
+            );
+            assert_eq!(v, case);
+        }
+    }
+
+    /// Ambiguous or out-of-inventory shapes stay byte-identical so
+    /// validation's refusal fires on the original emission: mixed
+    /// carrier+flat fields, multiple carriers, unknown keys, params with
+    /// extra content, unclassifiable carrier values, wrong-arity pairs,
+    /// unknown ops.
+    #[test]
+    fn ambiguous_and_unknown_shapes_pass_through_untouched() {
+        let cases = [
+            json!({"control": "branch", "on": "s1.x", "if": "$s2.y", "then": [], "else": []}),
+            json!({"control": "branch", "if": "$s2.y", "op": "eq", "value": 1,
+                   "then": [], "else": []}),
+            json!({"control": "branch", "if": "$s2.y", "when": "$s2.z", "then": [], "else": []}),
+            json!({"control": "branch", "if": "$s2.y", "note": "?", "then": [], "else": []}),
+            json!({"control": "branch", "params": {"if": "$s2.y", "x": 1},
+                   "then": [], "else": []}),
+            json!({"control": "branch", "if": 7, "then": [], "else": []}),
+            json!({"control": "branch", "if": "", "then": [], "else": []}),
+            json!({"control": "branch", "if": {"field": "$s2.y"}, "then": [], "else": []}),
+            json!({"control": "branch", "condition": {"eq": ["$s2.y"]}, "then": [], "else": []}),
+            json!({"control": "branch", "condition": {"foo": ["$s2.y", 1]},
+                   "then": [], "else": []}),
+            json!({"control": "branch",
+                   "condition": {"field": "$s2.y", "op": "approx", "value": 1},
+                   "then": [], "else": []}),
+        ];
+        for case in cases {
+            let mut v = case.clone();
+            assert!(
+                absorb_branch_dialect(&mut v, BranchShape::WholeStep).is_empty(),
+                "{case}"
+            );
+            assert_eq!(v, case, "{case}");
+        }
+    }
+
+    /// PATCH context: a strict-boolean carrier writes explicit `op`/`value`
+    /// NULLS so the shallow merge CLEARS a stored comparison — omission
+    /// would leave a stale half and silently flip the branch's semantics.
+    /// WholeStep context omits the halves instead (serde defaults apply).
+    #[test]
+    fn patch_context_strict_boolean_clears_stale_op_value_with_nulls() {
+        let mut patch = json!({"control": "branch", "condition": "$s3.connected"});
+        let markers = absorb_branch_dialect(&mut patch, BranchShape::Patch);
+        assert_eq!(
+            markers,
+            vec![BRANCH_CONDITION_STRING, BRANCH_REF_DOLLAR_STRIPPED]
+        );
+        assert_eq!(
+            patch,
+            json!({"control": "branch", "on": "s3.connected", "op": null, "value": null})
+        );
+
+        let mut step =
+            json!({"control": "branch", "condition": "$s3.connected", "then": [], "else": []});
+        absorb_branch_dialect(&mut step, BranchShape::WholeStep);
+        assert!(step.get("op").is_none());
+        assert!(step.get("value").is_none());
+    }
+
+    /// `routines_save` whole defs: the walk reaches every track's steps.
+    #[test]
+    fn save_def_walk_absorbs_branch_steps_in_tracks() {
+        let mut def = json!({
+            "routine": "s1-cycle", "schema_version": 1, "transmit_mode": "attended",
+            "triggers": [{"type": "manual"}],
+            "tracks": [{"name": "main", "steps": [
+                {"id": "s1", "action": "radio.connect", "params": {}},
+                {"id": "s2", "control": "branch", "when": "$s1.connected",
+                 "then": ["s3"], "else": []}
+            ]}]
+        });
+        let markers = absorb_branch_dialects_in_def(&mut def);
+        assert_eq!(
+            markers,
+            vec![BRANCH_CONDITION_STRING, BRANCH_REF_DOLLAR_STRIPPED]
+        );
+        assert_eq!(def["tracks"][0]["steps"][1]["on"], "s1.connected");
+        assert!(def["tracks"][0]["steps"][1].get("when").is_none());
+
+        let mut not_a_def = json!("nope");
+        assert!(absorb_branch_dialects_in_def(&mut not_a_def).is_empty());
+        assert_eq!(not_a_def, json!("nope"));
+    }
+
+    /// The transcript's `branch_dialect` marker: kind-precise, per param,
+    /// stacking with the parse-if-string rule on stringified emissions.
+    #[test]
+    fn branch_dialect_params_reports_kind_precise_markers() {
+        // step_add with the condition-object dialect, STRINGIFIED — both
+        // boundary rules apply: the ONE parse, then the absorption markers.
+        let args = json!({
+            "routine": "r",
+            "track": "main",
+            "step": "{\"control\": \"branch\", \"condition\": {\"field\": \"$s3.connected\", \"op\": \"eq\", \"value\": true}, \"then\": [], \"else\": []}"
+        });
+        assert_eq!(
+            branch_dialect_params("routines_step_add", &args),
+            vec![(
+                "step",
+                vec![BRANCH_CONDITION_OBJECT, BRANCH_REF_DOLLAR_STRIPPED]
+            )]
+        );
+
+        let args = json!({
+            "routine": "r", "step_id": "s2",
+            "patch": {"control": "branch", "if": "$s3.connected"}
+        });
+        assert_eq!(
+            branch_dialect_params("routines_step_update", &args),
+            vec![(
+                "patch",
+                vec![BRANCH_CONDITION_STRING, BRANCH_REF_DOLLAR_STRIPPED]
+            )]
+        );
+
+        let args = json!({"def": {"routine": "r", "schema_version": 1, "tracks": [
+            {"name": "m", "steps": [
+                {"id": "s2", "control": "branch", "test": "$s1.ok", "then": [], "else": []}
+            ]}
+        ]}});
+        assert_eq!(
+            branch_dialect_params("routines_save", &args),
+            vec![(
+                "def",
+                vec![BRANCH_CONDITION_STRING, BRANCH_REF_DOLLAR_STRIPPED]
+            )]
+        );
+
+        // Clean calls, other tools: nothing.
+        let clean =
+            json!({"step": {"id": "s2", "control": "branch", "on": "s1.ok", "then": [], "else": []}});
+        assert!(branch_dialect_params("routines_step_add", &clean).is_empty());
+        assert!(branch_dialect_params("cms_connect", &args).is_empty());
     }
 }

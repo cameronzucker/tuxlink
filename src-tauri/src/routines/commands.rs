@@ -464,9 +464,30 @@ pub fn get_routine(state: &RoutinesState, name: &str) -> Result<RoutineDef, UiEr
 ///
 /// Parse failure is the ONLY way this refuses: an unparseable body is not a
 /// draft, it is not a routine at all, and there is nothing to store. The serde
-/// error is passed through verbatim so the builder can point at the line.
+/// error is passed through verbatim so the builder can point at the line —
+/// except the untagged `Step` failure, which gets [`parse_def_teaching`]'s
+/// branch-shape suffix (tuxlink-6epl8): serde's "did not match any variant of
+/// untagged enum Step" names nothing a model can act on.
 pub fn save_routine(state: &RoutinesState, def_json: &str) -> Result<SaveResult, UiError> {
     save_routine_checked(state, def_json, None)
+}
+
+/// [`RoutineDef::parse`] with the step-shape teaching (shared by both save
+/// paths and draft validation): the untagged `Step` serde error is the one
+/// place the parser's verbatim contract taught nothing, so the flat branch
+/// schema — the field shape NO battery model guessed — is appended there.
+fn parse_def_teaching(def_json: &str) -> Result<RoutineDef, UiError> {
+    RoutineDef::parse(def_json).map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("untagged enum Step") {
+            UiError::Rejected(format!(
+                "{msg} — each step is ONE object: an action step {{\"id\", \"action\", \
+                 \"params\"}} or a control step; {BRANCH_SHAPE_TEACHING}"
+            ))
+        } else {
+            UiError::Rejected(msg)
+        }
+    })
 }
 
 /// [`save_routine`] with the D7 lost-update check: when `expected_revision`
@@ -482,7 +503,7 @@ pub fn save_routine_checked(
     expected_revision: Option<&str>,
 ) -> Result<SaveResult, UiError> {
     let _guard = edit_guard(state);
-    let mut def = RoutineDef::parse(def_json).map_err(|e| UiError::Rejected(e.to_string()))?;
+    let mut def = parse_def_teaching(def_json)?;
     if let Some(expected) = expected_revision {
         let current = state
             .store
@@ -561,7 +582,7 @@ pub fn validate_routine(state: &RoutinesState, name: &str) -> Result<Vec<Finding
 /// would report the saved routine as `AUTO_TX_UNACKED` — the two surfaces
 /// would disagree about the same routine.
 pub fn validate_draft(state: &RoutinesState, def_json: &str) -> Result<Vec<Finding>, UiError> {
-    let mut def = RoutineDef::parse(def_json).map_err(|e| UiError::Rejected(e.to_string()))?;
+    let mut def = parse_def_teaching(def_json)?;
     def.transmit_ack = match def.transmit_mode {
         tuxlink_routines::types::TransmitMode::Automatic => {
             state.store.get(&def.routine).and_then(|d| d.transmit_ack)
@@ -735,9 +756,18 @@ fn edit_err(e: tuxlink_routines::edit::EditError) -> UiError {
     UiError::Rejected(format!("[{code}] {e}"))
 }
 
+/// The flat branch schema, taught verbatim wherever a branch-shaped step is
+/// refused (tuxlink-6epl8): the battery's four model families all failed to
+/// guess this shape, and the generic serde error does not name it.
+const BRANCH_SHAPE_TEACHING: &str = "a branch step is FLAT: {\"control\": \"branch\", \"on\": \
+     \"s1.connected\", \"then\": [\"s2\"], \"else\": []} — on is a bare variable path (no \
+     \"$\", no condition/if/when wrapper), a comparison adds op (eq|ne|lt|lte|gt|gte) and \
+     value together, and then/else are lists of step ids";
+
 /// Parse a caller-supplied step object with TEACHING errors: the untagged
 /// `Step` enum's own serde error ("did not match any variant") tells a small
-/// model nothing, so the discriminator cases are named explicitly first.
+/// model nothing, so the discriminator cases are named explicitly first, and
+/// a failed branch step teaches its flat shape (tuxlink-6epl8).
 fn parse_step(v: serde_json::Value) -> Result<tuxlink_routines::types::Step, UiError> {
     let Some(obj) = v.as_object() else {
         return Err(UiError::Rejected(
@@ -757,8 +787,16 @@ fn parse_step(v: serde_json::Value) -> Result<tuxlink_routines::types::Step, UiE
              or the other"
                 .into(),
         )),
-        _ => serde_json::from_value(v)
-            .map_err(|e| UiError::Rejected(format!("[INVALID_STEP] step does not parse: {e}"))),
+        _ => {
+            let is_branch = obj.get("control").and_then(|c| c.as_str()) == Some("branch");
+            serde_json::from_value(v).map_err(|e| {
+                if is_branch {
+                    UiError::Rejected(format!("[INVALID_STEP] {BRANCH_SHAPE_TEACHING}: {e}"))
+                } else {
+                    UiError::Rejected(format!("[INVALID_STEP] step does not parse: {e}"))
+                }
+            })
+        }
     }
 }
 
@@ -3367,6 +3405,60 @@ mod tests {
         )
         .unwrap_err();
         rejected_code(err, "INVALID_STEP");
+    }
+
+    /// tuxlink-6epl8 suspenders: a branch-shaped step that still fails serde
+    /// (a dialect the absorber refused to guess at) is refused NAMING the
+    /// flat on/op/value + then/else shape — through the step verb AND the
+    /// whole-def save. Battery S1: no model family guessed the shape, and
+    /// the generic errors taught nothing.
+    #[test]
+    fn branch_shaped_refusals_name_the_flat_shape() {
+        let (_dir, state, _sink, _c) = test_state();
+        saved(&state, "r");
+        // A carrier dialect reaching this layer unabsorbed (non-MCP caller,
+        // or a shape the boundary refused to guess at): serde fails on the
+        // missing `on`, and the refusal teaches the flat shape.
+        let err = edit_routine(
+            &state,
+            "r",
+            None,
+            EditOp::StepAdd {
+                step: json!({"id": "s9", "control": "branch", "if": "$s1.ok"}),
+                placement: Placement::Append { track: "t".into() },
+            },
+        )
+        .unwrap_err();
+        match &err {
+            UiError::Rejected(msg) => {
+                assert!(msg.starts_with("[INVALID_STEP]"), "{msg}");
+                assert!(
+                    msg.contains("\"on\"") && msg.contains("eq|ne|lt|lte|gt|gte"),
+                    "teaches the flat branch shape: {msg}"
+                );
+                assert!(msg.contains("then"), "names the arms: {msg}");
+            }
+            other => panic!("expected Rejected, got {other:?}"),
+        }
+
+        // Whole-def save with an unparseable branch step: the untagged Step
+        // error gets the same teaching suffix.
+        let err = save_routine(
+            &state,
+            &def_json(
+                "r2",
+                json!([{"id": "s1", "control": "branch",
+                        "if": "$s0.ok", "on": "s0.ok", "then": "s2"}]),
+            ),
+        )
+        .unwrap_err();
+        match &err {
+            UiError::Rejected(msg) => assert!(
+                msg.contains("untagged enum Step") && msg.contains("\"on\""),
+                "keeps serde detail AND teaches the shape: {msg}"
+            ),
+            other => panic!("expected Rejected, got {other:?}"),
+        }
     }
 
     #[test]

@@ -4248,6 +4248,12 @@ fn build_placement(
 /// Parsing a well-formed stringified object is deterministic and
 /// semantically identical to `def_json`, so no ambiguity returns; a string
 /// that does NOT parse to an object still errors, steering to `def_json`.
+///
+/// Every def resolving to an object ALSO gets the branch-dialect walk
+/// (tuxlink-6epl8, [`tuxlink_mcp_core::arg_shape::absorb_branch_dialects_in_def`])
+/// — `routines_save` is the whole-document entry of the step-object funnel
+/// that [`map_edit_op`] covers fragment-wise. A string that does not parse
+/// stays byte-verbatim so the parser's teaching error fires on the original.
 fn resolve_save_def(
     def: Option<serde_json::Value>,
     def_json: Option<String>,
@@ -4263,7 +4269,7 @@ fn resolve_save_def(
         )),
         (Some(serde_json::Value::String(s)), None) => {
             match serde_json::from_str::<serde_json::Value>(&s) {
-                Ok(serde_json::Value::Object(_)) => Ok(s),
+                Ok(parsed @ serde_json::Value::Object(_)) => absorb_def_into_string(parsed, Some(s)),
                 _ => Err(PortError::InvalidInput(
                     "def must be a JSON OBJECT (a stringified object is tolerated and \
                      parsed). This string does not parse as one JSON object — rebuild \
@@ -4273,9 +4279,28 @@ fn resolve_save_def(
                 )),
             }
         }
-        (Some(obj), None) => serde_json::to_string(&obj)
+        (Some(obj), None) => absorb_def_into_string(obj, None),
+        (None, Some(s)) => match serde_json::from_str::<serde_json::Value>(&s) {
+            Ok(parsed @ serde_json::Value::Object(_)) => absorb_def_into_string(parsed, Some(s)),
+            _ => Ok(s), // unparseable def_json passes verbatim; the parser's error names the JSON
+        },
+    }
+}
+
+/// Branch-dialect walk over a resolved def VALUE, handing back the
+/// definition string: the ORIGINAL bytes when nothing absorbed (the
+/// pass-through contract stays byte-verbatim), the re-serialized def when a
+/// dialect was rewritten.
+fn absorb_def_into_string(
+    mut def: serde_json::Value,
+    original: Option<String>,
+) -> Result<String, PortError> {
+    let absorbed =
+        !tuxlink_mcp_core::arg_shape::absorb_branch_dialects_in_def(&mut def).is_empty();
+    match (absorbed, original) {
+        (false, Some(s)) => Ok(s),
+        _ => serde_json::to_string(&def)
             .map_err(|e| PortError::Internal(format!("serialize def: {e}"))),
-        (None, Some(s)) => Ok(s),
     }
 }
 
@@ -4290,11 +4315,21 @@ fn resolve_save_def(
 /// that do not parse to a composite pass through untouched and the existing
 /// instructive errors ([INVALID_STEP]/[INVALID_PATCH]/[INVALID_TRIGGERS]/
 /// [INVALID_META]) fire exactly as before.
+///
+/// Step-shaped fields (`step_add.step`, `step_update.patch`) then get the
+/// branch-dialect absorption (tuxlink-6epl8,
+/// [`tuxlink_mcp_core::arg_shape::absorb_branch_dialect`]): the battery's
+/// observed `condition`/`if`/`when`/`expr`/`test` emissions rewrite to the
+/// real flat `on`/`op`/`value` shape when `control: "branch"` is explicit;
+/// everything outside the observed set passes through for the same
+/// instructive refusals.
 fn map_edit_op(
     op: RoutineEditOpDto,
 ) -> Result<crate::routines::commands::EditOp, PortError> {
     use crate::routines::commands::EditOp;
-    use tuxlink_mcp_core::arg_shape::{parse_if_string, CompositeKind};
+    use tuxlink_mcp_core::arg_shape::{
+        absorb_branch_dialect, parse_if_string, BranchShape, CompositeKind,
+    };
     Ok(match op {
         RoutineEditOpDto::StepAdd {
             step,
@@ -4304,7 +4339,11 @@ fn map_edit_op(
             branch_arm,
             branch_after_step_id,
         } => EditOp::StepAdd {
-            step: parse_if_string(step, CompositeKind::Object),
+            step: {
+                let mut step = parse_if_string(step, CompositeKind::Object);
+                absorb_branch_dialect(&mut step, BranchShape::WholeStep);
+                step
+            },
             placement: build_placement(
                 "routines_step_add",
                 track,
@@ -4316,7 +4355,11 @@ fn map_edit_op(
         },
         RoutineEditOpDto::StepUpdate { step_id, patch } => EditOp::StepUpdate {
             step_id,
-            patch: parse_if_string(patch, CompositeKind::Object),
+            patch: {
+                let mut patch = parse_if_string(patch, CompositeKind::Object);
+                absorb_branch_dialect(&mut patch, BranchShape::Patch);
+                patch
+            },
         },
         RoutineEditOpDto::StepRemove { step_id } => EditOp::StepRemove { step_id },
         RoutineEditOpDto::StepMove {
@@ -4858,6 +4901,110 @@ mod tests {
                 step_id: "s1".into(),
                 patch: serde_json::Value::String("not json".into()),
             }
+        );
+    }
+
+    /// tuxlink-6epl8: the branch-dialect absorber runs at the SAME DTO
+    /// funnel — glm's stringified `if` carrier through step_add (both rules
+    /// stack), sonnet's condition object through step_update (with the
+    /// patch-context nulls), and the whole-def walk through
+    /// `resolve_save_def` on all three def entry forms. Already-flat steps
+    /// and unparseable def_json pass through byte-verbatim.
+    #[test]
+    fn map_edit_op_and_resolve_save_def_absorb_branch_dialects() {
+        use crate::routines::commands::EditOp;
+        use tuxlink_mcp_core::ports::RoutineEditOpDto;
+
+        // Stringified glm-style carrier through step_add: parse-if-string
+        // first, then absorption.
+        let op = map_edit_op(RoutineEditOpDto::StepAdd {
+            step: serde_json::Value::String(
+                r#"{"control": "branch", "if": "$s3.connected", "then": ["s4"], "else": ["s5"]}"#
+                    .into(),
+            ),
+            track: Some("track-1".into()),
+            after_step_id: None,
+            branch_step_id: None,
+            branch_arm: None,
+            branch_after_step_id: None,
+        })
+        .unwrap();
+        match op {
+            EditOp::StepAdd { step, .. } => assert_eq!(
+                step,
+                serde_json::json!({
+                    "control": "branch", "on": "s3.connected",
+                    "then": ["s4"], "else": ["s5"]
+                })
+            ),
+            other => panic!("expected StepAdd, got {other:?}"),
+        }
+
+        // Sonnet's condition object through step_update: flattened, and the
+        // strict-boolean case is NOT this one — op/value carry through.
+        let op = map_edit_op(RoutineEditOpDto::StepUpdate {
+            step_id: "s2".into(),
+            patch: serde_json::json!({
+                "control": "branch",
+                "condition": {"field": "$s3.connected", "op": "eq", "value": true}
+            }),
+        })
+        .unwrap();
+        assert_eq!(
+            op,
+            EditOp::StepUpdate {
+                step_id: "s2".into(),
+                patch: serde_json::json!({
+                    "control": "branch", "on": "s3.connected", "op": "eq", "value": true
+                }),
+            }
+        );
+
+        // Strict-boolean carrier in a PATCH: explicit nulls clear the halves.
+        let op = map_edit_op(RoutineEditOpDto::StepUpdate {
+            step_id: "s2".into(),
+            patch: serde_json::json!({"control": "branch", "when": "$s3.connected"}),
+        })
+        .unwrap();
+        assert_eq!(
+            op,
+            EditOp::StepUpdate {
+                step_id: "s2".into(),
+                patch: serde_json::json!({
+                    "control": "branch", "on": "s3.connected", "op": null, "value": null
+                }),
+            }
+        );
+
+        // Whole-def entries: `def` object, stringified `def`, and `def_json`
+        // all get the walk.
+        let dialect_def = serde_json::json!({
+            "routine": "r", "schema_version": 1, "transmit_mode": "attended",
+            "triggers": [{"type": "manual"}],
+            "tracks": [{"name": "main", "steps": [
+                {"id": "s2", "control": "branch", "test": "$s1.ok", "then": [], "else": []}
+            ]}]
+        });
+        let dialect_str = serde_json::to_string(&dialect_def).unwrap();
+        for got in [
+            resolve_save_def(Some(dialect_def.clone()), None).unwrap(),
+            resolve_save_def(Some(serde_json::Value::String(dialect_str.clone())), None).unwrap(),
+            resolve_save_def(None, Some(dialect_str.clone())).unwrap(),
+        ] {
+            let parsed: serde_json::Value = serde_json::from_str(&got).unwrap();
+            let step = &parsed["tracks"][0]["steps"][0];
+            assert_eq!(step["on"], "s1.ok", "absorbed def: {got}");
+            assert!(step.get("test").is_none(), "carrier removed: {got}");
+        }
+
+        // A dialect-free def_json passes through byte-verbatim; unparseable
+        // def_json stays verbatim for the parser's teaching error.
+        let clean = r#"{"routine": "r", "schema_version": 1}"#.to_string();
+        assert_eq!(resolve_save_def(None, Some(clean.clone())).unwrap(), clean);
+        let garbage = "not json {".to_string();
+        assert_eq!(
+            resolve_save_def(None, Some(garbage.clone())).unwrap(),
+            garbage
         );
     }
 
