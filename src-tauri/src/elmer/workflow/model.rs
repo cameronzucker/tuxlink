@@ -279,10 +279,7 @@ impl PhaseModel for SessionPhaseModel {
         // top of each turn. When `None` (13a/13b standalone + tests), fall back
         // to a fresh, never-fired token so the run is bounded only by `Limits` —
         // the original behavior, unchanged.
-        let cancel = self
-            .cancel_token
-            .clone()
-            .unwrap_or_else(CancellationToken::new);
+        let cancel = self.cancel_token.clone().unwrap_or_default();
 
         let (outcome, tool_calls) = if tools.is_empty() {
             // Artifact phase: single completion against an empty tool surface.
