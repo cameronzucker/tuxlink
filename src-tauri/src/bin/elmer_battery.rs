@@ -673,10 +673,21 @@ fn make_battery_sink(meters: Arc<Meters>, turns_log: PathBuf) -> Result<EventSin
 // OpenRouter credits + pricing
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Default)]
 struct CreditsSnapshot {
     total_credits: f64,
     total_usage: f64,
+}
+
+/// Whether a failed credits query should ABORT the cell. True only for
+/// OpenRouter, whose `/api/v1/credits` is the hard spend record (and gates
+/// the $45 ledger stop) — losing that baseline silently would defeat the
+/// budget guard. Any other origin (a local vLLM, a self-hosted shim) has no
+/// credits API by design; there its absence is expected and the cell falls
+/// back to a zero baseline, bounded by the turn cap + wall clock
+/// (tuxlink-g31en).
+fn credits_failure_is_fatal(origin: &str) -> bool {
+    origin.contains("openrouter.ai")
 }
 
 async fn fetch_credits(
@@ -1256,8 +1267,20 @@ async fn run_cell(args: RunCellArgs<'_>) -> Result<CellResult, String> {
         transcript,
     } = args;
 
-    // Credits BEFORE is a hard gate: without it the cell has no spend record.
-    let credits_before = fetch_credits(http, origin, api_key).await?;
+    // Credits BEFORE is the spend baseline. For OpenRouter it is a hard gate
+    // (see [`credits_failure_is_fatal`]); for a local / non-OpenRouter
+    // endpoint there is no credits API, so a failure there falls back to a
+    // zero baseline and the turn cap + wall clock bound the cell (tuxlink-g31en).
+    let credits_before = match fetch_credits(http, origin, api_key).await {
+        Ok(c) => c,
+        Err(e) if credits_failure_is_fatal(origin) => return Err(e),
+        Err(e) => {
+            eprintln!(
+                "elmer_battery: no credits API at {origin} ({e}); local-endpoint mode — turn-cap + wall-clock bound the cell"
+            );
+            CreditsSnapshot::default()
+        }
+    };
     let pricing = fetch_pricing(http, origin, api_key, &cli.model).await;
     if pricing.is_none() {
         eprintln!(
@@ -1567,6 +1590,19 @@ mod tests {
             }
             other => panic!("allowlist denial must be non-terminal InvalidArgs, got {other:?}"),
         }
+    }
+
+    /// tuxlink-g31en: a credits-query failure is fatal ONLY for OpenRouter
+    /// (the credits API is its spend record + $45 ledger gate). Local /
+    /// non-OpenRouter endpoints have no credits API by design, so their
+    /// failure falls back to a zero baseline instead of aborting the cell.
+    #[test]
+    fn credits_failure_fatal_only_for_openrouter() {
+        assert!(credits_failure_is_fatal("https://openrouter.ai"));
+        assert!(credits_failure_is_fatal("https://openrouter.ai/api/v1"));
+        assert!(!credits_failure_is_fatal("https://inference.twin-bramble.ts.net"));
+        assert!(!credits_failure_is_fatal("http://localhost:8000"));
+        assert!(!credits_failure_is_fatal("https://api.example.com"));
     }
 
     #[test]
