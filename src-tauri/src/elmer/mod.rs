@@ -8,6 +8,10 @@
 //! - Task 6 (`approval`): scoped one-shot outbox approval + digest-gated flush.
 //! - Task 7 (`provider` / `session`): `ElmerSession` + Tauri commands.
 //! - Task 8 (`pane`): full Tauri command surface.
+//!
+//! `workflow`: Routine CI slice 1a — Elmer's multi-phase "build me a
+//! routine" workflow. Task 1 lands the typed phase artifacts
+//! ([`workflow::artifacts`]) that later tasks in the slice build against.
 
 pub mod approval;
 pub mod commands;
@@ -20,6 +24,7 @@ pub mod model_config_state;
 pub mod provider;
 pub mod session;
 pub mod transcript_sink;
+pub mod workflow;
 
 #[cfg(test)]
 mod injection_tests;
