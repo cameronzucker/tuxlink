@@ -38,18 +38,19 @@ fn classification_prompt(intent_text: &str) -> String {
     )
 }
 
-/// Ask `model` whether `intent_text` needs the full phase pipeline or can
-/// run the minimal one, and return the selected [`Depth`].
+/// Parse a router classification answer into a [`Depth`] — the pure,
+/// side-effect-free half of [`select_depth`]'s contract, extracted so a
+/// caller that already has a [`super::model::PhaseTurn`] in hand (Task 6's
+/// engine, see [`select_depth_with_tokens`]'s doc comment) can classify its
+/// `final_text` without re-deriving the fail-safe parsing rule.
 ///
-/// Parses `PhaseTurn::final_text` case-insensitively after trimming
-/// surrounding whitespace: a text containing "minimal" (and not "full")
-/// selects [`Depth::Minimal`]; a text containing "full" selects
-/// [`Depth::Full`]. Any other answer — empty, ambiguous, containing both
-/// words, or garbage — resolves to [`Depth::Full`], the fail-safe default.
-pub async fn select_depth(intent_text: &str, model: &dyn PhaseModel) -> Depth {
-    let prompt = classification_prompt(intent_text);
-    let turn = model.run_phase(prompt, &[]).await;
-    let answer = turn.final_text.trim().to_lowercase();
+/// Case-insensitive after trimming surrounding whitespace: a text
+/// containing "minimal" (and not "full") selects [`Depth::Minimal`]; a text
+/// containing "full" selects [`Depth::Full`]. Any other answer — empty,
+/// ambiguous, containing both words, or garbage — resolves to
+/// [`Depth::Full`], the fail-safe default.
+pub fn parse_depth(answer: &str) -> Depth {
+    let answer = answer.trim().to_lowercase();
 
     let says_minimal = answer.contains("minimal");
     let says_full = answer.contains("full");
@@ -58,6 +59,41 @@ pub async fn select_depth(intent_text: &str, model: &dyn PhaseModel) -> Depth {
         (true, false) => Depth::Minimal,
         _ => Depth::Full,
     }
+}
+
+/// Ask `model` whether `intent_text` needs the full phase pipeline or can
+/// run the minimal one, and return the selected [`Depth`].
+///
+/// Thin wrapper over [`select_depth_with_tokens`] that drops the token
+/// count — kept as its own function (rather than folding callers onto the
+/// tuple-returning variant) so existing call sites and this module's own
+/// tests do not need to change shape.
+pub async fn select_depth(intent_text: &str, model: &dyn PhaseModel) -> Depth {
+    select_depth_with_tokens(intent_text, model).await.0
+}
+
+/// Same classification as [`select_depth`], but also returns the router
+/// turn's `prompt_tokens`.
+///
+/// **Why this exists (Task 6 engine integration note):** the workflow
+/// engine records a [`super::artifacts::PhaseRecord`] for every phase it
+/// runs, Router included, and a `PhaseRecord` carries `prompt_tokens`.
+/// `select_depth` alone has nowhere to hand that number back — it returns
+/// only a [`Depth`]. The alternative considered was having the engine
+/// rebuild the router prompt itself via `super::phases::build_prompt(PhaseName::Router,
+/// ..)` and call [`parse_depth`] on the result; that path was rejected
+/// because `phases::declared_inputs(PhaseName::Router)` is empty (no prior
+/// artifact exists yet when Router runs), so `build_prompt` would render
+/// only the phase's static instruction text and silently drop
+/// `intent_text` — the one piece of information the router actually needs
+/// to classify. This function keeps [`classification_prompt`]'s
+/// intent-text-bearing prompt (the correct behavior) and simply reports the
+/// turn's token cost alongside it, so the engine can build its Router
+/// `PhaseRecord` without rebuilding the classification prompt itself.
+pub async fn select_depth_with_tokens(intent_text: &str, model: &dyn PhaseModel) -> (Depth, u64) {
+    let prompt = classification_prompt(intent_text);
+    let turn = model.run_phase(prompt, &[]).await;
+    (parse_depth(&turn.final_text), turn.prompt_tokens)
 }
 
 /// Score a chosen depth against a gold-labeled expected depth. Plain
@@ -91,6 +127,29 @@ mod tests {
         let stub = StubModel::new(vec![PhaseTurn::text("i think... maybe?", 5)]);
         let depth = select_depth("do something", &stub).await;
         assert_eq!(depth, Depth::Full);
+    }
+
+    #[test]
+    fn parse_depth_matches_select_depths_own_rules() {
+        assert_eq!(parse_depth("minimal"), Depth::Minimal);
+        assert_eq!(parse_depth("FULL\n"), Depth::Full);
+        assert_eq!(parse_depth("i think... maybe?"), Depth::Full);
+        assert_eq!(parse_depth("minimal or full, not sure"), Depth::Full);
+    }
+
+    #[tokio::test]
+    async fn select_depth_with_tokens_returns_both_the_depth_and_the_turns_prompt_tokens() {
+        let stub = StubModel::new(vec![PhaseTurn::text("minimal", 17)]);
+        let (depth, tokens) = select_depth_with_tokens("check the mailbox", &stub).await;
+        assert_eq!(depth, Depth::Minimal);
+        assert_eq!(tokens, 17);
+        // Same prompt content as `select_depth` — the intent text must still
+        // reach the model, which is the whole reason this variant exists
+        // instead of routing through `phases::build_prompt`.
+        assert_eq!(
+            stub.prompts_seen(),
+            vec![classification_prompt("check the mailbox")]
+        );
     }
 
     #[test]

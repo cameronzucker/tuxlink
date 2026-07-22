@@ -10,6 +10,7 @@
 pub mod artifacts;
 pub mod catalog;
 pub mod ci;
+pub mod engine;
 pub mod manifest;
 pub mod model;
 pub mod phases;
@@ -31,4 +32,5 @@ pub use manifest::{
 pub use model::{PhaseModel, PhaseTurn, StubModel};
 pub use phases::{build_prompt, capture_artifact, tools_for, CapturedArtifact, PhaseError};
 pub use present::build_present;
-pub use router::{score_depth, select_depth};
+pub use engine::{run_workflow, WorkflowInputs};
+pub use router::{parse_depth, score_depth, select_depth, select_depth_with_tokens};
