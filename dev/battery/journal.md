@@ -19,6 +19,29 @@ model-family-trend | ambiguous. Compat is the belt, prose the suspenders.
 
 ---
 
+## 2026-07-22 — Stage S1 COMPLETE (4/4): qwen re-run vs ARM_FALLTHROUGH_LEAK
+
+qwen cell re-run on main cba0d3f4 (PR #1234: the validator finding its
+round-1 FAIL demanded). Verdict: **PASS, and the discriminating datum is
+gold** - tool_calls seq 2 shows qwen reproduced the IDENTICAL leaky layout,
+the new warning fired in the save result, and seq 7 shows the exact taught
+repair (`{"control":"end","id":"s4b"}` after the success log). Final def:
+success path terminates before the else-arm; APRS fires only on failure;
+clean validate (ATTENDED_UNDER_SCHEDULE + environment warnings only).
+
+**Fine-tune catalog implication (bd tuxlink-77620): validator-guided
+self-correction WORKS on the 122b target.** Failure mode #2
+(execution-semantics-blind layout) reclassifies PRODUCT-ABSORBED - the
+model does not need to know jump semantics if the validator names the leak
+and the fix. Modes #1 (silent scope-narrowing) and #3 (narrative
+overclaim) remain the live fine-tune targets: they are the ones no
+boundary layer can catch, because the model never surfaces the intent.
+
+STAGE GATE CLEARED. Ladder advances to S2 (sweep post-6epl8-1). Also
+merged this session: PR #1235 (hook-enforced ban on sweep-staging +
+chained mutating git ops, tuxlink-18san - session-tooling, not
+battery-gated).
+
 ## 2026-07-22 — Stage S1 RE-RUN, sweep post-6epl8-1 (post-absorption, 4-model roster)
 
 Run on merged main 9e111a67 (PR #1232: branch-dialect absorption belt +
