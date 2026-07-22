@@ -191,6 +191,15 @@ pub struct SessionPhaseModel {
     /// Optional per-`RunEvent` forwarder (13b's meters bridge). `None` for the
     /// standalone adapter (13a): the token sum still runs, nothing is bridged.
     event_forwarder: Option<EventForwarder>,
+    /// Optional cancel token observed by every phase's bounded loop (13c). When
+    /// `None` (13a/13b's standalone construction + tests), `run_phase` falls
+    /// back to a fresh, never-fired token per phase, so the workflow is bounded
+    /// only by `Limits` — unchanged behavior. When `Some` (13b's Full arm),
+    /// `run_cell`'s watchdog fires this token on a turn-cap / cost-ceiling trip,
+    /// so the Full arm observes the same cancellation the other arms get via
+    /// `session.cancel_and_abort()` — closing the measurement asymmetry and the
+    /// budget-safety gap the 13b review flagged.
+    cancel_token: Option<CancellationToken>,
 }
 
 impl SessionPhaseModel {
@@ -212,6 +221,7 @@ impl SessionPhaseModel {
             emit_invoker,
             limits,
             event_forwarder: None,
+            cancel_token: None,
         }
     }
 
@@ -221,6 +231,20 @@ impl SessionPhaseModel {
     /// defaults to `None`.
     pub fn with_event_forwarder(mut self, forwarder: EventForwarder) -> Self {
         self.event_forwarder = Some(forwarder);
+        self
+    }
+
+    /// Attach a [`CancellationToken`] every phase's bounded loop observes (13c).
+    /// Builder-style, mirroring [`Self::with_event_forwarder`], so 13a's + 13b's
+    /// existing constructors keep their signatures and the token defaults to
+    /// `None`. The Full arm passes the watchdog's token here so a turn-cap /
+    /// cost-ceiling trip cancels the in-flight phase (the runner checks the
+    /// token at the top of each turn and returns `RunOutcome::Cancelled`), and
+    /// the next phase's `run_phase` gets an already-cancelled token and returns
+    /// immediately — so `run_workflow` unwinds within at most one extra no-op
+    /// phase without any change to its signature.
+    pub fn with_cancel_token(mut self, token: CancellationToken) -> Self {
+        self.cancel_token = Some(token);
         self
     }
 }
@@ -250,9 +274,15 @@ impl PhaseModel for SessionPhaseModel {
         };
 
         let mut conversation = Conversation::new(prompt);
-        // A fresh, never-fired token: the workflow engine bounds the run via
-        // `Limits`, not via mid-phase cancellation.
-        let cancel = CancellationToken::new();
+        // The injected cancel token, if any (13c): the Full arm's watchdog fires
+        // it on a turn-cap / cost-ceiling trip and the runner observes it at the
+        // top of each turn. When `None` (13a/13b standalone + tests), fall back
+        // to a fresh, never-fired token so the run is bounded only by `Limits` —
+        // the original behavior, unchanged.
+        let cancel = self
+            .cancel_token
+            .clone()
+            .unwrap_or_else(CancellationToken::new);
 
         let (outcome, tool_calls) = if tools.is_empty() {
             // Artifact phase: single completion against an empty tool surface.
@@ -710,5 +740,50 @@ mod tests {
         // The attempt is still recorded (visible in the returned tool_calls) but
         // was not forwarded (the inner invoker would have panicked).
         assert_eq!(dispatch.into_recorded().len(), 1);
+    }
+
+    // (4) 13c — the injected cancel token is threaded into the phase loop: a
+    // `SessionPhaseModel` built `with_cancel_token(tok)` where `tok` is ALREADY
+    // cancelled returns a non-`Completed` `PhaseTurn` (the runner observes the
+    // pre-cancelled token at the top of its loop and returns
+    // `RunOutcome::Cancelled` WITHOUT ever calling the provider). This is the
+    // watchdog's cancel path for the Full arm: before this fix the token was a
+    // fresh, never-fired one, so a watchdog trip could not stop a Full run.
+    #[tokio::test]
+    async fn injected_cancel_token_short_circuits_phase_without_completing() {
+        // An empty provider script: if the runner reached the provider it would
+        // exhaust and error — but a pre-cancelled token means it never does, so
+        // the outcome is `Cancelled`, proving the token is actually observed.
+        let provider: Arc<dyn Provider> = Arc::new(FakeProvider::new(vec![]));
+        let dir = tempfile::tempdir().expect("tempdir");
+        let emit_invoker: Arc<dyn ToolInvoker> = Arc::new(StoreWritingInvoker {
+            store: DefinitionStore::open(dir.path().to_path_buf()),
+        });
+
+        let token = CancellationToken::new();
+        token.cancel();
+        let model =
+            SessionPhaseModel::new(provider, emit_invoker).with_cancel_token(token);
+
+        let turn = model.run_phase("intent prompt".to_string(), &[]).await;
+
+        assert!(
+            !matches!(turn.outcome, RunOutcome::Completed(_)),
+            "a pre-cancelled injected token must yield a non-Completed turn; got {:?}",
+            turn.outcome
+        );
+        assert_eq!(
+            turn.outcome,
+            RunOutcome::Cancelled,
+            "the runner observes the pre-cancelled token and cancels the phase"
+        );
+        assert!(
+            turn.final_text.is_empty(),
+            "a cancelled phase has no final answer text"
+        );
+        assert!(
+            turn.tool_calls.is_empty(),
+            "a cancelled artifact phase dispatches no tools"
+        );
     }
 }

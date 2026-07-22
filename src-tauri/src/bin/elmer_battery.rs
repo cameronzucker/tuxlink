@@ -1563,11 +1563,19 @@ async fn run_cell(args: RunCellArgs<'_>) -> Result<CellResult, String> {
     // per-turn timeout) bound the cell regardless.
     let cancel_reason: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let watchdog_stop = CancellationToken::new();
+    // 13c: the Full arm's workflow runs via `run_workflow` INDEPENDENTLY of the
+    // `ElmerSession`, so `session.cancel_and_abort()` is a no-op for it. This
+    // token is threaded into the Full arm's `SessionPhaseModel`; the watchdog
+    // fires BOTH it and `cancel_and_abort()` on a trip, so every arm observes
+    // the same turn-cap / cost-ceiling cancellation. Harmless no-op for
+    // Base/MatchedControl (nothing observes it there).
+    let workflow_cancel = CancellationToken::new();
     let watchdog = {
         let session = Arc::clone(&session);
         let meters = Arc::clone(&meters);
         let reason_slot = Arc::clone(&cancel_reason);
         let stop = watchdog_stop.clone();
+        let workflow_cancel = workflow_cancel.clone();
         let turn_cap = cli.turn_cap;
         let ceiling = cli.cell_ceiling_usd;
         // Live-spend poll inputs: the credits endpoint is the ONLY honest
@@ -1623,6 +1631,12 @@ async fn run_cell(args: RunCellArgs<'_>) -> Result<CellResult, String> {
                     eprintln!("elmer_battery: watchdog cancel — {reason}");
                     *reason_slot.lock().expect("cancel-reason lock poisoned") =
                         Some(reason);
+                    // Cancel BOTH paths: `cancel_and_abort` stops the Base/MC
+                    // session; `workflow_cancel` stops the Full arm's
+                    // `run_workflow` (which the session cannot reach). Firing the
+                    // Full token for Base/MC is a harmless no-op (nothing there
+                    // observes it), so no `arm == Full` gate is needed.
+                    workflow_cancel.cancel();
                     session.cancel_and_abort().await;
                     return;
                 }
@@ -1658,6 +1672,7 @@ async fn run_cell(args: RunCellArgs<'_>) -> Result<CellResult, String> {
                 config_dir,
                 routines_state: &routines_state,
                 turn_timeout_secs: cli.turn_timeout_secs,
+                workflow_cancel: workflow_cancel.clone(),
             })
             .await?
         }
@@ -1778,6 +1793,12 @@ struct RunFullArgs<'a> {
     /// `Limits.per_turn_timeout` from this same value) — else a reasoning-heavy
     /// model could time out per-turn in Full but not Base, a confound.
     turn_timeout_secs: u32,
+    /// The cell watchdog's cancel token (13c). Threaded into the phase model so
+    /// a turn-cap / cost-ceiling trip cancels the in-flight phase — the Full-arm
+    /// equivalent of `session.cancel_and_abort()`, which cannot reach
+    /// `run_workflow`. Without it, the Full arm escaped the `turn_cap` that
+    /// hard-bounds Base/MatchedControl and could not be cost-cancelled mid-run.
+    workflow_cancel: CancellationToken,
 }
 
 /// Drive one Full-arm workflow run and project it onto the cell result triple
@@ -1793,6 +1814,7 @@ async fn run_full_arm(
         config_dir,
         routines_state,
         turn_timeout_secs,
+        workflow_cancel,
     } = args;
 
     // 1. The workflow's DefinitionStore — the SAME dir the routines MCP port
@@ -1850,7 +1872,8 @@ async fn run_full_arm(
         ..Limits::default()
     };
     let phase_model = SessionPhaseModel::with_limits(provider, emit_invoker, limits)
-        .with_event_forwarder(forwarder);
+        .with_event_forwarder(forwarder)
+        .with_cancel_token(workflow_cancel);
 
     // 4. The shipped manifest + the PRODUCTION ValidationContext over this
     //    cell's (scratch) config. `MonolithValidationContext::for_state` is the
