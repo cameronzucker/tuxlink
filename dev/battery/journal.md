@@ -19,45 +19,71 @@ model-family-trend | ambiguous. Compat is the belt, prose the suspenders.
 
 ---
 
-## 2026-07-22 — Stage S2 (4/4 PASS) + Stage S4 (2/4): the composition-depth stage
+## 2026-07-22 — Stages S2 (4/4) + S4 + S3 + a CORRECTED S4 verdict
 
-**S2 (edit-in-place: 40m-dial routine → 15m cadence, +80m fallback, record
-band).** All four PASS clean via routines_get + edit verbs (zero blind
-resaves, zero sibling-routine creation - the quality-FAIL signals). qwen the
-MOST efficient (5 calls, no thrash) and folded band+station into one
-interpolated log message using the embedded-ref interpolation shipped in
-6epl8 - a feature absorbed from ITS OWN earlier emission habit. Mode 4
-(edit-verb thrash) did NOT recur on this small task; P1's 16-edit thrash is
-plausibly task-size-dependent, not intrinsic.
+**S2 (edit-in-place: 40m-dial → 15m cadence, +80m fallback, record band).**
+4/4 PASS clean via routines_get + edit verbs (zero blind resaves, zero
+sibling-routine creation). qwen MOST efficient (5 calls, no thrash), folding
+band+station into one interpolated log via the 6epl8 embedded-ref feature -
+a feature absorbed from ITS OWN earlier emission habit.
 
 **S4 (daily check-in: preset + ATU + compose→W7EOC + connect + APRS - the
-deepest composition on the ladder).**
+deepest single-track composition). CORRECTED after discovering a harness
+confound; see below.**
 
+FIRST-PASS VERDICT WAS WRONG. Original judgment recorded qwen + sonnet as
+FAIL (qwen "mode-1 narration," sonnet "step-drop"). Transcript forensics
+(prompted by operator asking WHY qwen narrated) showed BOTH were
+harness-TERMINATED, not model failures: this is a rig-centric task, and 3 of
+4 models (qwen, glm, sonnet) naturally probed rig config/state at authoring
+time (config_get_rig / rig_status), hit the pre-zvy6q terminal-denial bug,
+and were killed mid-authoring. Their partial defs (qwen's all-log skeleton,
+sonnet's 2-action stub) were work-in-progress at the kill point, NOT final
+answers. Only gpt never probed the rig, so only gpt ran clean first pass.
+
+CORRECTED S4 (all re-run on the zvy6q-fixed harness):
 | model | verdict | notes |
 |---|---|---|
-| openai/gpt-5.5 | **PASS** | All 5 actions, correct order, success-gated APRS. Only finding: the expected missing-preset UNRESOLVED_REF (predicate allows it). |
-| z-ai/glm-5.2 | **PASS** (harness-fix validated) | Complete correct def (apply_preset→tune_atu→compose to W7EOC w/ DM33→find→connect→aprs). ROUND 1 was harness-VOID (died turn 2 on a rig_status probe); after tuxlink-zvy6q it made the same probe (denied_calls:1), got the redirect, and CONTINUED to 30 turns and a clean authored routine. The fix turned a void into glm's best showing. |
-| anthropic/claude-sonnet-5 | **FAIL** | Dropped 3 of 5 required actions (no tune_atu, no compose, no aprs_send) and hallucinated `$s1.callsigns` as a rig.apply_preset output (REF_UNKNOWN_OUTPUT). Substantively incomplete. |
-| qwen/qwen3.5-122b-a10b | **FAIL (mode 1)** | Silent scope-narrowing in its PUREST form: 6 local.log steps NARRATING the task ("Applying 40m-digital preset and tuning ATU"...) with ZERO real actions. Validates clean because it does nothing. |
+| qwen/qwen3.5-122b-a10b | **PASS** | Round 1 harness-terminated at turn 6 on a config_get_rig probe. Re-run: complete 5-action def (preset→ATU→compose W7EOC→find→connect→aprs), 14 turns, 0 denials. |
+| glm/glm-5.2 | **PASS** | Round 1 void (terminated turn 2 on rig_status). Re-run: probed, got the redirect, CONTINUED to a full correct def (30 turns). |
+| openai/gpt-5.5 | **PASS** | Clean first pass; never probed the rig. All 5 actions, success-gated APRS. |
+| anthropic/claude-sonnet-5 | **cost-cancelled (capable)** | Round 1 terminated; re-run recovered from the denial (fix validated) but hit the $2/cell ceiling at $3.97 during a 2M-token docs-search spree. Demonstrably capable (passed S1/S2); NOT re-run at a raised ceiling - it is the frontier CONTROL, not a fine-tune target, so the marginal ~$5 confirmation is not worth it. |
 
-**Attribution: MODEL-FAMILY-TREND (composition-depth), NOT tuxlink-design-defect.**
-Two failures, two different mechanisms (sonnet step-drop vs qwen narration);
-gpt AND glm handled the surface as-is. Critically NOT a frontier-vs-local
-split - glm (local target) PASSED while sonnet (frontier) FAILED - so the
-divergence is idiosyncratic to composition depth, not a capability tier. No
-Tuxlink code fix for the failures (no single missing affordance explains
-both). The one real code fix S4 produced was the HARNESS one (zvy6q): the
-allowlist denial was terminal, voiding glm's round-1 cell and biasing the
-battery against exploratory agent behavior. Fixed + validated inline this
-same stage.
+**Corrected attribution: the S4 "failures" were a MEASUREMENT ARTIFACT
+(harness terminal-denial), not composition-depth degradation.** Both local
+targets (qwen, glm) author the deepest composition correctly once not killed.
+The one real code fix was the harness one (zvy6q, PR #1237): allowlist denial
+made non-terminal. Its validation is this whole corrected stage - every
+terminated cell recovered to PASS on re-run.
 
-**Fine-tune catalog (tuxlink-77620):** qwen mode-1 RECURRED at S4 (strong -
-it is the deepest-composition, most-dangerous mode). glm competent at the
-same task = glm-5.2 is plausibly the stronger local target, or qwen needs
-mode-1-specific training. Modes 1 + 3 remain the live targets; mode 2
-(product-absorbed via ARM_FALLTHROUGH_LEAK) and the S2 data confirm the
-belt/suspenders + validator-teaching approach is closing the ADDRESSABLE
-modes, leaving the intent-level ones (narrate-instead-of-act) for fine-tuning.
+**S3 (catalog round-trip: connect → compose_catalog_request → Delay 5m →
+reconnect the winner → APRS notify - the most intricate CONTROL FLOW).**
+| model | verdict | notes |
+|---|---|---|
+| qwen/qwen3.5-122b-a10b | **PASS (clean, best)** | Full structure incl. the Delay control + two connects + catalog request + aprs, in just 7 turns, cheapest of the roster. The intricate-control-flow task and qwen nailed it. |
+| openai/gpt-5.5 | **cost-cancelled, substantially complete** | Full def (delay + 2 connects + catalog + aprs) but cancelled at the $2 ceiling (turn 19). |
+| anthropic/claude-sonnet-5 | **cost-cancelled, substantially complete** | Full-looking def, cancelled at $2 ceiling (turn 9). |
+| z-ai/glm-5.2 | **FAIL (real)** | invalid_action: emitted routines_save with `def` as a STRINGIFIED json string (sq72z string-coercion class) → COR-3 rejected → terminal. glm authored proper OBJECT defs in S1/S2, so this is stochastic/complexity-triggered, not a flat inability. Filed for absorption-gap investigation (does the battery invoker path run parse_if_string on the whole `def`, or does COR-3 reject the string before absorption?). |
+
+**Two harness/parameter findings this stage (filed, not all fixed):**
+1. **$2/cell cost ceiling too low for the frontier models on deep tasks** -
+   cancels gpt+sonnet mid/late-authoring on S3/S4. Does NOT affect the
+   LOCAL-TARGET signal (qwen/glm are cheap and complete within ceiling), so
+   for the fine-tune assessment it is cosmetic; for a clean frontier-control
+   comparison it needs raising. Filed.
+2. **glm def-as-string (sq72z resurface on routines_save)** - filed for
+   absorption-path investigation.
+
+**Fine-tune catalog (tuxlink-77620) - MAJOR CORRECTION:** mode-1 "silent
+scope-narrowing" is now LARGELY A MEASUREMENT ARTIFACT. Its two supposed
+instances were (a) S1 pre-6epl8 (branch untaught - a PRODUCT gap, since
+fixed; qwen passed post-teaching) and (b) S4 "narration" (harness-terminated,
+not narration). Post-correction, qwen PASSES every stage cleanly run: S1, S2,
+S3 (best+cheapest), S4. The operator's push for strict visibility is
+vindicated - remote opacity + one harness bug produced a wholly wrong stage
+verdict. Live fine-tune signal is now THIN: qwen is more capable across the
+ladder than the confounded data implied. Remaining watch item is P3 (the
+final rung) and any genuine failure that survives the harness-fixed re-runs.
 
 ## 2026-07-22 — Stage S1 COMPLETE (4/4): qwen re-run vs ARM_FALLTHROUGH_LEAK
 
