@@ -138,8 +138,31 @@ describe('<ElmerPane> -- send renders a user bubble (AC-11)', () => {
     expect(userBubble).toBeTruthy();
     expect(userBubble.textContent).toContain('What is the weather?');
 
-    // elmer_send must have been invoked.
-    expect(mockInvoke).toHaveBeenCalledWith('elmer_send', { msg: 'What is the weather?' });
+    // elmer_send must have been invoked. authoring defaults false (Build
+    // Carefully off) — the toggle was not touched (tuxlink-t3jci P1).
+    expect(mockInvoke).toHaveBeenCalledWith('elmer_send', {
+      msg: 'What is the weather?',
+      authoring: false,
+    });
+  });
+
+  it('Build Carefully toggle: defaults off, and sends authoring:true once enabled (tuxlink-t3jci P1)', async () => {
+    render(<ElmerPane />);
+
+    // Default off.
+    const toggle = screen.getByRole('switch', { name: /build carefully/i });
+    expect((toggle as HTMLInputElement).checked).toBe(false);
+
+    const input = screen.getByTestId('elmer-input');
+    fireEvent.change(input, { target: { value: 'build a two-band fallback routine' } });
+    fireEvent.click(toggle);
+    expect((toggle as HTMLInputElement).checked).toBe(true);
+
+    fireEvent.click(screen.getByTestId('elmer-send'));
+    expect(mockInvoke).toHaveBeenCalledWith('elmer_send', {
+      msg: 'build a two-band fallback routine',
+      authoring: true,
+    });
   });
 
   it('a EV_TURN assistant event renders an assistant bubble', async () => {

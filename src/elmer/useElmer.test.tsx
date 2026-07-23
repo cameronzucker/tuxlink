@@ -398,14 +398,14 @@ describe('useElmer continuity seed (bd tuxlink-mfssz)', () => {
     expect(result.current.phase).toBe('running');
     // Single-flight guard seeded: the in-flight run started in the ORIGIN
     // window; a send here must be a no-op.
-    act(() => result.current.send('double'));
-    expect(invoke).not.toHaveBeenCalledWith('elmer_send', { msg: 'double' });
+    act(() => result.current.send('double', false));
+    expect(invoke).not.toHaveBeenCalledWith('elmer_send', { msg: 'double', authoring: false });
 
     // The broadcast EV_OUTCOME releases the guard exactly as a local run's would.
     await dispatch<ElmerOutcomePayload>(EV_OUTCOME, { kind: 'outcome', outcomeKind: 'done', detail: '' });
     expect(result.current.phase).toBe('done');
-    act(() => result.current.send('now works'));
-    expect(invoke).toHaveBeenCalledWith('elmer_send', { msg: 'now works' });
+    act(() => result.current.send('now works', false));
+    expect(invoke).toHaveBeenCalledWith('elmer_send', { msg: 'now works', authoring: false });
   });
 
   it('adrev 2026-07-20 P1: a seeded-true guard reconciles via elmer_run_active — a run that ended in the flush gap releases Send without any EV_OUTCOME', async () => {
@@ -420,8 +420,8 @@ describe('useElmer continuity seed (bd tuxlink-mfssz)', () => {
     await resolveAllListens();
 
     await waitFor(() => expect(result.current.phase).toBe('idle'));
-    act(() => result.current.send('recovered'));
-    expect(invoke).toHaveBeenCalledWith('elmer_send', { msg: 'recovered' });
+    act(() => result.current.send('recovered', false));
+    expect(invoke).toHaveBeenCalledWith('elmer_send', { msg: 'recovered', authoring: false });
   });
 
   it('adopts the seeded context-meter snapshot', async () => {

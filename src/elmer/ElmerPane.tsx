@@ -1036,6 +1036,11 @@ export const ElmerPane = memo(function ElmerPane({
     onConversationChangeRef.current?.({ items, running: phase === 'running', context });
   }, [items, phase, context]);
   const [input, setInput] = useState('');
+  // "Build Carefully" authoring mode (tuxlink-t3jci P1): per-turn toggle that
+  // appends the routine invariant + authoring skill to this turn's system
+  // prompt. Default off — the user invokes it for difficult routine-building
+  // requests (no model router decides for them).
+  const [authoring, setAuthoring] = useState(false);
   // T10: When the operator clicks "Switch provider" from a rate-limit callout,
   // show the tile picker with a paygo pre-selection. Null = normal message list.
   const [switchProviderFocusTier, setSwitchProviderFocusTier] = useState<import('./elmerModelConfig').ProviderTier | null>(null);
@@ -1151,7 +1156,7 @@ export const ElmerPane = memo(function ElmerPane({
     const msg = input.trim();
     if (!msg || phase === 'running') return;
     setInput('');
-    send(msg);
+    send(msg, authoring);
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1420,6 +1425,18 @@ export const ElmerPane = memo(function ElmerPane({
           aria-label="Message to Elmer"
         />
         <div className="elmer-input-actions">
+          <label className="elmer-authoring-toggle" title="Follow the routine-authoring procedure carefully — for difficult routine-building requests.">
+            <input
+              type="checkbox"
+              role="switch"
+              className="elmer-authoring-switch"
+              data-testid="elmer-authoring"
+              checked={authoring}
+              onChange={(e) => setAuthoring(e.target.checked)}
+              disabled={isRunning || notOnboarded}
+            />
+            <span className="elmer-authoring-label">Build Carefully</span>
+          </label>
           <button
             type="button"
             className="elmer-send-button"
