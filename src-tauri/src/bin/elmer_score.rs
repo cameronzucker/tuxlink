@@ -765,8 +765,14 @@ fn real_main() -> Result<(), String> {
     // Rebuilt (not appended) so re-runs and --redo never duplicate lines and
     // skipped-but-already-scored cells still appear.
     let rollup_path = cli.root.join("scores.jsonl");
+    // Scan EVERY bundle under root, NOT the --only-filtered `bundles`: the roll-up
+    // is a global aggregate, so a targeted re-score (`--only X --redo`) must never
+    // shrink it to just the re-scored cell(s). Bundles without a score.json yet are
+    // simply skipped by the read below.
+    let mut all_bundles = Vec::new();
+    collect_bundles(&cli.root, &mut all_bundles);
     let mut rollup = String::new();
-    for bundle in &bundles {
+    for bundle in &all_bundles {
         let score_path = bundle.join("score.json");
         if let Ok(v) = read_json(&score_path) {
             match serde_json::to_string(&v) {
