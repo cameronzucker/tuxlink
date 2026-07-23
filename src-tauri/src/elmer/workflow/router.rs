@@ -81,15 +81,15 @@ pub async fn select_depth(intent_text: &str, model: &dyn PhaseModel) -> Depth {
 /// `select_depth` alone has nowhere to hand that number back — it returns
 /// only a [`Depth`]. The alternative considered was having the engine
 /// rebuild the router prompt itself via `super::phases::build_prompt(PhaseName::Router,
-/// ..)` and call [`parse_depth`] on the result; that path was rejected
-/// because `phases::declared_inputs(PhaseName::Router)` is empty (no prior
-/// artifact exists yet when Router runs), so `build_prompt` would render
-/// only the phase's static instruction text and silently drop
-/// `intent_text` — the one piece of information the router actually needs
-/// to classify. This function keeps [`classification_prompt`]'s
-/// intent-text-bearing prompt (the correct behavior) and simply reports the
-/// turn's token cost alongside it, so the engine can build its Router
-/// `PhaseRecord` without rebuilding the classification prompt itself.
+/// ..)` and call [`parse_depth`] on the result; that path was rejected for
+/// two reasons. First, `build_prompt` returns only the rendered prompt, with
+/// nowhere to hand back the router turn's `prompt_tokens` the `PhaseRecord`
+/// needs — this variant reports the token cost alongside the depth. Second,
+/// the router classifies from its own [`classification_prompt`] wording, not
+/// the generic per-phase instruction `build_prompt` leads with. (Note:
+/// `build_prompt` now renders `intent_text` on every phase — the F1 fix — so
+/// routing the router through it would no longer DROP the operator's ask; the
+/// two reasons above are why the router keeps its own path regardless.)
 pub async fn select_depth_with_tokens(intent_text: &str, model: &dyn PhaseModel) -> (Depth, u64) {
     let prompt = classification_prompt(intent_text);
     let turn = model.run_phase(prompt, &[]).await;

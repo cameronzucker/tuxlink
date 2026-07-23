@@ -347,6 +347,12 @@ pub async fn run(
 fn provider_error_outcome(err: ProviderError) -> RunOutcome {
     match err {
         ProviderError::RateLimited(msg) => RunOutcome::RateLimited(msg),
+        // A prompt that overflows the model context window is a BOUNDED condition,
+        // not a transport failure: surface it as NeedsOperator (like the turn/time
+        // cap) so the operator can shorten the conversation or switch to a
+        // larger-context model, instead of the opaque "error" outcome that an
+        // upstream HTTP 400 would otherwise produce (F2).
+        ProviderError::ContextWindowExceeded(msg) => RunOutcome::NeedsOperator(msg),
         // Transport / non-2xx / unparseable are genuine FAILURES the operator must be
         // able to capture verbatim — surface them as ProviderError (persisted as the
         // "error" outcome), NOT the soft NeedsOperator gate (tuxlink-a1xwx).
@@ -421,6 +427,30 @@ mod provider_error_outcome_tests {
             matches!(outcome, RunOutcome::ProviderError(_)),
             "Transport must map to ProviderError, got: {outcome:?}"
         );
+    }
+
+    /// `ProviderError::ContextWindowExceeded` maps to `RunOutcome::NeedsOperator`
+    /// — a BOUNDED, clearly-labeled outcome (like the turn/time cap), NOT the
+    /// opaque `ProviderError` "error" outcome. This is the F2 fix: a prompt that
+    /// overflows the model context window must not surface as a raw provider
+    /// error, and the detail must reach the operator so they can act.
+    #[test]
+    fn context_window_exceeded_maps_to_needs_operator() {
+        let err = ProviderError::ContextWindowExceeded(
+            "conversation is too long for this model: the estimated prompt (~262145 tokens) \
+             leaves no room for a response below the model's 262144-token context window."
+                .to_string(),
+        );
+        let outcome = provider_error_outcome(err);
+        match &outcome {
+            RunOutcome::NeedsOperator(msg) => {
+                assert!(
+                    msg.contains("too long"),
+                    "detail must carry the actionable reason; got: {msg:?}"
+                );
+            }
+            other => panic!("expected RunOutcome::NeedsOperator, got {other:?}"),
+        }
     }
 
     /// `ProviderError::Unparseable` maps to `RunOutcome::ProviderError`.

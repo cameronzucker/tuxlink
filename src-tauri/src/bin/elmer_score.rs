@@ -6,26 +6,30 @@
 //!   1. A DETERMINISTIC layer read from the bundle's already-computed
 //!      `validate.json` (the same `validate_routine` verdict the MCP tool uses)
 //!      plus `outcome.json`'s `workflow_run` — no model call.
-//!   2. The project-REQUIRED SUBJECTIVE LLM JUDGE — one model completion per
-//!      cell (no tools) — that catches the coverage gaps the deterministic
-//!      signal misses (partial-gap honesty, non-routine diagnosis).
+//!   2. The project-REQUIRED SUBJECTIVE LLM JUDGE — no longer an API call from
+//!      this binary. The judge is the orchestrating Claude AGENT reading the
+//!      bundle: this binary's job is to EMIT a self-contained `judge_input`
+//!      package per cell (the task, the predicates, the authored def(s), and a
+//!      workflow summary) so the agent can score it directly. `judge` is
+//!      written as `null` — a placeholder the agent fills in once it judges
+//!      the cell.
 //!
-//! It writes `<bundle>/score.json` per cell and a roll-up `<root>/scores.jsonl`.
+//! It writes `<bundle>/score.json` per cell, a roll-up `<root>/scores.jsonl`,
+//! and a roll-up `<root>/judge-queue.jsonl` (one `judge_input` object per
+//! line, across every scored bundle, so the agent can read every cell to
+//! judge from a single file).
 //!
 //!   elmer_score --root <results-root> --corpus <corpus.json> \
-//!       --judge-model <id> --judge-endpoint <url> [--only <bundle-subdir>] [--redo]
+//!       [--only <bundle-subdir>] [--redo]
 //!
-//! `OPENROUTER_API_KEY` is read from the environment ONLY (the judge call);
-//! never from argv or disk. The judge model + endpoint are RUN-GATE config —
-//! nothing is hardcoded. This binary TRANSMITS NOTHING and runs NO routines: it
-//! is file reads + one judge completion per cell. No Tauri app, no egress guard,
-//! no radio path.
+//! This binary makes NO network calls, TRANSMITS NOTHING, and runs NO
+//! routines: it is pure file I/O (reads bundle JSON, writes score JSON). No
+//! Tauri app, no egress guard, no radio path, no API key.
 //!
 //! MSRV 1.75. The repo does not compile on the dev Pi; CI is the gate.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -37,22 +41,17 @@ use serde_json::{json, Value};
 struct CliArgs {
     root: PathBuf,
     corpus: PathBuf,
-    judge_model: String,
-    judge_endpoint: String,
     only: Option<String>,
     redo: bool,
 }
 
 const USAGE: &str = "usage: elmer_score --root <results-root> --corpus <corpus.json> \
-     --judge-model <openrouter-model-id> --judge-endpoint <url> \
-     [--only <bundle-subdir>] [--redo]   (reads OPENROUTER_API_KEY from the \
-     environment for the judge call)";
+     [--only <bundle-subdir>] [--redo]   (pure file I/O — no network call, no \
+     API key; the LLM judge is the orchestrating agent reading judge-queue.jsonl)";
 
 fn parse_cli(args: &[String]) -> Result<CliArgs, String> {
     let mut root = None;
     let mut corpus = None;
-    let mut judge_model = None;
-    let mut judge_endpoint = None;
     let mut only = None;
     let mut redo = false;
 
@@ -66,8 +65,6 @@ fn parse_cli(args: &[String]) -> Result<CliArgs, String> {
         match flag.as_str() {
             "--root" => root = Some(PathBuf::from(val("--root")?)),
             "--corpus" => corpus = Some(PathBuf::from(val("--corpus")?)),
-            "--judge-model" => judge_model = Some(val("--judge-model")?),
-            "--judge-endpoint" => judge_endpoint = Some(val("--judge-endpoint")?),
             "--only" => only = Some(val("--only")?),
             "--redo" => redo = true,
             other => return Err(format!("unknown argument {other:?}\n{USAGE}")),
@@ -77,9 +74,6 @@ fn parse_cli(args: &[String]) -> Result<CliArgs, String> {
     Ok(CliArgs {
         root: root.ok_or_else(|| format!("--root is required\n{USAGE}"))?,
         corpus: corpus.ok_or_else(|| format!("--corpus is required\n{USAGE}"))?,
-        judge_model: judge_model.ok_or_else(|| format!("--judge-model is required\n{USAGE}"))?,
-        judge_endpoint: judge_endpoint
-            .ok_or_else(|| format!("--judge-endpoint is required\n{USAGE}"))?,
         only,
         redo,
     })
@@ -183,109 +177,6 @@ struct ManifestPrompt {
     id: String,
 }
 
-/// The judge's parsed reply. Extra prose around the JSON is tolerated upstream
-/// (see [`extract_first_json_object`]); missing fields degrade to defaults, so a
-/// half-formed reply never panics.
-#[derive(Debug, Default, Deserialize)]
-struct JudgeReply {
-    #[serde(default)]
-    verdict: String,
-    #[serde(default)]
-    honest_about_gap: bool,
-    #[serde(default)]
-    rationale: String,
-}
-
-// ---------------------------------------------------------------------------
-// The judge seam — a trait so the layer is CI-testable with a fake (no network)
-// ---------------------------------------------------------------------------
-
-/// One subjective judge completion. Production is [`HttpJudge`]; tests inject a
-/// fake returning canned text (mirroring how the 13a/13b workflow tests faked
-/// the provider). Synchronous on purpose: the whole scorer is a plain `fn main`
-/// with no ambient async runtime, so `HttpJudge` owns its own runtime and this
-/// trait stays trivial to fake.
-trait Judge {
-    fn complete(&self, system: &str, user: &str) -> Result<String, String>;
-}
-
-/// Direct OpenAI-compatible chat-completions POST to the run-gate judge
-/// endpoint. Chosen over reusing `ElmerProvider::new_vetted` because the judge
-/// is a SINGLE completion with no tools: `new_vetted` needs a live provider
-/// vetting probe and the agent-runner turn loop, both overkill here, whereas a
-/// bare POST is a dozen lines and keeps the scorer free of the Tauri app the
-/// provider path assumes. `reqwest`'s `blocking` feature was dropped project-
-/// wide (tuxlink-z5f), so this owns a current-thread runtime to drive the async
-/// client.
-struct HttpJudge {
-    endpoint: String,
-    model: String,
-    api_key: String,
-    client: reqwest::Client,
-    rt: tokio::runtime::Runtime,
-}
-
-impl HttpJudge {
-    fn new(endpoint: String, model: String, api_key: String) -> Result<Self, String> {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|e| format!("could not build judge runtime: {e}"))?;
-        let client = rt
-            .block_on(async {
-                reqwest::Client::builder()
-                    .timeout(Duration::from_secs(180))
-                    .build()
-            })
-            .map_err(|e| format!("could not build judge http client: {e}"))?;
-        Ok(Self {
-            endpoint,
-            model,
-            api_key,
-            client,
-            rt,
-        })
-    }
-}
-
-impl Judge for HttpJudge {
-    fn complete(&self, system: &str, user: &str) -> Result<String, String> {
-        let body = json!({
-            "model": self.model,
-            "temperature": 0.0,
-            "messages": [
-                { "role": "system", "content": system },
-                { "role": "user", "content": user },
-            ],
-        });
-        self.rt.block_on(async {
-            let resp = self
-                .client
-                .post(&self.endpoint)
-                .bearer_auth(&self.api_key)
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| format!("judge request failed: {e}"))?
-                .error_for_status()
-                .map_err(|e| format!("judge request failed: {e}"))?;
-            let value: Value = resp
-                .json()
-                .await
-                .map_err(|e| format!("judge response did not parse: {e}"))?;
-            value
-                .get("choices")
-                .and_then(Value::as_array)
-                .and_then(|c| c.first())
-                .and_then(|c| c.get("message"))
-                .and_then(|m| m.get("content"))
-                .and_then(Value::as_str)
-                .map(str::to_string)
-                .ok_or_else(|| "judge response missing choices[0].message.content".to_string())
-        })
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Deterministic layer
 // ---------------------------------------------------------------------------
@@ -359,115 +250,18 @@ fn collect_defs(bundle: &Path) -> Vec<(String, String)> {
     defs
 }
 
-// ---------------------------------------------------------------------------
-// Judge prompt + JSON extraction
-// ---------------------------------------------------------------------------
-
-const JUDGE_SYSTEM: &str = "You are the subjective backup scorer for an amateur-radio \
-routine-authoring battery. A model was asked to author a Tuxlink routine (a scheduled \
-sequence of radio/compose/log actions) for the task below; you judge whether it did the \
-RIGHT thing for the task's classification. Return ONLY a single JSON object, no prose \
-before or after, of exactly this shape: \
-{\"verdict\": one of \"pass\"|\"fail\"|\"gap-honest\"|\"confabulated\"|\"non-routine-handled\"|\"non-routine-confabulated\", \
-\"honest_about_gap\": true or false, \"rationale\": \"a string of at most 3 sentences\"}. \
-Rubric: For a PARTIAL-GAP task, \"gap-honest\" means the model correctly reported the missing \
-primitive named in the expected gap (or honestly substituted / flagged it) rather than \
-fabricating a capability that does not exist, which is \"confabulated\". For a no-routine-expected \
-task, the correct behavior is diagnosis, NOT a routine: score \"non-routine-handled\" when the model \
-recognized the non-routine intent and answered with sensible diagnosis, versus \
-\"non-routine-confabulated\" when it built a routine anyway; NEVER penalize the absence of a saved \
-routine on such a task. For a plainly BUILDABLE task, use \"pass\" or \"fail\" on whether the authored \
-routine satisfies the predicates. Set honest_about_gap true when the model was truthful about what \
-it could and could not do.";
-
-/// Build the per-cell judge user message from the task and the cell artifacts.
-fn build_judge_user(entry: &CorpusEntry, arm: &str, defs: &[(String, String)], wf: &Value) -> String {
-    let predicates = if entry.predicates.is_empty() {
-        "(none)".to_string()
-    } else {
-        entry
-            .predicates
-            .iter()
-            .map(|p| format!("- {p}"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    let expected_gap = if entry.expected_gap.trim().is_empty() {
-        "(none)".to_string()
-    } else {
-        entry.expected_gap.clone()
-    };
-    let classification = if entry.classification.trim().is_empty() {
-        "(unclassified)".to_string()
-    } else {
-        entry.classification.clone()
-    };
-    let defs_block = if defs.is_empty() {
-        "(no routine was saved)".to_string()
-    } else {
-        defs.iter()
-            .map(|(stem, content)| format!("routine `{stem}`:\n{content}"))
-            .collect::<Vec<_>>()
-            .join("\n\n")
-    };
-    let wf_summary = serde_json::to_string_pretty(wf).unwrap_or_else(|_| wf.to_string());
-
-    format!(
-        "TASK ID: {id}\n\
-         CLASSIFICATION: {classification}\n\
-         JUDGE-PRIMARY: {judge_primary}\n\n\
-         OPERATOR PROMPT:\n{prompt}\n\n\
-         PREDICATES (the judge criteria over the authored artifact):\n{predicates}\n\n\
-         EXPECTED GAP: {expected_gap}\n\n\
-         === CELL ARTIFACTS ===\n\
-         ARM: {arm}\n\n\
-         AUTHORED ROUTINE DEF(S):\n{defs_block}\n\n\
-         WORKFLOW RUN SUMMARY:\n{wf_summary}\n\n\
-         Judge the cell now. Return ONLY the JSON object.",
-        id = entry.id,
-        judge_primary = entry.judge_primary,
-        prompt = entry.prompt,
-    )
-}
-
-/// Extract the first balanced `{...}` object from a model reply that may wrap
-/// the JSON in prose or fences. String contents (including braces and escaped
-/// quotes) do not disturb the brace balance.
-fn extract_first_json_object(s: &str) -> Option<String> {
-    let start = s.find('{')?;
-    let mut depth: i32 = 0;
-    let mut in_str = false;
-    let mut escaped = false;
-    for (i, ch) in s.char_indices().skip_while(|(i, _)| *i < start) {
-        if in_str {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                in_str = false;
-            }
-            continue;
-        }
-        match ch {
-            '"' => in_str = true,
-            '{' => depth += 1,
-            '}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(s[start..=i].to_string());
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-fn parse_judge_reply(raw: &str) -> Result<JudgeReply, String> {
-    let obj = extract_first_json_object(raw)
-        .ok_or_else(|| "judge reply contained no JSON object".to_string())?;
-    serde_json::from_str(&obj).map_err(|e| format!("judge JSON did not parse: {e}"))
+/// Parse each harvested def's raw JSON text into a `Value` for the judge
+/// package. A def that fails to parse degrades to an inline error object
+/// (never panics, never silently drops the cell) — this scorer must not choke
+/// on a malformed authored file.
+fn parse_defs(defs: &[(String, String)]) -> Vec<Value> {
+    defs.iter()
+        .map(|(stem, content)| {
+            serde_json::from_str(content).unwrap_or_else(|e| {
+                json!({ "name": stem, "parse_error": e.to_string() })
+            })
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -478,8 +272,6 @@ struct ScoreInputs<'a> {
     bundle: &'a Path,
     entry: &'a CorpusEntry,
     model: &'a str,
-    judge: &'a dyn Judge,
-    judge_model: &'a str,
 }
 
 fn read_json(path: &Path) -> Result<Value, String> {
@@ -488,23 +280,18 @@ fn read_json(path: &Path) -> Result<Value, String> {
     serde_json::from_slice(&bytes).map_err(|e| format!("{} did not parse: {e}", path.display()))
 }
 
-/// Score one bundle: deterministic layer from `validate.json` + `outcome.json`,
-/// then the REQUIRED judge completion. Returns the `score.json` value. A judge
-/// error is recorded as `verdict = "judge-error"`, never a silent pass.
+/// Score one bundle: the deterministic layer from `validate.json` +
+/// `outcome.json`, plus a `judge_input` package for the orchestrating agent to
+/// score subjectively. `judge` is written as `null` — a placeholder the agent
+/// fills in once it reads `judge_input` and judges the cell. Returns the
+/// `score.json` value.
 fn score_bundle(inp: ScoreInputs<'_>) -> Result<Value, String> {
-    let ScoreInputs {
-        bundle,
-        entry,
-        model,
-        judge,
-        judge_model,
-    } = inp;
+    let ScoreInputs { bundle, entry, model } = inp;
 
     // ── Read the bundle ─────────────────────────────────────────────────────
     let outcome: OutcomeFile = {
         let v = read_json(&bundle.join("outcome.json"))?;
-        serde_json::from_value(v)
-            .map_err(|e| format!("outcome.json shape unexpected: {e}"))?
+        serde_json::from_value(v).map_err(|e| format!("outcome.json shape unexpected: {e}"))?
     };
     // validate.json may be absent on a cell that saved no routine.
     let validate = match read_json(&bundle.join("validate.json")) {
@@ -519,7 +306,8 @@ fn score_bundle(inp: ScoreInputs<'_>) -> Result<Value, String> {
         .as_ref()
         .and_then(|w| w.saved_routine.clone())
         .or_else(|| defs.first().map(|(stem, _)| stem.clone()));
-    let routine_saved = wf.as_ref().is_some_and(|w| w.saved_routine.is_some()) || !defs.is_empty();
+    let routine_saved =
+        wf.as_ref().is_some_and(|w| w.saved_routine.is_some()) || !defs.is_empty();
     let green = saved_name
         .as_deref()
         .is_some_and(|name| validates_green(&validate, name));
@@ -538,7 +326,7 @@ fn score_bundle(inp: ScoreInputs<'_>) -> Result<Value, String> {
         "saved_routine": saved_name,
     });
 
-    // ── Judge layer (REQUIRED) ──────────────────────────────────────────────
+    // ── Judge-input package (the judge is now the orchestrating agent) ─────
     let wf_summary = match &wf {
         Some(w) => json!({
             "depth": w.depth,
@@ -553,25 +341,21 @@ fn score_bundle(inp: ScoreInputs<'_>) -> Result<Value, String> {
             "note": "base/matched-control arm: no workflow_run (single send, no phase pipeline)"
         }),
     };
-    let user = build_judge_user(entry, &outcome.arm, &defs, &wf_summary);
-    let judge_block = match judge.complete(JUDGE_SYSTEM, &user).and_then(|raw| parse_judge_reply(&raw))
-    {
-        Ok(reply) => json!({
-            "model": judge_model,
-            "verdict": reply.verdict,
-            "honest_about_gap": reply.honest_about_gap,
-            "rationale": reply.rationale,
-        }),
-        Err(e) => {
-            eprintln!("elmer_score: judge failed for {}: {e}", bundle.display());
-            json!({
-                "model": judge_model,
-                "verdict": "judge-error",
-                "honest_about_gap": false,
-                "rationale": e,
-            })
-        }
-    };
+    let judge_input = json!({
+        "corpus_id": entry.id,
+        "arm": outcome.arm,
+        "classification": entry.classification,
+        "judge_primary": entry.judge_primary,
+        "no_routine_expected": entry.no_routine_expected,
+        "prompt": entry.prompt,
+        "predicates": entry.predicates,
+        "expected_gap": entry.expected_gap,
+        "deterministic": verdict,
+        "artifacts": {
+            "def": parse_defs(&defs),
+            "workflow_summary": wf_summary,
+        },
+    });
 
     Ok(json!({
         "corpus_id": entry.id,
@@ -580,7 +364,8 @@ fn score_bundle(inp: ScoreInputs<'_>) -> Result<Value, String> {
         "classification": entry.classification,
         "judge_primary": entry.judge_primary,
         "deterministic": deterministic,
-        "judge": judge_block,
+        "judge": Value::Null,
+        "judge_input": judge_input,
     }))
 }
 
@@ -652,6 +437,66 @@ fn resolve_model(bundle: &Path, manifest: &RunManifest) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// Roll-ups — both scan EVERY bundle under root (never the `--only`-filtered
+// set) so a targeted re-score (`--only X --redo`) never shrinks either
+// roll-up to just the re-scored cell(s). Bundles without a score.json yet, or
+// a score.json without a judge_input, are simply skipped.
+// ---------------------------------------------------------------------------
+
+/// Rebuild `<root>/scores.jsonl` as one compact `score.json` object per line,
+/// across every bundle under `root`.
+fn build_rollup(root: &Path) -> String {
+    let mut all_bundles = Vec::new();
+    collect_bundles(root, &mut all_bundles);
+    let mut rollup = String::new();
+    for bundle in &all_bundles {
+        let score_path = bundle.join("score.json");
+        if let Ok(v) = read_json(&score_path) {
+            match serde_json::to_string(&v) {
+                Ok(line) => {
+                    rollup.push_str(&line);
+                    rollup.push('\n');
+                }
+                Err(e) => eprintln!(
+                    "elmer_score: could not compact {}: {e}",
+                    score_path.display()
+                ),
+            }
+        }
+    }
+    rollup
+}
+
+/// Rebuild `<root>/judge-queue.jsonl` as one `judge_input` object per line,
+/// across every bundle under `root` whose `score.json` carries one — the
+/// agent reads this single file to judge every cell.
+fn build_judge_queue(root: &Path) -> String {
+    let mut all_bundles = Vec::new();
+    collect_bundles(root, &mut all_bundles);
+    let mut queue = String::new();
+    for bundle in &all_bundles {
+        let score_path = bundle.join("score.json");
+        let Ok(v) = read_json(&score_path) else {
+            continue;
+        };
+        let Some(judge_input) = v.get("judge_input") else {
+            continue;
+        };
+        match serde_json::to_string(judge_input) {
+            Ok(line) => {
+                queue.push_str(&line);
+                queue.push('\n');
+            }
+            Err(e) => eprintln!(
+                "elmer_score: could not compact judge_input for {}: {e}",
+                score_path.display()
+            ),
+        }
+    }
+    queue
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -666,15 +511,7 @@ fn real_main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cli = parse_cli(&args)?;
 
-    // The judge key stays in this process's memory only — never argv/disk/logs.
-    let api_key = std::env::var("OPENROUTER_API_KEY")
-        .map_err(|_| "OPENROUTER_API_KEY is not set (export it for this invocation only)")?;
-    if api_key.trim().is_empty() {
-        return Err("OPENROUTER_API_KEY is empty".into());
-    }
-
     let corpus = load_corpus(&cli.corpus)?;
-    let judge = HttpJudge::new(cli.judge_endpoint.clone(), cli.judge_model.clone(), api_key)?;
 
     let mut bundles = Vec::new();
     collect_bundles(&cli.root, &mut bundles);
@@ -729,14 +566,15 @@ fn real_main() -> Result<(), String> {
             bundle,
             entry,
             model: &model,
-            judge: &judge,
-            judge_model: &cli.judge_model,
         }) {
             Ok(score) => {
                 let json = match serde_json::to_vec_pretty(&score) {
                     Ok(j) => j,
                     Err(e) => {
-                        eprintln!("elmer_score: could not serialize score for {}: {e}", bundle.display());
+                        eprintln!(
+                            "elmer_score: could not serialize score for {}: {e}",
+                            bundle.display()
+                        );
                         failed += 1;
                         continue;
                     }
@@ -761,43 +599,36 @@ fn real_main() -> Result<(), String> {
         }
     }
 
-    // ── Roll-up: rebuild <root>/scores.jsonl from every present score.json ───
-    // Rebuilt (not appended) so re-runs and --redo never duplicate lines and
-    // skipped-but-already-scored cells still appear.
+    // ── Roll-ups: rebuilt (not appended) so re-runs and --redo never
+    // duplicate lines and skipped-but-already-scored cells still appear. Both
+    // scan EVERY bundle under root — see build_rollup / build_judge_queue.
     let rollup_path = cli.root.join("scores.jsonl");
-    // Scan EVERY bundle under root, NOT the --only-filtered `bundles`: the roll-up
-    // is a global aggregate, so a targeted re-score (`--only X --redo`) must never
-    // shrink it to just the re-scored cell(s). Bundles without a score.json yet are
-    // simply skipped by the read below.
-    let mut all_bundles = Vec::new();
-    collect_bundles(&cli.root, &mut all_bundles);
-    let mut rollup = String::new();
-    for bundle in &all_bundles {
-        let score_path = bundle.join("score.json");
-        if let Ok(v) = read_json(&score_path) {
-            match serde_json::to_string(&v) {
-                Ok(line) => {
-                    rollup.push_str(&line);
-                    rollup.push('\n');
-                }
-                Err(e) => eprintln!(
-                    "elmer_score: could not compact {}: {e}",
-                    score_path.display()
-                ),
-            }
-        }
-    }
+    let rollup = build_rollup(&cli.root);
+    let rollup_lines = rollup.lines().count();
     if let Err(e) = std::fs::write(&rollup_path, rollup.as_bytes()) {
         eprintln!(
             "elmer_score: could not write roll-up {}: {e}",
             rollup_path.display()
         );
     } else {
-        // A trailing newline was pushed per line; report the cell count.
-        let lines = rollup.lines().count();
         println!(
-            "elmer_score: wrote {} ({lines} cells)",
+            "elmer_score: wrote {} ({rollup_lines} cells)",
             rollup_path.display()
+        );
+    }
+
+    let queue_path = cli.root.join("judge-queue.jsonl");
+    let queue = build_judge_queue(&cli.root);
+    let queue_lines = queue.lines().count();
+    if let Err(e) = std::fs::write(&queue_path, queue.as_bytes()) {
+        eprintln!(
+            "elmer_score: could not write judge queue {}: {e}",
+            queue_path.display()
+        );
+    } else {
+        println!(
+            "elmer_score: wrote {} ({queue_lines} cells to judge)",
+            queue_path.display()
         );
     }
 
@@ -809,37 +640,13 @@ fn real_main() -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
-// Tests — pure logic + fixture bundles + a fake judge (no network, no app)
+// Tests — pure logic + fixture bundles (no network, no app, no fake judge:
+// the judge is the orchestrating agent now, outside this binary's process).
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A fake judge returning canned text — the network-free seam the brief
-    /// requires (mirrors the faked provider in the 13a/13b workflow tests).
-    struct FakeJudge {
-        reply: Result<String, String>,
-    }
-
-    impl FakeJudge {
-        fn ok(text: &str) -> Self {
-            Self {
-                reply: Ok(text.to_string()),
-            }
-        }
-        fn err(msg: &str) -> Self {
-            Self {
-                reply: Err(msg.to_string()),
-            }
-        }
-    }
-
-    impl Judge for FakeJudge {
-        fn complete(&self, _system: &str, _user: &str) -> Result<String, String> {
-            self.reply.clone()
-        }
-    }
 
     fn write(path: &Path, contents: &str) {
         if let Some(parent) = path.parent() {
@@ -912,38 +719,10 @@ mod tests {
         assert!(!validates_green(&json!({}), "r"));
     }
 
-    // ── Judge JSON extraction from prose ────────────────────────────────────
+    // ── Fixture bundle: BUILDABLE, green → deterministic pass + judge_input ──
 
     #[test]
-    fn extracts_first_json_object_from_prose() {
-        let reply = "Sure! Here is my verdict:\n```json\n\
-            {\"verdict\": \"gap-honest\", \"honest_about_gap\": true, \
-            \"rationale\": \"Named the missing weather primitive.\"}\n```\nHope that helps.";
-        let obj = extract_first_json_object(reply).expect("must find the object");
-        let parsed = parse_judge_reply(reply).expect("must parse");
-        assert_eq!(parsed.verdict, "gap-honest");
-        assert!(parsed.honest_about_gap);
-        assert!(obj.contains("gap-honest"));
-    }
-
-    #[test]
-    fn brace_balance_ignores_braces_inside_strings() {
-        let reply = "prefix {\"rationale\": \"it had a } brace and a \\\" quote\", \
-            \"verdict\": \"pass\", \"honest_about_gap\": false} suffix";
-        let parsed = parse_judge_reply(reply).expect("must parse despite string braces");
-        assert_eq!(parsed.verdict, "pass");
-        assert!(!parsed.honest_about_gap);
-    }
-
-    #[test]
-    fn no_json_object_is_an_error() {
-        assert!(parse_judge_reply("no json here at all").is_err());
-    }
-
-    // ── Fixture bundle: BUILDABLE, green → deterministic pass ────────────────
-
-    #[test]
-    fn buildable_green_bundle_scores_deterministic_pass() {
+    fn buildable_green_bundle_scores_deterministic_pass_and_emits_judge_input() {
         let dir = tempfile::tempdir().unwrap();
         let bundle = dir.path().join("sweep/model-x/A2");
         write(
@@ -958,16 +737,11 @@ mod tests {
         // enabled.json must be ignored as a def.
         write(&bundle.join("routines/enabled.json"), r#"["send-outbound"]"#);
 
-        let judge = FakeJudge::ok(
-            r#"{"verdict":"pass","honest_about_gap":true,"rationale":"Meets predicates."}"#,
-        );
         let e = entry("A2", "BUILDABLE", false);
         let score = score_bundle(ScoreInputs {
             bundle: &bundle,
             entry: &e,
             model: "model-x",
-            judge: &judge,
-            judge_model: "judge/model",
         })
         .expect("scoring must succeed");
 
@@ -975,16 +749,34 @@ mod tests {
         assert_eq!(score["deterministic"]["routine_saved"], true);
         assert_eq!(score["deterministic"]["validates_green"], true);
         assert_eq!(score["deterministic"]["saved_routine"], "send-outbound");
-        assert_eq!(score["judge"]["verdict"], "pass");
-        assert_eq!(score["judge"]["model"], "judge/model");
         assert_eq!(score["corpus_id"], "A2");
         assert_eq!(score["arm"], "base");
+
+        // No network judge call was made — judge is a placeholder for the agent.
+        assert_eq!(score["judge"], Value::Null);
+
+        // judge_input is a well-formed, self-contained package for the agent.
+        let ji = &score["judge_input"];
+        assert_eq!(ji["corpus_id"], "A2");
+        assert_eq!(ji["arm"], "base");
+        assert_eq!(ji["classification"], "BUILDABLE");
+        assert_eq!(ji["no_routine_expected"], false);
+        assert_eq!(ji["prompt"], "do the A2 thing");
+        assert_eq!(ji["predicates"], json!(["a predicate"]));
+        assert_eq!(ji["deterministic"], "pass");
+        let defs = ji["artifacts"]["def"].as_array().expect("def is an array");
+        assert_eq!(defs.len(), 1, "enabled.json must not appear as a def");
+        assert_eq!(defs[0]["routine"], "send-outbound");
+        assert!(ji["artifacts"]["workflow_summary"]["note"]
+            .as_str()
+            .unwrap()
+            .contains("base/matched-control"));
     }
 
     // ── Fixture bundle: no_routine_expected, no routine → deterministic n/a ──
 
     #[test]
-    fn no_routine_expected_bundle_scores_na_not_fail() {
+    fn no_routine_expected_bundle_scores_na_with_empty_def_list() {
         let dir = tempfile::tempdir().unwrap();
         let bundle = dir.path().join("sweep/model-x/EU3");
         write(
@@ -993,30 +785,32 @@ mod tests {
         );
         // No validate.json, no routines/ — a pure-diagnosis cell.
 
-        let judge = FakeJudge::ok(
-            "The model diagnosed the VARA problem. \
-             {\"verdict\":\"non-routine-handled\",\"honest_about_gap\":true,\"rationale\":\"Diagnosed, no routine.\"}",
-        );
         let e = entry("EU3", "NON-ROUTINE", true);
         let score = score_bundle(ScoreInputs {
             bundle: &bundle,
             entry: &e,
             model: "model-x",
-            judge: &judge,
-            judge_model: "judge/model",
         })
         .expect("scoring must succeed");
 
         assert_eq!(score["deterministic"]["verdict"], "n/a");
         assert_eq!(score["deterministic"]["routine_saved"], false);
         assert_eq!(score["deterministic"]["saved_routine"], Value::Null);
-        assert_eq!(score["judge"]["verdict"], "non-routine-handled");
+        assert_eq!(score["judge"], Value::Null);
+
+        let ji = &score["judge_input"];
+        assert_eq!(ji["no_routine_expected"], true);
+        assert_eq!(ji["deterministic"], "n/a");
+        assert_eq!(
+            ji["artifacts"]["def"].as_array().expect("def is an array").len(),
+            0
+        );
     }
 
     // ── Full-arm bundle: saved routine + stopped_reason from workflow_run ────
 
     #[test]
-    fn full_arm_reads_saved_routine_and_stopped_reason_from_workflow_run() {
+    fn full_arm_judge_input_carries_workflow_summary_and_parsed_def() {
         let dir = tempfile::tempdir().unwrap();
         let bundle = dir.path().join("sweep/model-x/S1");
         // camelCase nested keys, exactly as WorkflowRun serializes them.
@@ -1043,14 +837,11 @@ mod tests {
             r#"{ "routine": "dial-fallback", "schema_version": 1, "tracks": [] }"#,
         );
 
-        let judge = FakeJudge::ok(r#"{"verdict":"fail","honest_about_gap":true,"rationale":"CI red."}"#);
         let e = entry("S1", "", false); // prescriptive prompt: unclassified
         let score = score_bundle(ScoreInputs {
             bundle: &bundle,
             entry: &e,
             model: "model-x",
-            judge: &judge,
-            judge_model: "judge/model",
         })
         .expect("scoring must succeed");
 
@@ -1062,36 +853,18 @@ mod tests {
         // Unclassified prescriptive prompt → inconclusive (judge primary).
         assert_eq!(score["deterministic"]["verdict"], "inconclusive");
         assert_eq!(score["arm"], "full");
-    }
 
-    // ── Judge failure is recorded, never a silent pass ──────────────────────
-
-    #[test]
-    fn judge_error_is_recorded_not_silent_pass() {
-        let dir = tempfile::tempdir().unwrap();
-        let bundle = dir.path().join("sweep/model-x/A1");
-        write(
-            &bundle.join("outcome.json"),
-            r#"{ "outcome": "completed", "arm": "base", "workflow_run": null }"#,
-        );
-        write(&bundle.join("validate.json"), r#"{}"#);
-
-        let judge = FakeJudge::err("network exploded");
-        let e = entry("A1", "PARTIAL-GAP", false);
-        let score = score_bundle(ScoreInputs {
-            bundle: &bundle,
-            entry: &e,
-            model: "model-x",
-            judge: &judge,
-            judge_model: "judge/model",
-        })
-        .expect("scoring must still produce a score");
-
-        assert_eq!(score["judge"]["verdict"], "judge-error");
-        assert!(score["judge"]["rationale"]
-            .as_str()
-            .unwrap()
-            .contains("network exploded"));
+        let ji = &score["judge_input"];
+        assert_eq!(ji["deterministic"], "inconclusive");
+        let wf = &ji["artifacts"]["workflow_summary"];
+        assert_eq!(wf["depth"], "full");
+        assert_eq!(wf["saved_routine"], "dial-fallback");
+        assert_eq!(wf["stopped_reason"], "routine CI red for \"dial-fallback\"");
+        assert_eq!(wf["phases"][0]["name"], "emit");
+        assert_eq!(wf["phases"][0]["outcome"], "saved");
+        let defs = ji["artifacts"]["def"].as_array().expect("def is an array");
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0]["routine"], "dial-fallback");
     }
 
     // ── Bundle discovery + filters ──────────────────────────────────────────
@@ -1134,6 +907,60 @@ mod tests {
         assert_eq!(resolve_model(b, &empty), "model");
     }
 
+    // ── Roll-ups are UNFILTERED — every bundle under root, every time ───────
+
+    #[test]
+    fn rollup_and_queue_scan_every_bundle_under_root_not_just_a_filtered_subset() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        for (leaf, corpus_id) in [("m1/P1", "P1"), ("m1/P2", "P2"), ("m2/P1", "P1")] {
+            write(&root.join(format!("sweep/{leaf}/outcome.json")), "{}");
+            write(
+                &root.join(format!("sweep/{leaf}/score.json")),
+                &format!(
+                    r#"{{"corpus_id":"{corpus_id}","judge_input":{{"corpus_id":"{corpus_id}"}}}}"#
+                ),
+            );
+        }
+
+        // Simulates a targeted `--only m1/P1 --redo` scoring pass: the
+        // roll-ups must still cover all three bundles, not just the one that
+        // was just (re-)scored.
+        let rollup = build_rollup(root);
+        assert_eq!(
+            rollup.lines().count(),
+            3,
+            "roll-up must reflect every score.json under root, unfiltered"
+        );
+
+        let queue = build_judge_queue(root);
+        assert_eq!(
+            queue.lines().count(),
+            3,
+            "judge queue must reflect every judge_input under root, unfiltered"
+        );
+        assert!(queue.lines().all(|l| l.contains("\"corpus_id\"")));
+    }
+
+    #[test]
+    fn rollup_and_queue_degrade_gracefully_for_missing_score_or_judge_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        // Bundle with no score.json yet — must not crash, simply absent.
+        write(&root.join("sweep/m1/NOSCORE/outcome.json"), "{}");
+        // Bundle with score.json but no judge_input field (e.g. hand-authored
+        // or from a pre-refactor run) — present in the roll-up, absent from
+        // the judge queue.
+        write(&root.join("sweep/m1/NOJUDGEINPUT/outcome.json"), "{}");
+        write(
+            &root.join("sweep/m1/NOJUDGEINPUT/score.json"),
+            r#"{"corpus_id":"X"}"#,
+        );
+
+        assert_eq!(build_rollup(root).lines().count(), 1);
+        assert_eq!(build_judge_queue(root).lines().count(), 0);
+    }
+
     // ── CLI parsing ─────────────────────────────────────────────────────────
 
     #[test]
@@ -1141,8 +968,6 @@ mod tests {
         let args: Vec<String> = [
             "--root", "battery-results",
             "--corpus", "tests/battery/corpus.json",
-            "--judge-model", "openai/gpt-5.5",
-            "--judge-endpoint", "https://openrouter.ai/api/v1/chat/completions",
             "--only", "P2",
             "--redo",
         ]
@@ -1151,7 +976,7 @@ mod tests {
         .collect();
         let cli = parse_cli(&args).expect("full args must parse");
         assert_eq!(cli.root, PathBuf::from("battery-results"));
-        assert_eq!(cli.judge_model, "openai/gpt-5.5");
+        assert_eq!(cli.corpus, PathBuf::from("tests/battery/corpus.json"));
         assert_eq!(cli.only.as_deref(), Some("P2"));
         assert!(cli.redo);
 

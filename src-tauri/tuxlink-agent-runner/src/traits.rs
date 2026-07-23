@@ -70,6 +70,17 @@ pub enum ProviderError {
     /// is performed here.
     #[error("provider rate-limited (HTTP 429): {0}")]
     RateLimited(String),
+    /// The estimated prompt for this turn leaves no usable room for a response
+    /// below the model's context window — POSTing it would overflow the server
+    /// context and come back as an opaque upstream HTTP 400 ("requested 0 output
+    /// tokens …"). This is a BOUNDED condition, not a transport failure: the loop
+    /// maps it to [`crate::types::RunOutcome::NeedsOperator`] (like the turn/time
+    /// cap) so the operator can shorten the conversation or switch to a
+    /// larger-context model, NOT the generic
+    /// [`crate::types::RunOutcome::ProviderError`] "error" outcome. Carries an
+    /// operator-facing detail string (no secret content).
+    #[error("model context window exceeded: {0}")]
+    ContextWindowExceeded(String),
 }
 
 /// The tool side of the loop — the single canonical tool path (ARCH-1 / SEC-2).
