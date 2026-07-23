@@ -17,7 +17,7 @@ use tuxlink_mcp_core::ports::GatewayDto;
 use tuxlink_mcp_core::station_query::{SnapshotId, StationFilters};
 
 /// The curated population a base query produced, pinned for narrowing.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct StationSnapshot {
     pub id: SnapshotId,
     pub fetched_at_ms: u64,

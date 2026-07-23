@@ -421,6 +421,41 @@ pub enum FindStationsRequest {
     },
 }
 
+/// rmcp tool-input wrapper for [`FindStationsRequest`].
+///
+/// An internally-tagged enum's natural JSON Schema is a bare `oneOf` with **no**
+/// root `type`, but the MCP spec requires a tool's `inputSchema` to have root
+/// `type: "object"` — rmcp rejects the enum directly. This transparent wrapper
+/// deserializes straight to the enum while forcing `type: "object"` onto the
+/// advertised schema (every intent variant IS a JSON object, so the assertion is
+/// correct and merely more precise).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(transparent)]
+pub struct FindStationsParams(pub FindStationsRequest);
+
+impl JsonSchema for FindStationsParams {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "FindStationsRequest".into()
+    }
+
+    // Inline so the object-rooted schema is what the tool advertises at the root,
+    // not a `$ref` (which would again leave the root without a `type`).
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let inner = <FindStationsRequest as JsonSchema>::json_schema(generator);
+        let mut value = serde_json::Value::from(inner);
+        if let Some(map) = value.as_object_mut() {
+            map.entry("type".to_string())
+                .or_insert_with(|| serde_json::Value::String("object".to_string()));
+        }
+        schemars::Schema::try_from(value)
+            .expect("FindStationsRequest schema is a JSON object with type injected")
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -600,6 +635,29 @@ mod tests {
     fn unknown_intent_tag_errors() {
         let json = r#"{ "intent": "teleport" }"#;
         assert!(serde_json::from_str::<FindStationsRequest>(json).is_err());
+    }
+
+    #[test]
+    fn params_wrapper_schema_has_object_root_type() {
+        // MCP requires a tool inputSchema to have root `type: object`; the bare
+        // intent-tagged enum's `oneOf` lacks it (rmcp rejects it). The wrapper
+        // must inject it while staying a tagged union.
+        let schema = serde_json::Value::from(schemars::schema_for!(FindStationsParams));
+        assert_eq!(
+            schema["type"], "object",
+            "inputSchema root must be type object; got {schema}"
+        );
+        assert!(
+            schema["oneOf"].is_array(),
+            "still a tagged union of intents"
+        );
+    }
+
+    #[test]
+    fn params_wrapper_deserializes_transparently() {
+        let FindStationsParams(req) =
+            serde_json::from_str(r#"{ "intent": "explore" }"#).unwrap();
+        assert!(matches!(req, FindStationsRequest::Explore { .. }));
     }
 
     // ---- snapshot monotonicity (widening rejection) ------------------------

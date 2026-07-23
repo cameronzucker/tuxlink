@@ -52,7 +52,7 @@ use tuxlink_mcp_core::ports::{
     RigStatusDto, RoutineSummaryDto, RoutinesPort, RoutinesRunError, RunStateDto, RunStatusDto,
     RunningModemDto, SaveResultDto, SearchPort, SearchQueryDto, SearchResultsDto,
     SelectedConnectionDto, SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto,
-    StagedRecordDto, StationFilterDto, StationListDto, StationModeDto, StationPort, StatusPort,
+    StagedRecordDto, StationModeDto, StationPort, StatusPort,
     UiHintPort, VaraCheckpointDto, VaraConfigDto, VaraEngineDto, VaraInstallStatusDto,
     VaraInstallSummaryDto, VaraProbeDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
     WwvCaptureDto, WwvPort,
@@ -3033,115 +3033,191 @@ impl MonolithStationPort {
     }
 }
 
+/// True when a `find_stations` request rides an EXISTING snapshot (so the engine
+/// narrows the pinned population and the adapter skips the catalog fetch).
+fn request_rides_snapshot(req: &tuxlink_mcp_core::station_query::FindStationsRequest) -> bool {
+    use tuxlink_mcp_core::station_query::FindStationsRequest as R;
+    matches!(
+        req,
+        R::Explore {
+            snapshot_id: Some(_),
+            ..
+        } | R::Lookup {
+            snapshot_id: Some(_),
+            ..
+        }
+    )
+}
+
+/// The catalog-fetch inputs (transports, last-heard bound, FT-8 policy) implied
+/// by a request's filters. `lookup` carries no filters → all transports, no
+/// bound, no FT-8. Bands/bandwidths/distance/etc. are POST-filters the engine
+/// applies, not fetch parameters.
+fn fetch_inputs(
+    req: &tuxlink_mcp_core::station_query::FindStationsRequest,
+) -> (
+    Vec<StationModeDto>,
+    Option<u32>,
+    tuxlink_mcp_core::station_query::Ft8Policy,
+) {
+    use tuxlink_mcp_core::station_query::{FindStationsRequest as R, Ft8Policy};
+    let filters = match req {
+        R::Recommend { filters, .. }
+        | R::Explore { filters, .. }
+        | R::Aggregate { filters, .. }
+        | R::Export { filters, .. } => Some(filters),
+        R::Lookup { .. } => None,
+    };
+    match filters {
+        Some(f) => (f.modes.as_slice().to_vec(), f.history_hours, f.ft8_policy),
+        None => (Vec::new(), None, Ft8Policy::Ignore),
+    }
+}
+
+/// Writes a `find_stations` export to the app's `exports/` directory (a
+/// user-findable artifact OUTSIDE the transcript, never model-readable). CSV or
+/// JSON per the request.
+struct FileExportSink;
+
+impl crate::station_query::engine::ExportSink for FileExportSink {
+    fn write(
+        &self,
+        rows: &[crate::station_query::engine::ExportRow],
+        format: tuxlink_mcp_core::station_query::StationExportFormat,
+    ) -> Result<crate::station_query::engine::ExportArtifact, String> {
+        use tuxlink_mcp_core::station_query::StationExportFormat;
+        let dir = crate::config::config_path()
+            .parent()
+            .map(|p| p.join("exports"))
+            .ok_or_else(|| "no config directory to write the export into".to_string())?;
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0);
+        let (ext, body) = match format {
+            StationExportFormat::Json => (
+                "json",
+                serde_json::to_string_pretty(rows).map_err(|e| e.to_string())?,
+            ),
+            StationExportFormat::Csv => {
+                let mut s =
+                    String::from("callsign,grid,mode,frequency_khz,bandwidth_hz,distance_mi,bearing_deg\n");
+                for r in rows {
+                    let mode = serde_json::to_value(r.mode)
+                        .ok()
+                        .and_then(|v| v.as_str().map(str::to_string))
+                        .unwrap_or_default();
+                    let fmt_opt_f = |o: Option<f64>| o.map(|v| v.to_string()).unwrap_or_default();
+                    s.push_str(&format!(
+                        "{},{},{},{},{},{},{}\n",
+                        r.callsign,
+                        r.grid.as_deref().unwrap_or(""),
+                        mode,
+                        r.frequency_khz,
+                        r.bandwidth_hz.map(|b| b.to_string()).unwrap_or_default(),
+                        fmt_opt_f(r.distance_mi),
+                        fmt_opt_f(r.bearing_deg),
+                    ));
+                }
+                ("csv", s)
+            }
+        };
+        let filename = format!("find_stations-{ts}.{ext}");
+        let path = dir.join(&filename);
+        crate::routines::atomic_write(&path, body.as_bytes()).map_err(|e| e.to_string())?;
+        Ok(crate::station_query::engine::ExportArtifact {
+            artifact_id: filename,
+            destination: path.display().to_string(),
+        })
+    }
+}
+
 #[async_trait]
 impl StationPort for MonolithStationPort {
-    async fn find_stations(&self, filter: StationFilterDto) -> Result<StationListDto, PortError> {
-        // VALIDATE the optional history bound up front (cap 720 h): a bad bound is
-        // a malformed request, rejected before any fetch. (No armed-grant concept
-        // here — this is a read — so a validation miss is simply Internal.)
-        validate_history_hours(filter.history_hours)
-            .map_err(|e| PortError::Internal(e.to_string()))?;
+    async fn find_stations(
+        &self,
+        request: tuxlink_mcp_core::station_query::FindStationsRequest,
+    ) -> Result<tuxlink_mcp_core::station_query::FindStationsResponse, PortError> {
+        use crate::station_query::engine::{StationContext, StationQueryEngine};
+        use crate::station_query::snapshot::SnapshotStore;
+        use tuxlink_mcp_core::station_query::Ft8Policy;
 
-        // Map the agent-supplied modes onto the monolith ListingModes; an empty
-        // selector means "all transports", INCLUDING VARA FM (the tool doc
-        // advertises `vara-fm`), a superset of `ListingMode::ALL`.
-        let modes = expand_find_stations_modes(&filter.modes);
-
-        // Resolve the managed StationsCache (the same Arc the
-        // `catalog_fetch_stations` command's State extractor would yield) and call
-        // the command fn directly via that state. The command body routes through
-        // the polite cache (TTL + per-key coalescing + stale-on-error), so this is
-        // the identical code path the GUI finder uses.
-        let cache = self
-            .app
-            .state::<Arc<crate::catalog::stations_cache::StationsCache>>();
-        let channels_cache = self
-            .app
-            .state::<Arc<crate::catalog::channels_cache::ChannelsCache>>();
-        let listings = crate::catalog::commands::catalog_fetch_stations(
-            modes,
-            filter.history_hours,
-            cache,
-            channels_cache,
-        )
-        .await
-        .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
-
-        // Provenance: the cache stamps `fetched_at_ms` on every entry it stores or
-        // stale-returns (a fresh in-memory parse leaves it `None`). Surface the
-        // MOST-RECENT stamp across the fetched modes as the list-level
-        // `fetched_at_ms` — the agent reasons freshness directly from this stamp.
-        // No separate cache-provenance flag is exposed: the cache does not publish
-        // a per-call hit/miss signal at this boundary, so a `from_cache` bool here
-        // would be an inaccurate inference rather than a fact.
-        let fetched_at_ms = listings.iter().filter_map(|l| l.fetched_at_ms).max();
-
-        // Flatten every listing's gateways into curated, STRUCTURED-ONLY
-        // GatewayDtos via `curate_gateway` (PII + free-text dropped; callsign
-        // shape-validated → bogus listings dropped; grid Maidenhead-validated →
-        // invalid nulled; channel control-stripped + length-capped). The
-        // client-side BAND filter runs first: when `bands` is non-empty, keep only
-        // gateways with >=1 dial in a requested band.
-        // Resolve the operator's own grid ONCE (not per gateway) so each curated
-        // GatewayDto can carry distance/bearing from it.
+        let now_ms = now_unix_ms();
         let operator_grid = self.resolve_operator_grid();
 
-        // Curate (PII + free-text dropped; bogus callsigns dropped; grid
-        // validated) + client-side band filter + nearest-first distance sort,
-        // via the SHARED `curate_and_rank_gateways` — the SAME fn the routines
-        // `data.find_stations` action calls, so the two surfaces are curated
-        // byte-identically by construction.
-        let mut gateways =
-            curate_and_rank_gateways(&listings, &filter.bands, operator_grid.as_deref());
-
-        // Channel-bandwidth filter (Task 12): applied AFTER the channels join.
-        // CONJUNCTIVE with the band filter (Codex P2 fix): a gateway stays iff
-        // SOME single channel is in a requested band AND passes the bandwidth
-        // filter together, exactly as the frontend `stationMatchesFilters` does.
-        // The coarse band pre-filter already ran inside `curate_and_rank_gateways`
-        // (it only DROPS gateways with no channel in any wanted band, never
-        // wrongly keeps), so re-checking band here per-channel is what closes the
-        // "20m/2300 + 80m/500 wrongly passes {bands:[20m], bandwidths:[500]}" gap.
-        // Empty/absent bandwidths = no bandwidth filter (this branch is skipped);
-        // null/unclassified channel bandwidth passes every filter.
-        if let Some(bandwidths) = filter.bandwidths.as_deref().filter(|b| !b.is_empty()) {
-            gateways
-                .retain(|gw| gateway_dto_passes_band_and_bandwidth(gw, &filter.bands, bandwidths));
-        }
-
-        // FT-8 evidence corroboration (Task 12): when requested, read the decode
-        // ring and stamp `ft8_corroborated` per gateway + `evidence` params on the
-        // list. The listener is REQUIRED only for this augmented request: an
-        // unavailable listener refuses here, but a plain lookup (no evidence) is
-        // never blocked by it.
-        let evidence = if filter.ft8_evidence == Some(true) {
-            let listener = self.ft8_listener()?;
-            let snap = tauri::async_runtime::spawn_blocking(move || listener.snapshot())
-                .await
-                .map_err(|e| {
-                    PortError::Internal(format!("ft8 evidence snapshot task failed: {e}"))
-                })?;
-            let snr_min_db = filter
-                .ft8_snr_min_db
-                .unwrap_or(crate::catalog::evidence::EVIDENCE_SNR_MIN_DB_DEFAULT);
-            let params = apply_ft8_evidence(
-                &mut gateways,
-                &snap.ring_tail,
-                operator_grid.as_deref(),
-                snr_min_db,
-                now_unix_ms(),
-            );
-            Some(params)
+        // A request riding an existing snapshot reuses the PINNED population — no
+        // fetch (that is what keeps counts stable across narrowing calls). A fresh
+        // query fetches + curates the FULL population; the engine post-filters
+        // bands/bandwidths/distance/etc. and applies its own goal ranking, so we
+        // curate WITHOUT the distance sort and WITHOUT the band filter here.
+        let population = if request_rides_snapshot(&request) {
+            Vec::new()
         } else {
-            None
+            let (mode_dtos, history_hours, ft8_policy) = fetch_inputs(&request);
+            validate_history_hours(history_hours).map_err(|e| PortError::Internal(e.to_string()))?;
+            let modes = expand_find_stations_modes(&mode_dtos);
+            let cache = self
+                .app
+                .state::<Arc<crate::catalog::stations_cache::StationsCache>>();
+            let channels_cache = self
+                .app
+                .state::<Arc<crate::catalog::channels_cache::ChannelsCache>>();
+            let listings = crate::catalog::commands::catalog_fetch_stations(
+                modes,
+                history_hours,
+                cache,
+                channels_cache,
+            )
+            .await
+            .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
+            let mut gateways = curate_gateways(&listings, &[], operator_grid.as_deref());
+
+            // Best-effort FT-8 corroboration when the policy asks for it. A missing
+            // listener is NOT fatal: evidence simply stays absent, and a `require`
+            // policy then honestly narrows to nothing rather than erroring.
+            if ft8_policy != Ft8Policy::Ignore {
+                if let Ok(listener) = self.ft8_listener() {
+                    if let Ok(snap) =
+                        tauri::async_runtime::spawn_blocking(move || listener.snapshot()).await
+                    {
+                        apply_ft8_evidence(
+                            &mut gateways,
+                            &snap.ring_tail,
+                            operator_grid.as_deref(),
+                            crate::catalog::evidence::EVIDENCE_SNR_MIN_DB_DEFAULT,
+                            now_ms,
+                        );
+                    }
+                }
+            }
+            gateways
         };
 
-        Ok(StationListDto {
-            gateways,
-            fetched_at_ms,
+        let prior_success_callsigns = crate::connection_history::read_last()
+            .map(|g| g.callsign.to_ascii_uppercase())
+            .into_iter()
+            .collect();
+
+        let export_sink: Option<Arc<dyn crate::station_query::engine::ExportSink>> =
+            Some(Arc::new(FileExportSink));
+
+        let ctx = StationContext {
             operator_grid,
-            evidence,
-        })
+            now_ms,
+            population,
+            prior_success_callsigns,
+            unavailable_inputs: vec!["path_reliability"],
+            export_sink,
+        };
+
+        // The snapshot store is app-managed state (registered at setup). Clone the
+        // Arc so the borrow the engine holds is independent of the State guard.
+        let store = self.app.state::<Arc<SnapshotStore>>().inner().clone();
+        let engine = StationQueryEngine::new(&store);
+        engine
+            .evaluate(request, &ctx)
+            .map_err(|e| PortError::Internal(e.to_string()))
     }
 
     /// GATE the WHOLE peer read behind the egress arm [R2-S5]: the roster is the
@@ -5780,8 +5856,8 @@ mod tests {
             fetched_at_ms: None,
         };
         let listings = [listing];
-        let unsorted = curate_gateways(&listings, &[], Some("DM43"));
-        let ranked = curate_and_rank_gateways(&listings, &[], Some("DM43"));
+        let unsorted = super::curate_gateways(&listings, &[], Some("DM43"));
+        let ranked = super::curate_and_rank_gateways(&listings, &[], Some("DM43"));
 
         // Same set of callsigns regardless of order.
         let mut u: Vec<&str> = unsorted.iter().map(|g| g.callsign.as_str()).collect();

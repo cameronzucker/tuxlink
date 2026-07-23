@@ -1027,8 +1027,16 @@ pub trait LogPort: Send + Sync {
 /// intentional and required by spec — see the impl's asymmetry note.
 #[async_trait]
 pub trait StationPort: Send + Sync {
-    /// List RMS gateways matching `filter`. Read-only; does not taint or gate.
-    async fn find_stations(&self, filter: StationFilterDto) -> Result<StationListDto, PortError>;
+    /// Answer an intent-tagged station query with a BOUNDED, agent-native result
+    /// (bd tuxlink-m0n38). Replaces the old raw-list `find_stations(filter) ->
+    /// StationListDto` dump, which could emit the whole ~1,400-gateway catalog in
+    /// one message and overflow the agent's context window. The result is bounded
+    /// by construction (see [`crate::station_query`]); read-only, does not taint
+    /// or gate.
+    async fn find_stations(
+        &self,
+        request: crate::station_query::FindStationsRequest,
+    ) -> Result<crate::station_query::FindStationsResponse, PortError>;
     /// List saved P2P peer stations. UNLIKE `find_stations`, this GATES the whole
     /// read behind the egress arm [R2-S5] (the roster is the operator's private
     /// social graph, not public directory data). Read-only; never transmits.

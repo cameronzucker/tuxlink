@@ -28,7 +28,7 @@ use serde::Serialize;
 
 use super::bounded::{BoundedVec, CappedString};
 use super::request::{Callsign, CandidateId, SnapshotId, StationExportFormat, StationFacet, StationFilters};
-use crate::ports::StationModeDto;
+use crate::ports::{GatewayDto, StationModeDto};
 
 /// Raised only if the engine ever tries to build a result that would violate the
 /// invariant (e.g. a `complete-set` with omitted rows). Internal-only; it should
@@ -67,6 +67,106 @@ impl FindStationsResponse {
             population,
             result,
         }
+    }
+
+    /// A fixed single-station `complete-set` — for test doubles / seeded fixtures
+    /// that stand in for the real engine.
+    #[must_use]
+    pub fn single_station(
+        snapshot_id: &str,
+        callsign: &str,
+        grid: Option<&str>,
+        mode: StationModeDto,
+        frequencies_khz: &[f64],
+    ) -> Self {
+        let (freqs, _) = BoundedVec::<f64, 8>::from_capped(frequencies_khz.iter().copied());
+        let (stations, _) = BoundedVec::<StationSummary, 16>::from_capped(std::iter::once(StationSummary {
+            callsign: CappedString::from_truncated(callsign),
+            grid: grid.map(CappedString::from_truncated),
+            mode,
+            frequencies_khz: freqs,
+            distance_mi: None,
+            bearing_deg: None,
+            operating_now: None,
+        }));
+        Self::new(
+            SnapshotMeta {
+                id: CappedString::from_truncated(snapshot_id),
+                fetched_at_ms: 0,
+                operator_grid: None,
+                expires_at_ms: 0,
+            },
+            Population::new(1, 1, frequencies_khz.len() as u32),
+            StationResult::CompleteSet { stations },
+        )
+    }
+
+    /// An explicitly complete, empty result — for a void fixture world.
+    #[must_use]
+    pub fn empty(snapshot_id: &str) -> Self {
+        Self::new(
+            SnapshotMeta {
+                id: CappedString::from_truncated(snapshot_id),
+                fetched_at_ms: 0,
+                operator_grid: None,
+                expires_at_ms: 0,
+            },
+            Population::new(0, 0, 0),
+            StationResult::NoMatches,
+        )
+    }
+
+    /// Build a bounded result directly from a raw gateway list — for the scenario
+    /// testserver, which seeds `GatewayDto`s (not the real engine's grouped
+    /// stations). One summary per gateway: `<= 16` -> complete-set, more ->
+    /// refinement-required (count only), none -> no-matches. Never inlines more
+    /// than the bound.
+    #[must_use]
+    pub fn from_gateways(snapshot_id: &str, gateways: &[GatewayDto]) -> Self {
+        let meta = SnapshotMeta {
+            id: CappedString::from_truncated(snapshot_id),
+            fetched_at_ms: 0,
+            operator_grid: None,
+            expires_at_ms: 0,
+        };
+        let total = gateways.len() as u32;
+        if gateways.is_empty() {
+            return Self::new(meta, Population::new(0, 0, 0), StationResult::NoMatches);
+        }
+        let conn: u32 = gateways.iter().map(|g| g.frequencies_khz.len() as u32).sum();
+        if gateways.len() <= 16 {
+            let (stations, _) =
+                BoundedVec::<StationSummary, 16>::from_capped(gateways.iter().map(gateway_summary));
+            return Self::new(
+                meta,
+                Population::new(total, total, conn),
+                StationResult::CompleteSet { stations },
+            );
+        }
+        Self::new(
+            meta,
+            Population::new(total, total, conn),
+            StationResult::RefinementRequired {
+                matched_stations: total,
+                facets: BoundedVec::empty(),
+                suggested_refinements: BoundedVec::empty(),
+            },
+        )
+    }
+}
+
+/// Flatten one seeded `GatewayDto` into a compact summary (no callsign grouping;
+/// the real engine groups, but the scenario seeds are already one-row-per-station).
+fn gateway_summary(g: &GatewayDto) -> StationSummary {
+    let (freqs, _) = BoundedVec::<f64, 8>::from_capped(g.frequencies_khz.iter().copied());
+    StationSummary {
+        callsign: CappedString::from_truncated(&g.callsign),
+        grid: g.grid.as_deref().map(CappedString::from_truncated),
+        mode: g.mode,
+        frequencies_khz: freqs,
+        distance_mi: g.distance_mi,
+        bearing_deg: g.bearing_deg,
+        operating_now: None,
     }
 }
 
@@ -384,6 +484,196 @@ mod tests {
     fn no_matches_is_a_bare_tag() {
         let json = serde_json::to_value(StationResult::NoMatches).unwrap();
         assert_eq!(json["kind"], "no-matches");
+    }
+
+    // ---- P8 load-bearing property test: worst legal value < 32 KB ----------
+
+    const BYTE_BUDGET: usize = 32_768;
+
+    fn cap<const N: usize>() -> CappedString<N> {
+        CappedString::from_truncated(&"X".repeat(N))
+    }
+
+    fn max_filters() -> StationFilters {
+        use crate::station_query::request::{Band, BandwidthClass, BearingSector, DistanceBucket, Ft8Policy};
+        StationFilters {
+            modes: BoundedVec::from_capped([
+                StationModeDto::VaraHf,
+                StationModeDto::VaraFm,
+                StationModeDto::Packet,
+                StationModeDto::ArdopHf,
+                StationModeDto::Pactor,
+                StationModeDto::RobustPacket,
+            ])
+            .0,
+            // Only 10 bands exist — that IS the worst legal value (cap is 16).
+            bands: BoundedVec::from_capped([
+                Band::B160m,
+                Band::B80m,
+                Band::B60m,
+                Band::B40m,
+                Band::B30m,
+                Band::B20m,
+                Band::B17m,
+                Band::B15m,
+                Band::B12m,
+                Band::B10m,
+            ])
+            .0,
+            bandwidths: BoundedVec::from_capped([
+                BandwidthClass::Hz500,
+                BandwidthClass::Hz1000,
+                BandwidthClass::Hz2000,
+                BandwidthClass::Hz2300,
+                BandwidthClass::Hz2750,
+            ])
+            .0,
+            ft8_policy: Ft8Policy::Require,
+            operating_now: Some(true),
+            distance: Some(DistanceBucket::Within2500mi),
+            bearing: Some(BearingSector::Nw),
+            callsign_prefix: Some(cap::<12>()),
+            history_hours: Some(720),
+        }
+    }
+
+    fn max_envelope(result: StationResult) -> FindStationsResponse {
+        FindStationsResponse::new(
+            SnapshotMeta {
+                id: cap::<32>(),
+                fetched_at_ms: u64::MAX,
+                operator_grid: Some(cap::<8>()),
+                expires_at_ms: u64::MAX,
+            },
+            Population::new(u32::MAX, u32::MAX, u32::MAX),
+            result,
+        )
+    }
+
+    fn max_summary() -> StationSummary {
+        StationSummary {
+            callsign: cap::<16>(),
+            grid: Some(cap::<8>()),
+            mode: StationModeDto::RobustPacket,
+            frequencies_khz: BoundedVec::from_capped([1e9_f64; 8]).0,
+            distance_mi: Some(f64::MAX),
+            bearing_deg: Some(359.999),
+            operating_now: Some(true),
+        }
+    }
+
+    fn max_candidate() -> Candidate {
+        Candidate {
+            candidate_id: cap::<96>(),
+            callsign: cap::<16>(),
+            grid: Some(cap::<8>()),
+            selected_connection: ConnectionDto {
+                target_callsign: cap::<16>(),
+                mode: StationModeDto::VaraHf,
+                frequency_khz: 1e9,
+                bandwidth_hz: Some(u32::MAX),
+            },
+            alternate_connection_count: u32::MAX,
+            fitness: Fitness {
+                score: 1.0,
+                components: FitnessComponents {
+                    path_reliability: Some(1.0),
+                    ft8_corroborated: Some(true),
+                    operating_now: Some(true),
+                    prior_success: Some(true),
+                },
+                reason_codes: BoundedVec::from_capped([
+                    cap::<24>(),
+                    cap::<24>(),
+                    cap::<24>(),
+                    cap::<24>(),
+                    cap::<24>(),
+                    cap::<24>(),
+                ])
+                .0,
+            },
+        }
+    }
+
+    /// Serialize the WORST legal value of every result variant and prove each
+    /// stays under the byte budget — the invariant that makes a broad query
+    /// un-survivable-overflow impossible by construction (spec §Testing).
+    #[test]
+    fn worst_legal_value_is_under_byte_budget() {
+        let mut worst = 0usize;
+
+        // complete-set: 16 max summaries.
+        let (stations, _) = BoundedVec::<StationSummary, 16>::from_capped((0..16).map(|_| max_summary()));
+        worst = worst.max(check(max_envelope(StationResult::CompleteSet { stations })));
+
+        // ranked-subset: 8 max candidates + full ranking meta.
+        let (cands, _) = BoundedVec::<Candidate, 8>::from_capped((0..8).map(|_| max_candidate()));
+        let (used, _) = BoundedVec::<CappedString<32>, 8>::from_capped((0..8).map(|_| cap::<32>()));
+        let (unavail, _) = BoundedVec::<CappedString<32>, 8>::from_capped((0..8).map(|_| cap::<32>()));
+        worst = worst.max(check(max_envelope(StationResult::RankedSubset {
+            ranking: RankingMeta {
+                policy: "connect-now-v1",
+                inputs_used: used,
+                inputs_unavailable: unavail,
+            },
+            coverage: SubsetCoverage::top_of_all_eligible(u32::MAX, 8, u32::MAX),
+            top_candidates: cands,
+        })));
+
+        // refinement-required: 8 facets x 24 values + 12 refinements w/ max filters.
+        let (facets, _) = BoundedVec::<Facet, 8>::from_capped((0..8).map(|_| {
+            let (values, _) = BoundedVec::<FacetCount, 24>::from_capped((0..24).map(|_| FacetCount {
+                value: cap::<32>(),
+                remaining_if_applied: u32::MAX,
+            }));
+            Facet {
+                field: StationFacet::Band,
+                values,
+            }
+        }));
+        let (refinements, _) = BoundedVec::<Refinement, 12>::from_capped((0..12).map(|_| Refinement {
+            label: cap::<48>(),
+            add_filters: max_filters(),
+            remaining: u32::MAX,
+        }));
+        worst = worst.max(check(max_envelope(StationResult::RefinementRequired {
+            matched_stations: u32::MAX,
+            facets,
+            suggested_refinements: refinements,
+        })));
+
+        // aggregate-complete: 3 groups x 24 buckets.
+        let (groups, _) = BoundedVec::<AggregateGroup, 3>::from_capped((0..3).map(|_| {
+            let (buckets, _) = BoundedVec::<AggregateBucket, 24>::from_capped((0..24).map(|_| AggregateBucket {
+                value: cap::<32>(),
+                count: u32::MAX,
+            }));
+            AggregateGroup {
+                facet: StationFacet::Mode,
+                buckets,
+            }
+        }));
+        worst = worst.max(check(max_envelope(StationResult::AggregateComplete { groups })));
+
+        // export-ready + no-matches (small, for completeness).
+        worst = worst.max(check(max_envelope(StationResult::ExportReady {
+            artifact_id: cap::<64>(),
+            format: StationExportFormat::Csv,
+            total_rows: u32::MAX,
+            destination: cap::<128>(),
+        })));
+        worst = worst.max(check(max_envelope(StationResult::NoMatches)));
+
+        assert!(
+            worst < BYTE_BUDGET,
+            "worst legal value serialized to {worst} bytes; budget is {BYTE_BUDGET}"
+        );
+    }
+
+    fn check(resp: FindStationsResponse) -> usize {
+        let n = serde_json::to_vec(&resp).unwrap().len();
+        assert!(n < BYTE_BUDGET, "a variant serialized to {n} bytes (>= {BYTE_BUDGET})");
+        n
     }
 
     #[test]

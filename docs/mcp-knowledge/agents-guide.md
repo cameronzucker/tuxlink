@@ -47,24 +47,33 @@ A plain ARM does not clear taint. See the arm/taint model below.
 
 ### Station intelligence — reads, no taint, no authorization
 
-- `find_stations` — Winlink RMS gateway directory (callsign, frequencies, grid),
-  filterable by transport/band/history. Cached public data. Each gateway also carries
-  `distance_km`, `distance_mi`, and `bearing_deg` from the operator's grid (null when the
-  operator grid is unset — the result echoes it as `operator_grid`); gateways are sorted
-  nearest-first, unknown-distance last. Each gateway carries a `channels` array with
-  per-channel dial frequency, occupied `bandwidth_hz`, transport `mode`, and
-  `operating_hours` (sourced from the Winlink channels API). Two optional filters refine
-  the list: `bandwidths` (an array of occupied bandwidths in Hz; the classified classes are
-  500, 2300, and 2750, and a channel with any other or no reported bandwidth passes every
-  filter, keeping the gateway if any channel passes), and `ft8_evidence: true`, which
-  corroborates each gateway against the operator's recent FT-8 decodes. When
-  `ft8_evidence` is set, every gateway gains `ft8_corroborated` (true when a recent decode
-  on a shared band lands within the plausible reach of that decode, false otherwise) and the
-  result gains an `evidence` block naming the SNR floor, recency window, radius model, and
-  the bands that carried qualifying decodes. Pass `ft8_snr_min_db` to raise the decode SNR
-  floor above the default of -24 dB. FT-8 evidence needs the FT-8 listener running (start it
-  with `ft8_start_listening`); a request for evidence with no listener returns an
-  unavailable error, while a plain lookup without `ft8_evidence` is never affected.
+- `find_stations` — an **intent-tagged** query over the Winlink RMS gateway directory
+  (cached public data). You state your `intent`; the tool selects and BOUNDS the answer, so
+  it can never dump the whole catalog (a broad query used to return ~1,400 gateways in one
+  message and overflow the context window — this shape makes that impossible by
+  construction). Set `intent` to one of:
+  - `recommend` — "which gateway should I connect to?" Returns a ranked shortlist
+    (`ranked-subset`, ≤ 8 candidates) with **one** selected connection per station, a fitness
+    score with reason codes, and exact `evaluated`/`returned`/`omitted` coverage. Give a
+    `goal` (`connect-now` or `best-at`) and an `objective` (`estimated-success` or `nearest`;
+    a distance-only answer is honestly labelled `nearest-v1`, never fitness). Use
+    `exclude_candidate_ids` for "give me another option."
+  - `explore` — narrow a broad space. A large set returns `refinement-required`: **zero rows**,
+    the exact `matched_stations` total, per-facet counts, and bounded `suggested_refinements`
+    (additive filter patches with the resulting count). Apply one against the returned
+    `snapshot` id to narrow (snapshots only narrow, never widen). A set that already fits
+    returns `complete-set` (≤ 16 stations).
+  - `lookup` — exact callsign(s) → `complete-set` / `no-matches`.
+  - `aggregate` — server-side counts by band/mode/distance/bearing/bandwidth/operating-now over
+    the WHOLE matched population (`group_by` up to 3 facets).
+  - `export` — write the full set to a user file OUTSIDE the conversation (`export-ready`
+    names the artifact + destination; no catalog rows are inlined).
+  Supply only semantic intent + constraints in `filters` (`modes`, `bands`, `bandwidths`,
+  `ft8_policy` = `ignore`|`prefer`|`require`, `operating_now`, `distance`, `bearing`,
+  `callsign_prefix`); your grid, the current time, and connection history are injected by the
+  app. Every response carries a `snapshot` (id + expiry) and a `population` envelope
+  (matched/eligible/connection-option counts). FT-8 corroboration is folded into `ft8_policy`;
+  `require` needs the FT-8 listener running (`ft8_start_listening`) or nothing corroborates.
 - `predict_path` — offline VOACAP HF path reliability/SNR/MUF-day by UTC hour from
   the operator's own grid to a target grid across candidate dial frequencies.
 - `solar_conditions` — the **stored** space-weather indices (SFI/A/K) and the
@@ -87,7 +96,7 @@ A plain ARM does not clear taint. See the arm/taint model below.
 These decode the FT-8 activity on the operator's radio. They are receive-only:
 they open the sound card for capture and (for `ft8_set_band`) tune the dial, but
 they never transmit and need no send-authority. They are the evidence source
-behind `find_stations`' `ft8_evidence` corroboration.
+behind `find_stations`' `ft8_policy` (`prefer` / `require`) corroboration.
 
 - `ft8_status`: the listener's state (whether it is listening, on which band and
   dial frequency, which audio device, and what is blocking it if it cannot start).
@@ -173,8 +182,9 @@ relay it and give the operator the **cause-specific** remedy:
   confirm a real VARA is answering the cmd port; then `session_log_snapshot` (taints), and consult
   `tuxlink://playbook/ardop-wont-connect` or
   `tuxlink://playbook/connection-troubleshooting`. Explain plainly; do not connect.
-- **Find a gateway and predict bands** — `find_stations` to list reachable RMS
-  gateways, then `predict_path` to the gateway's grid across candidate dials, with
+- **Find a gateway and predict bands** — `find_stations` with `intent: recommend`
+  (or `explore` to narrow a broad set first) to get candidate RMS gateways, then
+  `predict_path` to each candidate's grid across candidate dials, with
   `solar_conditions` for context.
 - **Compose and send** — `message_send` or `send_form` to stage the draft, then the
   operator arms send-authority and a gated `cms_connect` (or B2F exchange)

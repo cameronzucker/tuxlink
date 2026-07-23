@@ -25,7 +25,7 @@ use crate::ports::{
     ArdopWriteDto, ComposeDraftDto, EgressPortError, GribRequestDto, PacketWriteDto, PortError,
     PredictRequestDto, QsyCandidateDto, RoutineEditOpDto, RoutineEditRequestDto, RoutinesRunError,
     SaveRoutineRequestDto, SearchQueryDto, SendFormDto,
-    SessionIntentDto, StationFilterDto, VaraEngineDto, VaraIniApplyDto, VaraWriteDto,
+    SessionIntentDto, VaraEngineDto, VaraIniApplyDto, VaraWriteDto,
     WritePortError,
 };
 use crate::{server_info_view, McpState};
@@ -560,31 +560,17 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "find_stations",
-        description = "List Winlink RMS gateways for the given transports/bands (callsign, frequencies, grid, and per-channel bandwidth/operating-hours), optionally filtered by channel bandwidth (Hz) and corroborated against live FT-8 decodes (ft8_evidence: true) with an snr floor. Each gateway also carries distance_km, distance_mi, and bearing_deg from your station's grid (all null when your grid is unset; see operator_grid on the result); gateways are sorted nearest-first, unknown-distance last. Public directory data, cached. Read-only; does not transmit."
+        description = "Find Winlink RMS gateways by stating your INTENT (the tool selects and bounds the answer; it never dumps the whole catalog). Set `intent` to one of: `recommend` (which gateway should I connect to? — a ranked shortlist with one selected connection each), `explore` (narrow a broad space — returns facet counts + suggested filters, not rows, until the set is small), `lookup` (exact callsign(s)), `aggregate` (server-side counts by band/mode/distance/etc. over the whole matched set), or `export` (write the full set to a user file OUTSIDE this conversation). Supply only semantic intent + constraints (modes, bands, bandwidths, ft8_policy, distance, bearing, operating_now, callsign_prefix); your grid, the time, and connection history are supplied by the app. A broad query returns a small `refinement-required` result with the exact total and how to narrow — never a fatal or truncated dump. Public directory data, cached. Read-only; does not transmit."
     )]
     pub async fn find_stations(
         &self,
-        params: Parameters<StationFilterParams>,
+        params: Parameters<crate::station_query::FindStationsParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        let Parameters(StationFilterParams {
-            modes,
-            history_hours,
-            bands,
-            bandwidths,
-            ft8_evidence,
-            ft8_snr_min_db,
-        }) = params;
+        let Parameters(crate::station_query::FindStationsParams(request)) = params;
         let dto = self
             .state
             .stations
-            .find_stations(StationFilterDto {
-                modes,
-                history_hours,
-                bands,
-                bandwidths,
-                ft8_evidence,
-                ft8_snr_min_db,
-            })
+            .find_stations(request)
             .await
             .map_err(port_err)?;
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
@@ -2293,35 +2279,9 @@ pub struct PointAtParams {
     pub anchor_id: String,
 }
 
-/// Input for `find_stations`. All fields optional/defaultable: empty `modes` /
-/// `bands` mean "no filter"; `history_hours` omitted means "no time bound".
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct StationFilterParams {
-    /// Restrict to these transports (e.g. `vara-hf`, `vara-fm`, `ardop-hf`);
-    /// empty = all.
-    #[serde(default)]
-    pub modes: Vec<crate::ports::StationModeDto>,
-    /// Only gateways heard within this many hours; omitted = no bound.
-    #[serde(default)]
-    pub history_hours: Option<u32>,
-    /// Restrict to these amateur bands (e.g. `"40m"`); empty = all bands.
-    #[serde(default)]
-    pub bands: Vec<String>,
-    /// Restrict to gateways with a channel at one of these occupied bandwidths in
-    /// Hz (classified classes: 500, 2300, 2750; other/unknown bandwidths pass
-    /// every filter). Omitted or empty = no bandwidth filter.
-    #[serde(default)]
-    pub bandwidths: Option<Vec<u32>>,
-    /// Set to `true` to corroborate each gateway against the operator's recent
-    /// FT-8 decodes (adds `ft8_corroborated` per gateway and an `evidence` block
-    /// to the result). Needs the FT-8 listener running. Omitted = no evidence.
-    #[serde(default)]
-    pub ft8_evidence: Option<bool>,
-    /// SNR floor in dB for a decode to count as FT-8 evidence (default -24).
-    /// Ignored unless `ft8_evidence` is set.
-    #[serde(default)]
-    pub ft8_snr_min_db: Option<i32>,
-}
+// `find_stations` input is now the intent-tagged `FindStationsRequest`
+// (`crate::station_query`), used directly as the tool's `Parameters<_>` — no
+// per-tool params struct. (tuxlink-m0n38)
 
 /// Input for `predict_path`. Carries NO tx_grid — the operator's own grid is
 /// injected by the impl, never agent-supplied.
@@ -3401,29 +3361,24 @@ mod tests {
 
     #[tokio::test]
     async fn find_stations_returns_seeded_gateway_and_does_not_taint() {
-        use crate::ports::StationListDto;
+        use crate::station_query::{FindStationsParams, FindStationsRequest, StationFilters};
         let h = handler();
         assert!(!h.state.guard.is_tainted());
         let result = h
-            .find_stations(Parameters(StationFilterParams {
-                modes: vec![],
-                history_hours: None,
-                bands: vec![],
-                bandwidths: None,
-                ft8_evidence: None,
-                ft8_snr_min_db: None,
-            }))
+            .find_stations(Parameters(FindStationsParams(FindStationsRequest::Explore {
+                filters: StationFilters::default(),
+                snapshot_id: None,
+            })))
             .await
             .unwrap();
-        let dto: StationListDto = json_of(&result);
-        assert_eq!(dto.gateways.len(), 1, "the mock seeds exactly one gateway");
-        assert_eq!(dto.gateways[0].callsign, SEED_GW_CALLSIGN);
-        assert_eq!(dto.gateways[0].grid.as_deref(), Some(SEED_GW_GRID));
-        assert_eq!(
-            dto.fetched_at_ms,
-            Some(0),
-            "the seeded fetch carries a freshness stamp the agent reasons from"
-        );
+        // FindStationsResponse is Serialize-only; inspect the emitted JSON. The
+        // in-crate mock seeds exactly one gateway -> a complete-set of one station.
+        let json: serde_json::Value = json_of(&result);
+        assert_eq!(json["result"]["kind"], "complete-set");
+        let stations = json["result"]["stations"].as_array().unwrap();
+        assert_eq!(stations.len(), 1, "the mock seeds exactly one gateway");
+        assert_eq!(stations[0]["callsign"], SEED_GW_CALLSIGN);
+        assert_eq!(stations[0]["grid"], SEED_GW_GRID);
         assert!(
             !h.state.guard.is_tainted(),
             "find_stations must NOT taint the session (public directory data)"

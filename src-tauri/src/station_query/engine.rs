@@ -647,7 +647,7 @@ fn mode_rank(mode: StationModeDto) -> u8 {
 
 /// Pick the station's single recommended connection: most-capable mode, then
 /// lowest dial (a stable, explainable choice).
-fn select_connection(s: &Station<'_>) -> Option<&Conn> {
+fn select_connection<'s>(s: &'s Station<'_>) -> Option<&'s Conn> {
     s.connections.iter().min_by(|a, b| {
         mode_rank(a.mode)
             .cmp(&mode_rank(b.mode))
@@ -688,8 +688,7 @@ fn score_station(
             let score = s
                 .distance_mi
                 .map_or(0.0_f32, |mi| 1.0 / (1.0 + (mi as f32) / 100.0));
-            let mut reasons = Vec::new();
-            reasons.push("NEAREST");
+            let reasons = vec!["NEAREST"];
             (
                 score,
                 FitnessComponents {

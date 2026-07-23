@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use tuxlink_mcp_core::ports::{GatewayDto, StationModeDto};
 use tuxlink_mcp_core::station_query::{
-    Band, BoundedU8, BoundedVec, Callsign, ConnectObjective, FindStationsRequest, RecommendationGoal,
-    StationExportFormat, StationFacet, StationFilters,
+    Band, BoundedU8, BoundedVec, CandidateId, Callsign, ConnectObjective, FindStationsRequest,
+    RecommendationGoal, StationExportFormat, StationFacet, StationFilters,
 };
 
 use super::{ExportArtifact, ExportRow, ExportSink, StationContext, StationQueryEngine, StationQueryError};
@@ -116,7 +116,7 @@ fn recommend(
     exclude: Vec<String>,
     n: u8,
 ) -> FindStationsRequest {
-    let (excl, _) = BoundedVec::from_capped(exclude.iter().map(|s| Callsign::from_truncated(s)));
+    let (excl, _) = BoundedVec::from_capped(exclude.iter().map(|s| CandidateId::from_truncated(s)));
     FindStationsRequest::Recommend {
         goal: RecommendationGoal::ConnectNow {
             at_utc_ms: None,

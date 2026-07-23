@@ -1753,6 +1753,13 @@ pub fn run() {
         // listener's shutdown flag + bound socket addr. None when no listener
         // is armed; Some(...) when one is running.
         .manage(std::sync::Arc::new(crate::ui_commands::TelnetListenState::default()))
+        // tuxlink-m0n38: the find_stations query-snapshot store. explore/lookup
+        // narrow AGAINST a pinned snapshot so population counts stay stable across
+        // calls; snapshots expire after 5 minutes (a typed, retryable error tells
+        // the agent to re-issue the base query).
+        .manage(std::sync::Arc::new(
+            crate::station_query::snapshot::SnapshotStore::new(300_000),
+        ))
         // tuxlink-61yg: ARDOP listener shared state — the in-flight consumer
         // task's shutdown flag.
         .manage(std::sync::Arc::new(crate::ui_commands::ArdopListenState::default()))
