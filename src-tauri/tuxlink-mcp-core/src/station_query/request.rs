@@ -19,6 +19,29 @@ use serde::{Deserialize, Serialize};
 
 use super::bounded::{BoundedU8, BoundedVec, CappedString};
 
+/// Deserialize a field that a weak model may send either natively OR as a JSON
+/// **string** encoding the value. Small/quantized models (observed on
+/// qwen-3.5-122b, 2026-07-23) stringify typed and nested tool arguments —
+/// `candidate_count: "5"`, `filters: "{…}"`, `goal: "{…}"` — which a strict
+/// schema rejects (`invalid type: string "5", expected u8`), leaving the agent
+/// looping on deserialize errors. This absorbs that quirk at the boundary (a
+/// bounded tool the model cannot format is still unusable): if the value is a
+/// string, parse it as JSON into `T`; otherwise deserialize `T` directly. The
+/// bounds still apply — a stringified over-cap value is still rejected.
+fn de_stringy_or_native<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::String(s) => {
+            serde_json::from_str(&s).map_err(serde::de::Error::custom)
+        }
+        other => serde_json::from_value(other).map_err(serde::de::Error::custom),
+    }
+}
+
 /// An app-minted snapshot handle. `explore`/`lookup` narrow *against* it so
 /// population counts stay stable between calls. App-generated, so already within
 /// bound; the cap only guards a malformed echo.
@@ -386,17 +409,18 @@ fn default_candidate_count() -> BoundedU8<1, 8> {
 pub enum FindStationsRequest {
     /// "Which gateway should I connect to?" — a ranked decision answer.
     Recommend {
+        #[serde(deserialize_with = "de_stringy_or_native")]
         goal: RecommendationGoal,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "de_stringy_or_native")]
         filters: StationFilters,
-        #[serde(default = "default_candidate_count")]
+        #[serde(default = "default_candidate_count", deserialize_with = "de_stringy_or_native")]
         candidate_count: BoundedU8<1, 8>,
-        #[serde(default)]
+        #[serde(default, deserialize_with = "de_stringy_or_native")]
         exclude_candidate_ids: BoundedVec<CandidateId, 16>,
     },
     /// Narrow a broad space by property; returns facets, not rows, until small.
     Explore {
-        #[serde(default)]
+        #[serde(default, deserialize_with = "de_stringy_or_native")]
         filters: StationFilters,
         #[serde(default)]
         snapshot_id: Option<SnapshotId>,
@@ -405,17 +429,19 @@ pub enum FindStationsRequest {
     Lookup {
         #[serde(default)]
         snapshot_id: Option<SnapshotId>,
+        #[serde(deserialize_with = "de_stringy_or_native")]
         callsigns: BoundedVec<Callsign, 16>,
     },
     /// Server-side counts/statistics over the FULL matched population.
     Aggregate {
-        #[serde(default)]
+        #[serde(default, deserialize_with = "de_stringy_or_native")]
         filters: StationFilters,
+        #[serde(deserialize_with = "de_stringy_or_native")]
         group_by: BoundedVec<StationFacet, 3>,
     },
     /// The full set as a user artifact OUTSIDE the transcript (never model-readable).
     Export {
-        #[serde(default)]
+        #[serde(default, deserialize_with = "de_stringy_or_native")]
         filters: StationFilters,
         format: StationExportFormat,
     },
@@ -658,6 +684,52 @@ mod tests {
         let FindStationsParams(req) =
             serde_json::from_str(r#"{ "intent": "explore" }"#).unwrap();
         assert!(matches!(req, FindStationsRequest::Explore { .. }));
+    }
+
+    #[test]
+    fn lenient_deserialize_absorbs_stringified_model_args() {
+        // The exact shape qwen-3.5-122b emitted (typed + nested args as JSON strings).
+        let json = r#"{
+            "intent": "recommend",
+            "candidate_count": "5",
+            "filters": "{\"modes\": [\"vara-hf\", \"vara-fm\"]}",
+            "goal": "{\"kind\": \"connect-now\", \"objective\": \"estimated-success\"}"
+        }"#;
+        match serde_json::from_str::<FindStationsRequest>(json).unwrap() {
+            FindStationsRequest::Recommend {
+                candidate_count,
+                filters,
+                goal,
+                ..
+            } => {
+                assert_eq!(candidate_count.get(), 5);
+                assert_eq!(filters.modes.len(), 2);
+                assert!(matches!(
+                    goal,
+                    RecommendationGoal::ConnectNow {
+                        objective: ConnectObjective::EstimatedSuccess,
+                        ..
+                    }
+                ));
+            }
+            _ => panic!("wrong variant"),
+        }
+
+        // The bound still applies to a stringified over-cap value.
+        let over = r#"{ "intent": "recommend",
+            "goal": {"kind":"connect-now","objective":"nearest"},
+            "candidate_count": "9" }"#;
+        assert!(serde_json::from_str::<FindStationsRequest>(over).is_err());
+
+        // Native (non-stringified) form still works, and a stringified array too.
+        assert!(serde_json::from_str::<FindStationsRequest>(
+            r#"{ "intent": "aggregate", "group_by": ["band"] }"#
+        )
+        .is_ok());
+        assert!(serde_json::from_str::<FindStationsRequest>(
+            r#"{ "intent": "aggregate", "group_by": "[\"band\",\"mode\"]" }"#
+        )
+        .is_ok());
     }
 
     // ---- snapshot monotonicity (widening rejection) ------------------------
