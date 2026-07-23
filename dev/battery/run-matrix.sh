@@ -21,12 +21,15 @@
 # models.tsv — one model per line, TAB-separated, comments (#) and blank lines
 # ignored:
 #   <label>\t<model-id>\t<endpoint>\t<API_KEY_ENV_VAR>
-# e.g.
-#   qwen122b   qwen3.5-122b-nvfp4    http://twin-bramble:8000/v1    TWIN_BRAMBLE_KEY
-#   glm52      z-ai/glm-5.2          https://openrouter.ai/api/v1   OPENROUTER_API_KEY
-#   gptoss120b openai/gpt-oss-120b   https://openrouter.ai/api/v1   OPENROUTER_API_KEY
-#   nemotron   nvidia/nemotron-...   https://openrouter.ai/api/v1   OPENROUTER_API_KEY
-#   sonnet5    anthropic/claude-...  https://openrouter.ai/api/v1   OPENROUTER_API_KEY
+# The <endpoint> is the FULL OpenAI-compatible chat-completions URL that
+# AgentEndpoint::parse expects (.../v1/chat/completions), NOT the bare /v1 base;
+# elmer_battery derives the origin from it for the /v1/models + credits GETs.
+# e.g. (qwen row verified live against twin-bramble 2026-07-22):
+#   qwen35     qwen35-122b-nvfp4    https://inference.twin-bramble.ts.net/v1/chat/completions  TWIN_BRAMBLE_KEY
+#   glm52      z-ai/glm-5.2         https://openrouter.ai/api/v1/chat/completions              OPENROUTER_API_KEY
+#   gptoss120b openai/gpt-oss-120b  https://openrouter.ai/api/v1/chat/completions              OPENROUTER_API_KEY
+#   nemotron   nvidia/nemotron-...  https://openrouter.ai/api/v1/chat/completions              OPENROUTER_API_KEY
+#   sonnet5    anthropic/claude-... https://openrouter.ai/api/v1/chat/completions              OPENROUTER_API_KEY
 #
 # The named API_KEY_ENV_VARs must be EXPORTED before running (keys sourced from
 # the Pi keyring and piped to env, NEVER written to disk). A model whose key env
