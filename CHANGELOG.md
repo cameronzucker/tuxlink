@@ -31,6 +31,44 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.99.0](https://github.com/cameronzucker/tuxlink/compare/v0.98.0...v0.99.0) (2026-07-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* **elmer:** elmer::workflow no longer exports the phase pipeline (run_workflow, PhaseModel, WorkflowManifest, build_prompt, the phase artifacts, …); only the affordance catalog + validator remain.
+
+### Features
+
+* **battery:** +Skill arm so the Base-vs-Skill lift benchmark can run (tuxlink-t3jci P1) ([7d60c77](https://github.com/cameronzucker/tuxlink/commit/7d60c775efa9f8313bdc808b72343c44e419cb6e))
+* **battery:** add 11 intent-deciphering rung tasks to the corpus (Task 14a) ([e2c613d](https://github.com/cameronzucker/tuxlink/commit/e2c613de409cf1b5d690791bbc5740607df31fcf))
+* **battery:** condition arms (base/matched-control/full) + Full-arm workflow wiring (Task 13b) ([0552d0e](https://github.com/cameronzucker/tuxlink/commit/0552d0e7fea4f46cdb0b658aad45f752926ff1b6))
+* **battery:** matrix orchestration + elmer_score scoring harness (Tasks 14b + 14c) ([86e9eda](https://github.com/cameronzucker/tuxlink/commit/86e9eda33c4573076317756f2bf51d636d33683a))
+* **elmer:** Build Carefully toggle in ElmerPane; passes authoring per send (tuxlink-t3jci P1) ([5cd6202](https://github.com/cameronzucker/tuxlink/commit/5cd6202d0296f192f96400f2905ade73be7a1d63))
+* **elmer:** compose_system_prompt + ROUTINE_INVARIANT + AUTHORING_SKILL (tuxlink-t3jci P1) ([c5883d9](https://github.com/cameronzucker/tuxlink/commit/c5883d9ccabf260b80ef5913785700649516fd94))
+* **elmer:** thread per-turn authoring flag through send -&gt; build_turn_provider (tuxlink-t3jci P1) ([d9856dc](https://github.com/cameronzucker/tuxlink/commit/d9856dc3f7e99165e852e1e1197e86a146eb41a3))
+* **workflow:** build-routine manifest data, Part-97 tests, rule-based scorers (Tasks 10-12) ([1dfd596](https://github.com/cameronzucker/tuxlink/commit/1dfd59678c0dc00383c3884192eea718c9bfdaf0))
+* **workflow:** feasibility gate — capability gap stops with an honest report (Task 1 mechanism) ([9f8a887](https://github.com/cameronzucker/tuxlink/commit/9f8a88795085bb8629000127ae7d98881780ac9f))
+* **workflow:** linear phase-orchestration engine + context-bound invariant (Task 6) ([cfdee03](https://github.com/cameronzucker/tuxlink/commit/cfdee0374504174633199547b2d3473c3817ee58))
+* **workflow:** manifest, PhaseModel+stub, affordance catalog, Routine CI wrapper (Tasks 2-5) ([696b8d4](https://github.com/cameronzucker/tuxlink/commit/696b8d49d3a3db58b19db0fa41b7364af13972b6))
+* **workflow:** phase definitions, router, present builder (Tasks 7-9) ([a432b73](https://github.com/cameronzucker/tuxlink/commit/a432b7305754d11f0ba9b0d39df6c2818aaef1bc))
+* **workflow:** production SessionPhaseModel adapter (Task 13a) ([bb7c57d](https://github.com/cameronzucker/tuxlink/commit/bb7c57dc93c9fa903938b88d3e2bd07035ccb0a3))
+* **workflow:** typed phase artifact schemas (Routine CI slice 1a, Task 1) ([7eadcc0](https://github.com/cameronzucker/tuxlink/commit/7eadcc09a6c8247d7f278fb1c2923dccfb8ef75e))
+
+
+### Bug Fixes
+
+* **battery:** drop imports/field orphaned by the Full-arm teardown (tuxlink-t3jci) ([9253746](https://github.com/cameronzucker/tuxlink/commit/9253746d3526c8ab1b335d79afd210427c9b95aa))
+* **battery:** pilot-discovered fixes so the Routine CI battery runs end-to-end (tuxlink-ch4po) ([d9d3c82](https://github.com/cameronzucker/tuxlink/commit/d9d3c82912dde213f0e6a5e5aec29260e0c818a5))
+* **battery:** uniform stop conditions across arms — Full observes the watchdog cancel token (Task 13c) ([c5b3c7d](https://github.com/cameronzucker/tuxlink/commit/c5b3c7d1699367bd0317033c46d954ecf33e642f))
+* **lint:** unwrap_or_default for the injected cancel token (clippy, Task 13c follow-up) ([f27a22a](https://github.com/cameronzucker/tuxlink/commit/f27a22a7712d3a2254a5f119e3a4cba8a0f08f70))
+* **score:** roll-up scores.jsonl from ALL bundles, not the --only subset (final-review I1) ([b4e821c](https://github.com/cameronzucker/tuxlink/commit/b4e821c41fe1805d54a52192cd110348613214d0))
+
+
+### Refactors
+
+* **elmer:** tear out the hidden routine-CI workflow engine (tuxlink-t3jci) ([6c1f586](https://github.com/cameronzucker/tuxlink/commit/6c1f5867414c78a0799c43f177f4583132c1e96f))
+
 ## [0.98.0](https://github.com/cameronzucker/tuxlink/compare/v0.97.0...v0.98.0) (2026-07-22)
 
 
