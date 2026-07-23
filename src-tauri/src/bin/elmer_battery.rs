@@ -44,7 +44,7 @@ use tokio_util::sync::CancellationToken;
 use tuxlink_agent_frontend::endpoint::AgentEndpoint;
 use tuxlink_agent_frontend::ApiKey;
 use tuxlink_agent_runner::{
-    CallAuthority, Limits, RunEvent, RunOutcome, ToolCall, ToolInvoker, ToolOutcome, ToolSpec,
+    CallAuthority, RunOutcome, ToolCall, ToolInvoker, ToolOutcome, ToolSpec,
 };
 use tuxlink_lib::elmer::events::ElmerEvent;
 use tuxlink_lib::elmer::executor::InProcessMcpInvoker;
@@ -56,8 +56,6 @@ use tuxlink_lib::elmer::transcript_sink::ElmerTranscriptSink;
 use tuxlink_lib::elmer::workflow::build_affordance_catalog;
 use tuxlink_lib::routines::commands::list_actions;
 use tuxlink_lib::routines::session::RoutinesState;
-use tuxlink_lib::routines::store::DefinitionStore;
-use tuxlink_lib::routines::validation::MonolithValidationContext;
 use tuxlink_lib::winlink::credentials::EntryLike;
 
 // ---------------------------------------------------------------------------
@@ -1156,7 +1154,6 @@ fn real_main() -> Result<(), String> {
         meters: Arc::clone(&meters),
         sink,
         transcript: Arc::clone(&transcript),
-        config_dir: &config_dir,
         routines_state: Arc::clone(&routines_state),
     }))?;
 
@@ -1345,11 +1342,6 @@ struct RunCellArgs<'a> {
     meters: Arc<Meters>,
     sink: EventSink,
     transcript: Arc<ElmerTranscriptSink>,
-    /// The scratch profile's config dir (`scratch_root/config`). The Full arm
-    /// opens `config_dir/routines` as the workflow's `DefinitionStore` — the
-    /// SAME dir the routines MCP port writes to, so Emit's save is visible to
-    /// CI's `store.get`.
-    config_dir: &'a Path,
     /// The managed routines state, used by the MatchedControl arm to enumerate
     /// the affordance catalog for its prompt prefix.
     routines_state: Arc<RoutinesState>,
@@ -1377,7 +1369,6 @@ async fn run_cell(args: RunCellArgs<'_>) -> Result<CellResult, String> {
         meters,
         sink,
         transcript,
-        config_dir,
         routines_state,
     } = args;
 
