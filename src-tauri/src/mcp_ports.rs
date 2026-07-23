@@ -2521,7 +2521,7 @@ pub(crate) const BANDS: &[(f64, f64, &str)] = &[
     (28000.0, 29700.0, "10m"),
 ];
 
-fn khz_to_band(khz: f64) -> Option<&'static str> {
+pub(crate) fn khz_to_band(khz: f64) -> Option<&'static str> {
     for (lo, hi, label) in BANDS {
         if khz >= *lo && khz <= *hi {
             return Some(label);
@@ -2576,7 +2576,7 @@ fn channel_passes_bandwidth(bandwidth_hz: Option<u32>, wanted: &[u32]) -> bool {
 /// back to its bare dial list, whose synthesized channels carry no bandwidth
 /// (so they pass every bandwidth filter) and are placed by dial band, matching
 /// the frontend's `frequenciesKhz` fallback in `stationModel`.
-fn gateway_dto_passes_band_and_bandwidth(
+pub(crate) fn gateway_dto_passes_band_and_bandwidth(
     gw: &GatewayDto,
     bands: &[String],
     bandwidths: &[u32],

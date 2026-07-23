@@ -13,4 +13,5 @@
 //!   and builds a bounded [`tuxlink_mcp_core::station_query::FindStationsResponse`]
 //!   from a request. Added in P5.
 
+pub mod engine;
 pub mod snapshot;
