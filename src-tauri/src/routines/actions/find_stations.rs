@@ -51,6 +51,19 @@ const DEFAULT_STATION_LIMIT: usize = 8;
 /// action can never emit an un-survivable payload into the journal.
 const MAX_STATION_LIMIT: usize = 16;
 
+/// Hard cap on total gateway ROWS emitted, independent of the distinct-callsign
+/// cap. A surviving callsign keeps ALL its rows, so a few callsigns each with
+/// pathologically many channel rows could still bloat the journal even under the
+/// 16-callsign cap. This bounds the `gateways` detail array (the load-bearing
+/// `callsigns` output is unaffected). 48 comfortably covers 16 callsigns with a
+/// few rows each; beyond it, rows are dropped and the truncation is disclosed.
+const MAX_GATEWAY_ROWS: usize = 48;
+
+/// Per-row cap on a gateway's `frequencies_khz` / `channels` vectors, so a single
+/// row cannot be unbounded either. Matches the MCP engine's per-station frequency
+/// cap (8).
+const MAX_ROW_VECTOR_LEN: usize = 8;
+
 /// Shape-true dry-run output for `data.find_stations` (D6): a params-blind,
 /// empty-but-well-shaped directory result whose single `DRYRUN-1` callsign lets
 /// a routine's `$s.callsigns` → `radio.connect` composition take its "found a
@@ -64,6 +77,10 @@ fn find_stations_dry_run_shape(_params: &Value) -> Value {
         "total_matched_stations": 1,
         "returned_stations": 1,
         "truncated": false,
+        "total_gateway_rows": 0,
+        "returned_gateway_rows": 0,
+        "gateway_rows_truncated": false,
+        "gateway_row_vectors_truncated": false,
         "dry_run": true
     })
 }
@@ -200,6 +217,33 @@ impl Action for FindStations {
                     description: "True when matched exceeded the limit and stations were dropped",
                     nullable: false,
                 },
+                OutputSpec {
+                    key: "total_gateway_rows",
+                    ty: ValueType::Number,
+                    description: "How many gateway detail ROWS matched before the row cap — so a \
+                                  row-level truncation is disclosed, never silent",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "returned_gateway_rows",
+                    ty: ValueType::Number,
+                    description: "How many gateway detail rows this result actually returned",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "gateway_rows_truncated",
+                    ty: ValueType::Boolean,
+                    description: "True when gateway rows exceeded the row cap and rows were dropped \
+                                  (the callsigns list is unaffected)",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "gateway_row_vectors_truncated",
+                    ty: ValueType::Boolean,
+                    description: "True when any returned gateway row had its frequencies/channels \
+                                  vector capped",
+                    nullable: false,
+                },
             ],
             dry_run_shape: Some(find_stations_dry_run_shape),
         }
@@ -283,10 +327,33 @@ impl Action for FindStations {
         // `gateways` = every gateway ROW whose callsign survived the truncation
         // (a surviving callsign keeps ALL its rows/modes), preserving sort order.
         let kept: HashSet<&str> = callsigns.iter().map(String::as_str).collect();
-        let gateways: Vec<_> = gateways
+        let mut gateways: Vec<_> = gateways
             .into_iter()
             .filter(|g| kept.contains(g.callsign.as_str()))
             .collect();
+
+        // BYTE-BOUND the gateway DETAIL rows (drift item 4). The distinct-callsign
+        // cap above bounds `callsigns` (the load-bearing radio.connect input), but
+        // `gateways` kept EVERY row for each surviving callsign, and each row's
+        // `frequencies_khz` / `channels` vectors were unbounded — so a few
+        // callsigns with pathologically many channels could still emit a large
+        // journal payload the agent then reads. Cap each row's vectors, then the
+        // total row count, and DISCLOSE either truncation (never silent).
+        let total_gateway_rows = gateways.len();
+        let mut gateway_row_vectors_truncated = false;
+        for g in &mut gateways {
+            if g.frequencies_khz.len() > MAX_ROW_VECTOR_LEN {
+                g.frequencies_khz.truncate(MAX_ROW_VECTOR_LEN);
+                gateway_row_vectors_truncated = true;
+            }
+            if g.channels.len() > MAX_ROW_VECTOR_LEN {
+                g.channels.truncate(MAX_ROW_VECTOR_LEN);
+                gateway_row_vectors_truncated = true;
+            }
+        }
+        let gateway_rows_truncated = total_gateway_rows > MAX_GATEWAY_ROWS;
+        gateways.truncate(MAX_GATEWAY_ROWS);
+        let returned_gateway_rows = gateways.len();
 
         // Serialize the curated rows explicitly (GatewayDto: Serialize) so the
         // JSON build never depends on `json!`'s Serialize-interpolation.
@@ -304,6 +371,10 @@ impl Action for FindStations {
             "total_matched_stations": total_matched_stations,
             "returned_stations": returned_stations,
             "truncated": truncated,
+            "total_gateway_rows": total_gateway_rows,
+            "returned_gateway_rows": returned_gateway_rows,
+            "gateway_rows_truncated": gateway_rows_truncated,
+            "gateway_row_vectors_truncated": gateway_row_vectors_truncated,
         }))
     }
 }
@@ -821,6 +892,59 @@ mod tests {
         assert_eq!(callsigns(&out).len(), MAX_STATION_LIMIT);
         assert_eq!(out["total_matched_stations"].as_u64().unwrap(), 30);
         assert!(out["truncated"].as_bool().unwrap());
+    }
+
+    #[tokio::test]
+    async fn gateway_rows_and_per_row_vectors_are_byte_bounded_and_disclosed() {
+        // drift item 4: the distinct-callsign cap bounds `callsigns`, but the
+        // `gateways` detail array kept EVERY row for a surviving callsign with
+        // unbounded per-row vectors. A row with a huge frequency list, plus many
+        // callsigns each with many rows, must yield a BOUNDED row count and
+        // bounded per-row vectors, with both truncations disclosed.
+        let mut gws: Vec<Gateway> = Vec::new();
+        // A row with a pathologically long frequency vector, placed FIRST so it
+        // survives the row cap and its per-row capping is observable in output.
+        let mut fat = gw("W9FAT", "W9FAT.WINLINK", None);
+        fat.frequencies_khz = (0..40).map(|i| 7000.0 + i as f64).collect();
+        gws.push(fat);
+        // 4 distinct callsigns x 20 rows each = 80 more rows (81 total).
+        for c in 0..4 {
+            for ch in 0..20 {
+                gws.push(gw(&format!("W{c}AAA"), &format!("W{c}AAA-{ch}.WINLINK"), None));
+            }
+        }
+        let dir = directory(gws, None);
+        let out = action(FakeStationQueryService::returning(dir))
+            .execute(json!({ "limit": 16 }), CancellationToken::new())
+            .await
+            .unwrap();
+
+        // Total gateway rows bounded and disclosed.
+        let rows = out["gateways"].as_array().unwrap();
+        assert!(
+            rows.len() <= MAX_GATEWAY_ROWS,
+            "gateway rows must be capped at {MAX_GATEWAY_ROWS}, got {}",
+            rows.len()
+        );
+        assert_eq!(
+            out["returned_gateway_rows"].as_u64().unwrap() as usize,
+            rows.len()
+        );
+        assert!(out["total_gateway_rows"].as_u64().unwrap() >= 81);
+        assert!(out["gateway_rows_truncated"].as_bool().unwrap());
+
+        // Per-row vectors bounded, and the fat row (returned first) shows its cap.
+        for r in rows {
+            if let Some(freqs) = r["frequencies_khz"].as_array() {
+                assert!(
+                    freqs.len() <= MAX_ROW_VECTOR_LEN,
+                    "per-row frequencies_khz must be capped at {MAX_ROW_VECTOR_LEN}"
+                );
+            }
+        }
+        assert!(out["gateway_row_vectors_truncated"].as_bool().unwrap());
+        // The load-bearing callsigns list is unaffected by the row cap.
+        assert_eq!(callsigns(&out).len(), 5);
     }
 
     #[tokio::test]
