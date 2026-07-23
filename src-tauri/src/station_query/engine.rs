@@ -19,7 +19,7 @@ use tuxlink_mcp_core::ports::{GatewayDto, StationModeDto};
 use tuxlink_mcp_core::station_query::{
     AggregateBucket, AggregateGroup, Band, BoundedVec, Candidate, CappedString, ConnectObjective,
     ConnectionDto, ContractViolation, DistanceBucket, Facet, FacetCount, FindStationsRequest,
-    FindStationsResponse, Fitness, FitnessComponents, Ft8Policy, Population, RankingMeta,
+    FindStationsResponse, Fitness, FitnessComponents, Ft8Policy, Population, RankedSubset, RankingMeta,
     RecommendationGoal, Refinement, SnapshotMeta, StationExportFormat, StationFacet, StationFilters,
     StationResult, StationSummary, SubsetCoverage,
 };
@@ -336,16 +336,14 @@ impl<'a> StationQueryEngine<'a> {
             );
             debug_assert_eq!(omitted, 0, "take(returned<=8) can't exceed the cap");
             let returned_u32 = top.len() as u32;
-            let coverage = SubsetCoverage::top_of_all_eligible(
-                evaluated,
-                returned_u32,
-                evaluated.saturating_sub(returned_u32),
-            );
-            StationResult::RankedSubset {
-                ranking: ranking_meta(objective, ctx),
+            // `omitted` is derived inside the constructor (evaluated - returned),
+            // so the coverage counts are consistent by construction.
+            let coverage = SubsetCoverage::top_of_all_eligible(evaluated, returned_u32)?;
+            StationResult::RankedSubset(RankedSubset::new(
+                ranking_meta(objective, ctx),
                 coverage,
-                top_candidates: top,
-            }
+                top,
+            ))
         };
         Ok(FindStationsResponse::new(snap_meta, population, result))
     }

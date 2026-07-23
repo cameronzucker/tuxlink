@@ -30,7 +30,7 @@ pub use request::{
     StationExportFormat, StationFacet, StationFilters,
 };
 pub use response::{
-    AggregateBucket, AggregateGroup, Candidate, ConnectionDto, ContractViolation, Facet,
-    FacetCount, FindStationsResponse, Fitness, FitnessComponents, Population, RankingMeta,
-    Refinement, SnapshotMeta, StationResult, StationSummary, SubsetCoverage,
+    AggregateBucket, AggregateGroup, Candidate, CompleteSet, ConnectionDto, ContractViolation,
+    Facet, FacetCount, FindStationsResponse, Fitness, FitnessComponents, Population, RankedSubset,
+    RankingMeta, Refinement, SnapshotMeta, StationResult, StationSummary, SubsetCoverage,
 };

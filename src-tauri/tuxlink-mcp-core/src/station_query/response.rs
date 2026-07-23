@@ -80,7 +80,7 @@ impl FindStationsResponse {
         frequencies_khz: &[f64],
     ) -> Self {
         let (freqs, _) = BoundedVec::<f64, 8>::from_capped(frequencies_khz.iter().copied());
-        let (stations, _) = BoundedVec::<StationSummary, 16>::from_capped(std::iter::once(StationSummary {
+        let (stations, omitted) = BoundedVec::<StationSummary, 16>::from_capped(std::iter::once(StationSummary {
             callsign: CappedString::from_truncated(callsign),
             grid: grid.map(CappedString::from_truncated),
             mode,
@@ -97,7 +97,8 @@ impl FindStationsResponse {
                 expires_at_ms: 0,
             },
             Population::new(1, 1, frequencies_khz.len() as u32),
-            StationResult::CompleteSet { stations },
+            StationResult::complete_set(stations, omitted)
+                .expect("a single station fits the complete-set cap with nothing omitted"),
         )
     }
 
@@ -135,12 +136,13 @@ impl FindStationsResponse {
         }
         let conn: u32 = gateways.iter().map(|g| g.frequencies_khz.len() as u32).sum();
         if gateways.len() <= 16 {
-            let (stations, _) =
+            let (stations, omitted) =
                 BoundedVec::<StationSummary, 16>::from_capped(gateways.iter().map(gateway_summary));
             return Self::new(
                 meta,
                 Population::new(total, total, conn),
-                StationResult::CompleteSet { stations },
+                StationResult::complete_set(stations, omitted)
+                    .expect("<= 16 gateways fit the complete-set cap with nothing omitted"),
             );
         }
         Self::new(
@@ -214,15 +216,17 @@ impl Population {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum StationResult {
     /// The ENTIRE eligible population fit the bound. No omitted field exists —
-    /// the shape asserts completeness. Build via [`StationResult::complete_set`].
-    CompleteSet { stations: BoundedVec<StationSummary, 16> },
+    /// the shape asserts completeness. The payload's field is private, so the
+    /// only way to build one is [`CompleteSet::new`] (via
+    /// [`StationResult::complete_set`]), which refuses a non-zero `omitted`:
+    /// "a subset masquerading as complete" is unrepresentable, not merely
+    /// convention (spec invariant 6).
+    CompleteSet(CompleteSet),
     /// A ranked top-K of all eligible. Carries mandatory exact coverage so a
-    /// subset can never read as complete.
-    RankedSubset {
-        ranking: RankingMeta,
-        coverage: SubsetCoverage,
-        top_candidates: BoundedVec<Candidate, 8>,
-    },
+    /// subset can never read as complete. The payload's fields are private; its
+    /// [`SubsetCoverage`] is built by a checked constructor that derives
+    /// `omitted` (so `returned + omitted == evaluated` holds by construction).
+    RankedSubset(RankedSubset),
     /// Too broad: ZERO rows, an exact `matched_stations` total, finite per-facet
     /// counts, and bounded additive-filter suggestions. The agent narrows by
     /// predicate against the snapshot, never by paging.
@@ -247,8 +251,31 @@ pub enum StationResult {
 impl StationResult {
     /// Build a `complete-set`, refusing (with a [`ContractViolation`]) if any
     /// stations were omitted — a complete set must be the whole population.
-    /// `omitted` is the count [`BoundedVec::from_capped`] reported.
+    /// `omitted` is the count [`BoundedVec::from_capped`] reported. A thin
+    /// convenience over [`CompleteSet::new`].
     pub fn complete_set(
+        stations: BoundedVec<StationSummary, 16>,
+        omitted: usize,
+    ) -> Result<Self, ContractViolation> {
+        Ok(StationResult::CompleteSet(CompleteSet::new(stations, omitted)?))
+    }
+}
+
+/// Payload of [`StationResult::CompleteSet`]. Its `stations` field is **private**,
+/// so a value can only be built through [`CompleteSet::new`], which refuses a
+/// non-zero `omitted`. Because this crate's engine lives in a *separate* crate,
+/// that crate cannot construct the variant by struct literal at all — the guard
+/// is a compile-time boundary, not an engine convention (spec invariant 6).
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+pub struct CompleteSet {
+    stations: BoundedVec<StationSummary, 16>,
+}
+
+impl CompleteSet {
+    /// Build a complete set, refusing if any stations were omitted (a complete
+    /// set is the WHOLE eligible population — there is no field to hide "more
+    /// exist" in).
+    pub fn new(
         stations: BoundedVec<StationSummary, 16>,
         omitted: usize,
     ) -> Result<Self, ContractViolation> {
@@ -259,7 +286,47 @@ impl StationResult {
                 ),
             });
         }
-        Ok(StationResult::CompleteSet { stations })
+        Ok(Self { stations })
+    }
+
+    #[must_use]
+    pub fn stations(&self) -> &BoundedVec<StationSummary, 16> {
+        &self.stations
+    }
+}
+
+/// Payload of [`StationResult::RankedSubset`]. All fields are **private**; a
+/// value is built through [`RankedSubset::new`] with an already-checked
+/// [`SubsetCoverage`], so a ranked subset can never carry inconsistent coverage.
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+pub struct RankedSubset {
+    ranking: RankingMeta,
+    coverage: SubsetCoverage,
+    top_candidates: BoundedVec<Candidate, 8>,
+}
+
+impl RankedSubset {
+    #[must_use]
+    pub fn new(
+        ranking: RankingMeta,
+        coverage: SubsetCoverage,
+        top_candidates: BoundedVec<Candidate, 8>,
+    ) -> Self {
+        Self {
+            ranking,
+            coverage,
+            top_candidates,
+        }
+    }
+
+    #[must_use]
+    pub fn coverage(&self) -> &SubsetCoverage {
+        &self.coverage
+    }
+
+    #[must_use]
+    pub fn top_candidates(&self) -> &BoundedVec<Candidate, 8> {
+        &self.top_candidates
     }
 }
 
@@ -280,26 +347,58 @@ pub struct StationSummary {
 }
 
 /// Exact coverage for a `ranked-subset` — the field set that makes a subset
-/// impossible to mistake for the whole.
+/// impossible to mistake for the whole. All fields are **private**: the only
+/// constructor is [`SubsetCoverage::top_of_all_eligible`], which DERIVES
+/// `omitted_stations` from `evaluated - returned`, so `returned + omitted ==
+/// evaluated` is true by construction and an inconsistent coverage is
+/// unrepresentable (spec invariant 6).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct SubsetCoverage {
-    pub evaluated_stations: u32,
-    pub returned_stations: u32,
-    pub omitted_stations: u32,
+    evaluated_stations: u32,
+    returned_stations: u32,
+    omitted_stations: u32,
     /// Always `"top-of-all-eligible"` — these are the top of the full eligible
     /// set, not the top of a partially-scanned window.
-    pub relationship: &'static str,
+    relationship: &'static str,
 }
 
 impl SubsetCoverage {
-    #[must_use]
-    pub fn top_of_all_eligible(evaluated_stations: u32, returned_stations: u32, omitted_stations: u32) -> Self {
-        Self {
+    /// Coverage for the top `returned` of an `evaluated`-strong eligible set.
+    /// `omitted` is derived (`evaluated - returned`) rather than accepted, so
+    /// the three counts can never be mutually inconsistent. A `returned >
+    /// evaluated` is a [`ContractViolation`] (fail loud, not saturate).
+    pub fn top_of_all_eligible(
+        evaluated_stations: u32,
+        returned_stations: u32,
+    ) -> Result<Self, ContractViolation> {
+        let omitted_stations = evaluated_stations.checked_sub(returned_stations).ok_or_else(|| {
+            ContractViolation {
+                detail: format!(
+                    "ranked-subset returned {returned_stations} exceeds evaluated {evaluated_stations}"
+                ),
+            }
+        })?;
+        Ok(Self {
             evaluated_stations,
             returned_stations,
             omitted_stations,
             relationship: "top-of-all-eligible",
-        }
+        })
+    }
+
+    #[must_use]
+    pub fn evaluated_stations(&self) -> u32 {
+        self.evaluated_stations
+    }
+
+    #[must_use]
+    pub fn returned_stations(&self) -> u32 {
+        self.returned_stations
+    }
+
+    #[must_use]
+    pub fn omitted_stations(&self) -> u32 {
+        self.omitted_stations
     }
 }
 
@@ -439,21 +538,53 @@ mod tests {
 
     #[test]
     fn ranked_subset_carries_all_three_coverage_counts() {
-        let result = StationResult::RankedSubset {
-            ranking: RankingMeta {
+        let result = StationResult::RankedSubset(RankedSubset::new(
+            RankingMeta {
                 policy: "connect-now-v1",
                 inputs_used: BoundedVec::from_capped(vec![CappedString::from_truncated("path")]).0,
                 inputs_unavailable: BoundedVec::empty(),
             },
-            coverage: SubsetCoverage::top_of_all_eligible(206, 8, 198),
-            top_candidates: BoundedVec::empty(),
-        };
+            // omitted is DERIVED: 206 - 8 = 198.
+            SubsetCoverage::top_of_all_eligible(206, 8).unwrap(),
+            BoundedVec::empty(),
+        ));
         let json = serde_json::to_value(&result).unwrap();
         assert_eq!(json["kind"], "ranked-subset");
         assert_eq!(json["coverage"]["evaluated_stations"], 206);
         assert_eq!(json["coverage"]["returned_stations"], 8);
         assert_eq!(json["coverage"]["omitted_stations"], 198);
         assert_eq!(json["coverage"]["relationship"], "top-of-all-eligible");
+    }
+
+    #[test]
+    fn complete_set_cannot_be_built_with_omitted() {
+        // The checked constructor is the ONLY way in (fields are private): a
+        // non-zero omitted is refused. From outside this crate the struct-literal
+        // form does not compile at all, so this is a compile-time boundary.
+        let (stations, omitted) = BoundedVec::<StationSummary, 16>::from_capped(
+            (0..20).map(|i| summary(&format!("W{i}AA"))),
+        );
+        assert_eq!(omitted, 4);
+        assert!(CompleteSet::new(stations, omitted).is_err());
+    }
+
+    #[test]
+    fn subset_coverage_rejects_returned_exceeding_evaluated() {
+        // returned > evaluated is a contract violation, never a silent saturate.
+        assert!(SubsetCoverage::top_of_all_eligible(3, 5).is_err());
+    }
+
+    #[test]
+    fn subset_coverage_derives_consistent_omitted() {
+        // omitted is derived, so returned + omitted == evaluated ALWAYS holds.
+        let cov = SubsetCoverage::top_of_all_eligible(1400, 3).unwrap();
+        assert_eq!(cov.evaluated_stations(), 1400);
+        assert_eq!(cov.returned_stations(), 3);
+        assert_eq!(cov.omitted_stations(), 1397);
+        assert_eq!(
+            cov.returned_stations() + cov.omitted_stations(),
+            cov.evaluated_stations()
+        );
     }
 
     #[test]
@@ -602,23 +733,26 @@ mod tests {
     fn worst_legal_value_is_under_byte_budget() {
         let mut worst = 0usize;
 
-        // complete-set: 16 max summaries.
-        let (stations, _) = BoundedVec::<StationSummary, 16>::from_capped((0..16).map(|_| max_summary()));
-        worst = worst.max(check(max_envelope(StationResult::CompleteSet { stations })));
+        // complete-set: 16 max summaries (exactly the cap, so nothing omitted).
+        let (stations, omitted) = BoundedVec::<StationSummary, 16>::from_capped((0..16).map(|_| max_summary()));
+        worst = worst.max(check(max_envelope(
+            StationResult::complete_set(stations, omitted).unwrap(),
+        )));
 
         // ranked-subset: 8 max candidates + full ranking meta.
         let (cands, _) = BoundedVec::<Candidate, 8>::from_capped((0..8).map(|_| max_candidate()));
         let (used, _) = BoundedVec::<CappedString<32>, 8>::from_capped((0..8).map(|_| cap::<32>()));
         let (unavail, _) = BoundedVec::<CappedString<32>, 8>::from_capped((0..8).map(|_| cap::<32>()));
-        worst = worst.max(check(max_envelope(StationResult::RankedSubset {
-            ranking: RankingMeta {
+        worst = worst.max(check(max_envelope(StationResult::RankedSubset(RankedSubset::new(
+            RankingMeta {
                 policy: "connect-now-v1",
                 inputs_used: used,
                 inputs_unavailable: unavail,
             },
-            coverage: SubsetCoverage::top_of_all_eligible(u32::MAX, 8, u32::MAX),
-            top_candidates: cands,
-        })));
+            // Worst case for coverage magnitude: evaluated = u32::MAX, returned 8.
+            SubsetCoverage::top_of_all_eligible(u32::MAX, 8).unwrap(),
+            cands,
+        )))));
 
         // refinement-required: 8 facets x 24 values + 12 refinements w/ max filters.
         let (facets, _) = BoundedVec::<Facet, 8>::from_capped((0..8).map(|_| {
