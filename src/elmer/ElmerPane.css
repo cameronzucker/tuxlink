@@ -657,6 +657,24 @@
   border-color: var(--accent-danger, var(--border-strong));
   color: var(--accent-danger, var(--text));
 }
+/* ── Build Carefully authoring toggle (tuxlink-t3jci P1) ─────────────────── */
+.elmer-authoring-toggle {
+  margin-right: auto; /* keep the mode toggle left; Send/Stop stay right */
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted, var(--text));
+  cursor: pointer;
+  user-select: none;
+}
+.elmer-authoring-switch {
+  accent-color: var(--accent, var(--accent-teal));
+  cursor: pointer;
+}
+.elmer-authoring-toggle:hover {
+  color: var(--text);
+}
 
 /* ── Advanced disclosure (endpoint/model, AC-13) ────────────────────────── */
 .elmer-advanced {

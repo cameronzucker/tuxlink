@@ -227,18 +227,24 @@ const PRESEED_NEAREST_40M_DIAL: &str = r#"{
 /// The experiment condition this cell runs under. Both arms are a single
 /// `ElmerSession::send` on the production agent loop; `MatchedControl` prepends
 /// the deterministic affordance catalog. (The discarded `Full` workflow-engine
-/// arm was removed with the engine — bd tuxlink-t3jci; the redesign's Base vs
-/// +Skill arms land in P5.)
+/// arm was removed with the engine — bd tuxlink-t3jci.) `Skill` is the
+/// redesign's Build Carefully arm: identical to `Base` except the routine
+/// invariant + authoring skill are composed into the system prompt via the
+/// single shared `compose_system_prompt` seam, so Base-vs-Skill differs by
+/// *exactly* the skill (the confound-free lift measurement).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 enum Arm {
     /// A single `ElmerSession::send` over the operator's raw prompt — the
-    /// production agent-loop reference.
+    /// production agent-loop reference (authoring OFF).
     Base,
     /// Base's single send, but the prompt is augmented with the deterministic
     /// affordance catalog — holds the model, tools, and budget constant with
-    /// Base while isolating the affordance-catalog effect.
+    /// Base while isolating the affordance-catalog effect (authoring OFF).
     MatchedControl,
+    /// Base's single send with authoring ON — the Build Carefully skill is
+    /// composed into the system prompt. The measured `+Skill` lift arm.
+    Skill,
 }
 
 impl std::str::FromStr for Arm {
@@ -248,8 +254,9 @@ impl std::str::FromStr for Arm {
         match s {
             "base" => Ok(Arm::Base),
             "matched-control" => Ok(Arm::MatchedControl),
+            "skill" => Ok(Arm::Skill),
             other => Err(format!(
-                "unknown --arm {other:?} (expected base | matched-control)"
+                "unknown --arm {other:?} (expected base | matched-control | skill)"
             )),
         }
     }
@@ -261,6 +268,7 @@ impl Arm {
         match self {
             Arm::Base => "base",
             Arm::MatchedControl => "matched-control",
+            Arm::Skill => "skill",
         }
     }
 }
@@ -1279,6 +1287,16 @@ fn real_main() -> Result<(), String> {
     });
     save_ledger(&ledger_path, &ledger)?;
 
+    // The Skill arm composes the routine invariant + authoring skill into the
+    // system prompt; Base/MatchedControl leave it as the pure ELMER_SYSTEM_PROMPT.
+    // Record the EFFECTIVE prompt hash + skill version so results tie to exactly
+    // what ran (tuxlink-t3jci P1). Base/MatchedControl hashes are unchanged
+    // (compose(None, false) == None -> the base prompt).
+    let authoring = matches!(cli.arm, Arm::Skill);
+    let effective_system_prompt =
+        tuxlink_agent_frontend::provider::compose_system_prompt(None, authoring)
+            .unwrap_or_else(|| tuxlink_agent_frontend::provider::ELMER_SYSTEM_PROMPT.to_string());
+
     // ── run_manifest.json (adrev disposition 9) ─────────────────────────────
     write_json_guarded(
         "run_manifest.json",
@@ -1298,9 +1316,14 @@ fn real_main() -> Result<(), String> {
             "turn_cap": cli.turn_cap,
             "cell_ceiling_usd": cli.cell_ceiling_usd,
             "turn_timeout_secs": cli.turn_timeout_secs,
-            "system_prompt_sha256":
-                sha256_hex(tuxlink_agent_frontend::provider::ELMER_SYSTEM_PROMPT.as_bytes()),
+            "system_prompt_sha256": sha256_hex(effective_system_prompt.as_bytes()),
             "system_prompt_override": serde_json::Value::Null,
+            "authoring": authoring,
+            "authoring_skill_version": if authoring {
+                Some(tuxlink_agent_frontend::provider::AUTHORING_SKILL_VERSION)
+            } else {
+                None
+            },
             "tool_schema_sha256": cell.tool_schema_sha256,
             "allowlist": ALLOWED_TOOLS,
             "scratch_root": scratch_root.display().to_string(),
@@ -1580,14 +1603,21 @@ async fn run_cell(args: RunCellArgs<'_>) -> Result<CellResult, String> {
     // Both arms feed the SAME `sink`/`Meters`, so the cross-arm token/turn
     // comparison is apples-to-apples.
     let outcome = match cli.arm {
-        // Base: one send over the operator's raw prompt.
-        Arm::Base => session.send(entry.prompt.clone(), sink).await,
+        // Base: one send over the operator's raw prompt. authoring=false — the
+        // pure "no workflow" reference arm (Build Carefully skill NOT injected).
+        Arm::Base => session.send(entry.prompt.clone(), false, sink).await,
         // MatchedControl: Base's single send, but the prompt is augmented with
         // the deterministic affordance catalog (see `matched_control_prompt`).
+        // authoring=false — this is a user-prompt catalog control, distinct from
+        // the Build Carefully system-prompt skill (the +Skill arm is P5).
         Arm::MatchedControl => {
             let prompt = matched_control_prompt(&entry.prompt, &routines_state);
-            session.send(prompt, sink).await
+            session.send(prompt, false, sink).await
         }
+        // Skill: Base's single send with authoring ON — compose_system_prompt
+        // injects the routine invariant + authoring skill into the system prompt.
+        // The only difference from Base is the skill, so the lift is confound-free.
+        Arm::Skill => session.send(entry.prompt.clone(), true, sink).await,
     };
 
     watchdog_stop.cancel();
@@ -1959,12 +1989,14 @@ mod tests {
     // ── Arm parsing + projection (Task 13b) ─────────────────────────────────
 
     #[test]
-    fn arm_from_str_parses_the_two_conditions_and_rejects_unknown() {
+    fn arm_from_str_parses_the_three_conditions_and_rejects_unknown() {
         assert_eq!("base".parse::<Arm>().unwrap(), Arm::Base);
         assert_eq!(
             "matched-control".parse::<Arm>().unwrap(),
             Arm::MatchedControl
         );
+        assert_eq!("skill".parse::<Arm>().unwrap(), Arm::Skill);
+        assert_eq!(Arm::Skill.as_str(), "skill");
         // Unknown / near-miss spellings fail loudly, not silently to Base.
         assert!("Base".parse::<Arm>().is_err(), "parse is case-sensitive");
         assert!("matched_control".parse::<Arm>().is_err(), "hyphen, not underscore");

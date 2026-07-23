@@ -2,7 +2,9 @@
  * useElmer — state + actions for the Elmer agent pane (AC-11, AC-14, G2).
  *
  * Wires:
- *   - invoke('elmer_send', { msg })    → sends a user message; runs the agent.
+ *   - invoke('elmer_send', { msg, authoring }) → sends a user message; runs the
+ *     agent. `authoring` = the "Build Carefully" toggle: when true the routine
+ *     invariant + authoring skill are composed into the turn's system prompt.
  *   - listen(EV_TURN)                 → streams text turns (user + assistant).
  *   - listen(EV_CHIP)                 → streams tool-call status chips.
  *   - listen(EV_OUTCOME)              → terminal outcome (done/cancelled/error…).
@@ -220,7 +222,7 @@ export interface UseElmer {
   /** Last terminal outcome, or null if no run has completed yet. */
   lastOutcome: ElmerOutcome | null;
   /** Send a user message. No-op if a run is already in progress. */
-  send: (msg: string) => void;
+  send: (msg: string, authoring: boolean) => void;
   /** Stop the in-flight run (abort-first cancel). */
   stop: () => void;
   /**
@@ -511,7 +513,7 @@ export function useElmer(seed?: UseElmerSeed | null): UseElmer {
     };
   }, []);
 
-  const send = useCallback((msg: string) => {
+  const send = useCallback((msg: string, authoring: boolean) => {
     if (running.current) return;
     running.current = true;
     setPhase('running');
@@ -526,7 +528,7 @@ export function useElmer(seed?: UseElmerSeed | null): UseElmer {
       ...prev,
       { kind: 'turn', id: nextId(), role: 'user', text: msg },
     ]);
-    void invoke('elmer_send', { msg }).catch((err: unknown) => {
+    void invoke('elmer_send', { msg, authoring }).catch((err: unknown) => {
       // elmer_send rejects on NeedsOperator (the backend also emits EV_OUTCOME
       // in that case, so the phase will already be 'needsOperator'). Swallow the
       // rejection here — the EV_OUTCOME listener is the authoritative phase setter.
