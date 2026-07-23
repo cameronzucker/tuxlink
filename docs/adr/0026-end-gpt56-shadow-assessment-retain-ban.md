@@ -1,7 +1,7 @@
 # 26. End the GPT-5.6 shadow-assessment program; retain the operational ban
 
 Date: 2026-07-20
-Status: Accepted (supersedes ADR 0023 clause 5; clauses 1-4 of ADR 0023 remain in force)
+Status: Superseded by [ADR 0028](0028-lift-gpt-5-6-ban.md) (2026-07-23), which lifts the retained ban. (This ADR superseded ADR 0023 clause 5; it retained clauses 1-4, which ADR 0028 now lifts.)
 Deciders: cameronzucker (N7CPZ), kingfisher-yew-swallow (authoring session)
 
 ## Context

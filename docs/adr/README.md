@@ -75,11 +75,13 @@ Deciders: <names or session monikers of people involved>
 - [0020 — Linux support matrix and the build-floor policy](0020-linux-support-matrix-and-build-floor.md) — *core targets a modern floor (Trixie+/24.04+, full HEIC); a separate feature-gated low-floor build serves the EmComm Tools (Ubuntu 22.10) audience; the build-floor distro is the system-library budget*
 - [0021 — Tuxlink as a simulation harness](0021-tuxlink-as-simulation-harness.md)
 - [0022 — Features are built whole: no arbitrary splitting, deferral, or delay](0022-ban-autonomous-agent-issue-splitting-and-deferrals.md) — *a feature ships whole and wire-walked, or stays in progress; no shippable inert slice + deferred remainder, no authorization escape hatch (renumbered from a colliding 0018)*
-- [0023 — Ban GPT-5.6 for adrev and all tasks; GPT-5.5 is the ceiling](0023-ban-gpt-5-6-until-deception-assessed.md) — *trust-critical adrev role; precautionary until GPT-5.6's cheating/deception is honestly assessed as-deployed in a Tuxlink context*
+- [0023 — Ban GPT-5.6 for adrev and all tasks; GPT-5.5 is the ceiling](0023-ban-gpt-5-6-until-deception-assessed.md) — ***Superseded by [0028](0028-lift-gpt-5-6-ban.md).*** *trust-critical adrev role; precautionary until GPT-5.6's cheating/deception is honestly assessed as-deployed in a Tuxlink context*
 
 - [0024, Dual actionability: one capability tree, two front-ends](0024-dual-actionability-one-capability-tree.md) (*Proposed: every operator-meaningful capability is actionable by both the agent (MCP tool) and the human (Routines action/UI); requirements flow from the distillation scenario corpus*)
 - [0025 - Agent-native: a feature's complete functionality is reachable by the agent, by design](0025-agent-native-full-functionality-parity.md) (*Proposed*)
-- [0026 - End the GPT-5.6 shadow-assessment program; retain the operational ban](0026-end-gpt56-shadow-assessment-retain-ban.md) (*16 ledger pairs, zero integrity indicators; single 5.5 adrev round returns; ban stays pending further testing - reviewer-role evidence only, and API pricing dwarfs the plan-based 5.5 without proportional benefit*)
+- [0026 - End the GPT-5.6 shadow-assessment program; retain the operational ban](0026-end-gpt56-shadow-assessment-retain-ban.md) — ***Superseded by [0028](0028-lift-gpt-5-6-ban.md).*** (*16 ledger pairs, zero integrity indicators; single 5.5 adrev round returns; ban stays pending further testing - reviewer-role evidence only, and API pricing dwarfs the plan-based 5.5 without proportional benefit*)
+- [0027 - Parity manifest: agent/human parity is CI-enforced](0027-parity-manifest-ci.md) (*every registered Tauri command is classified; CI enforces completeness, mapping liveness, the operator-authority no-mapping rule, and the MCP tool-count budget*)
+- [0028 - Lift the GPT-5.6 ban; GPT-5.6 is permitted for all Tuxlink tasks](0028-lift-gpt-5-6-ban.md) (*supersedes the ADR 0023/0026 ban: reviewer-role evidence (16 pairs, zero integrity indicators) + practical utility + low reversal cost + standing groundedness gates; GPT-5.5 stays the cost-free default*)
 
 ## References
 
