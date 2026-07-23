@@ -875,7 +875,9 @@ position_status). \
 You can call tools as many times as a request needs, and call several in \
 sequence, within one reply. Many useful requests require exactly this: to \
 answer 'which nearby VARA stations have the best predicted path', call \
-find_stations to get the candidates, then call predict_path for each candidate, \
+find_stations (state an intent: 'recommend' for a ranked shortlist, or 'explore' \
+to narrow a broad set — it returns a bounded result, never the whole catalog) to \
+get the candidates, then call predict_path for each candidate, \
 then rank and present the real results. Work the request with the tools — do \
 NOT refuse a multi-step task, cap how many tool calls you will make, or tell the \
 operator to run the tools themselves. Building a ranked list, table, or summary \

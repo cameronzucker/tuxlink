@@ -26,6 +26,7 @@ pub mod arg_shape;
 pub mod content;
 pub mod ports;
 pub mod router;
+pub mod station_query;
 pub mod transport_uds;
 pub mod validate;
 
@@ -175,11 +176,11 @@ pub mod test_support {
     use crate::ports::{
         AbortPort, ActionInfoDto, ActionsCatalogDto, ArdopConfigDto, ArdopWriteDto,
         AttachmentMetaDto, AudioDevicesDto, ControlInfoDto, TriggerKindDto,
-        BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ChannelDto, ChannelReliabilityDto,
+        BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto,
         ComposeDraftDto, ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocBodyDto,
         DocsHitDto, DryRunStartedDto, EgressPort, EgressPortError, EnableResultDto, FindingDto,
-        FolderDto, Ft8AudioDeviceDto, Ft8HeardStationDto, Ft8Port, Ft8StatusDto, GatewayAntennaDto,
-        GatewayDto, GribRequestDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
+        FolderDto, Ft8AudioDeviceDto, Ft8HeardStationDto, Ft8Port, Ft8StatusDto,
+        GribRequestDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
         ModemStatusDto, PacketConfigDto, PacketWriteDto, ParsedMessageDto, PathPredictionDto,
         PeerListDto, PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto,
         PredictionPort, PrinterDto, ProvisionPort, QsyCandidateDto, RigConfigDto, RigStatusDto,
@@ -187,7 +188,7 @@ pub mod test_support {
         SaveRoutineRequestDto,
         RoutineSummaryDto, RoutinesPort, RoutinesRunError, RunStateDto, RunStatusDto,
         SaveResultDto, SearchPort, SearchQueryDto, SearchResultsDto, SendFormDto, SerialDeviceDto,
-        SessionIntentDto, SolarSnapshotDto, StationFilterDto, StationListDto, StationModeDto,
+        SessionIntentDto, SolarSnapshotDto, StationModeDto,
         StationPort, StatusPort, UiHintPort, VaraCheckpointDto, VaraConfigDto, VaraEngineDto,
         VaraInstallStatusDto, VaraInstallSummaryDto, VaraProbeDto, VaraStatusDto, VaraWriteDto,
         WritePort, WritePortError, WwvCaptureDto, WwvPort,
@@ -753,31 +754,16 @@ pub mod test_support {
     impl StationPort for MockStation {
         async fn find_stations(
             &self,
-            _filter: StationFilterDto,
-        ) -> Result<StationListDto, PortError> {
-            Ok(StationListDto {
-                gateways: vec![GatewayDto {
-                    mode: StationModeDto::VaraHf,
-                    channel: "7104.0 VARA HF".into(),
-                    callsign: SEED_GW_CALLSIGN.into(),
-                    grid: Some(SEED_GW_GRID.into()),
-                    frequencies_khz: vec![SEED_GW_FREQ_KHZ],
-                    channels: vec![ChannelDto {
-                        frequency_khz: SEED_GW_FREQ_KHZ,
-                        bandwidth_hz: Some(2300),
-                        mode: "vara-hf".into(),
-                        operating_hours: None,
-                    }],
-                    antenna: Some(GatewayAntennaDto::Dipole),
-                    distance_km: None,
-                    distance_mi: None,
-                    bearing_deg: None,
-                    ft8_corroborated: None,
-                }],
-                fetched_at_ms: Some(0),
-                operator_grid: None,
-                evidence: None,
-            })
+            _request: crate::station_query::FindStationsRequest,
+        ) -> Result<crate::station_query::FindStationsResponse, PortError> {
+            // Seed exactly one recognizable gateway as a bounded complete-set.
+            Ok(crate::station_query::FindStationsResponse::single_station(
+                "sq_mock",
+                SEED_GW_CALLSIGN,
+                Some(SEED_GW_GRID),
+                StationModeDto::VaraHf,
+                &[SEED_GW_FREQ_KHZ],
+            ))
         }
         async fn find_peers(&self) -> Result<PeerListDto, PortError> {
             // Empty, non-fabricated roster — the peer read is gated in the real

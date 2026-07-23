@@ -263,6 +263,9 @@ impl std::str::FromStr for Arm {
 }
 
 impl Arm {
+    /// Every supported arm, for `--list-arms` (the launcher preflight guard).
+    const ALL: [Arm; 3] = [Arm::Base, Arm::MatchedControl, Arm::Skill];
+
     /// The kebab-case wire name (mirrors `FromStr` + the `Serialize` rename).
     fn as_str(self) -> &'static str {
         match self {
@@ -290,10 +293,10 @@ struct CliArgs {
 }
 
 const USAGE: &str = "usage: elmer_battery --corpus <path> --model <openrouter-model-id> \
-     --prompt <corpus-id> --out <bundle-dir> [--arm base|matched-control|full] \
+     --prompt <corpus-id> --out <bundle-dir> [--arm base|matched-control|skill] \
      [--endpoint <url>] [--turn-cap N] [--cell-ceiling-usd X] [--temperature T] \
-     [--ledger <path>] [--turn-timeout-secs N]   (reads OPENROUTER_API_KEY from \
-     the environment)";
+     [--ledger <path>] [--turn-timeout-secs N]   (or `--list-arms` to print the \
+     supported arms and exit; reads OPENROUTER_API_KEY from the environment)";
 
 fn parse_cli(args: &[String]) -> Result<CliArgs, String> {
     let mut corpus = None;
@@ -924,6 +927,21 @@ fn main() {
 
 fn real_main() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+
+    // `--list-arms`: print the arms this BINARY supports (one per line) and exit,
+    // before any required-arg parsing or paid model call. A launcher must assert
+    // every arm it intends to run is in this list — interrogating the actual
+    // executable is the only reliable guard against a stale script requesting an
+    // arm the binary lacks (tuxlink-m0n38 post-incident: a run script asked for a
+    // `skill` arm a pre-#1248 binary didn't have, and the mismatch only surfaced
+    // after burning model time).
+    if args.iter().any(|a| a == "--list-arms") {
+        for arm in Arm::ALL {
+            println!("{}", arm.as_str());
+        }
+        return Ok(());
+    }
+
     let cli = parse_cli(&args)?;
 
     // The key stays in this process's memory only — never in the bundle, the
@@ -1105,6 +1123,12 @@ fn real_main() -> Result<(), String> {
             Arc::new(tuxlink_lib::catalog::stations_cache::SystemClock),
             data_dir.join("channels-feed-cache.json"),
         ),
+    ));
+    // find_stations query-snapshot store (tuxlink-m0n38): the redesigned MCP tool
+    // resolves this from managed state; the main app registers it in run(), so
+    // this harness must too or the port panics (state() before manage()).
+    app.manage(Arc::new(
+        tuxlink_lib::station_query::snapshot::SnapshotStore::new(300_000),
     ));
     // Search service (docs_search / docs_read / catalog_list).
     {
@@ -2031,4 +2055,22 @@ mod tests {
         assert!(parse_cli(&bad).is_err(), "unknown --arm value must fail");
     }
 
+    #[test]
+    fn list_arms_output_is_every_parseable_arm() {
+        // `--list-arms` prints `Arm::ALL.as_str()`; every line it prints MUST
+        // round-trip back through FromStr, so a launcher can trust the list to
+        // preflight requested arms. Skill (the +Skill lift arm) must be present.
+        for arm in Arm::ALL {
+            assert_eq!(
+                arm.as_str().parse::<Arm>().unwrap(),
+                arm,
+                "{} must round-trip",
+                arm.as_str()
+            );
+        }
+        assert!(
+            Arm::ALL.iter().any(|a| a.as_str() == "skill"),
+            "the +Skill lift arm must be listed"
+        );
+    }
 }

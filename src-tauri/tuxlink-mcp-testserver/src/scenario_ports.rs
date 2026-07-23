@@ -30,7 +30,7 @@ use tuxlink_mcp_core::ports::{
     MessageMetaDto, ModemStatusDto, PacketConfigDto, ParsedMessageDto, PathPredictionDto,
     PeerListDto, PlatformInfoDto, PortError, PositionStatusDto, PredictRequestDto, PredictionPort,
     PrinterDto, RigConfigDto, RigStatusDto, SearchPort, SearchQueryDto, SearchResultsDto,
-    SerialDeviceDto, SolarSnapshotDto, StationFilterDto, StationListDto, StationPort, StatusPort,
+    SerialDeviceDto, SolarSnapshotDto, StationPort, StatusPort,
     VaraConfigDto, VaraProbeDto, VaraStatusDto,
 };
 
@@ -112,16 +112,16 @@ pub struct ScenarioStation(pub Arc<World>);
 impl StationPort for ScenarioStation {
     async fn find_stations(
         &self,
-        _filter: StationFilterDto,
-    ) -> Result<StationListDto, PortError> {
-        // A void world (no stations seeded) returns an EMPTY, non-fabricated
-        // list — the agent must not be handed phantom gateways.
-        Ok(self.0.stations.clone().unwrap_or(StationListDto {
-            gateways: Vec::new(),
-            fetched_at_ms: None,
-            operator_grid: None,
-            evidence: None,
-        }))
+        _request: tuxlink_mcp_core::station_query::FindStationsRequest,
+    ) -> Result<tuxlink_mcp_core::station_query::FindStationsResponse, PortError> {
+        // Convert the world's seeded gateways into a bounded result. A void world
+        // (no stations seeded) returns an EMPTY, non-fabricated result — the agent
+        // must not be handed phantom gateways.
+        use tuxlink_mcp_core::station_query::FindStationsResponse;
+        Ok(match &self.0.stations {
+            Some(list) => FindStationsResponse::from_gateways("sq_scenario", &list.gateways),
+            None => FindStationsResponse::empty("sq_void"),
+        })
     }
     async fn find_peers(&self) -> Result<PeerListDto, PortError> {
         // A void world seeds no peers — return an EMPTY, non-fabricated roster.
@@ -406,20 +406,18 @@ mod tests {
 
     #[tokio::test]
     async fn void_find_stations_returns_empty_list() {
+        use tuxlink_mcp_core::station_query::{FindStationsRequest, StationFilters, StationResult};
         let port = ScenarioStation(void_world());
         let out = port
-            .find_stations(StationFilterDto {
-                modes: vec![],
-                history_hours: None,
-                bands: vec![],
-                bandwidths: None,
-                ft8_evidence: None,
-                ft8_snr_min_db: None,
+            .find_stations(FindStationsRequest::Explore {
+                filters: StationFilters::default(),
+                snapshot_id: None,
             })
             .await
             .unwrap();
-        assert!(out.gateways.is_empty());
-        assert!(out.operator_grid.is_none());
+        // A void world yields an explicitly complete, empty result.
+        assert!(matches!(out.result, StationResult::NoMatches));
+        assert_eq!(out.population.matched_stations, 0);
     }
 
     #[tokio::test]
