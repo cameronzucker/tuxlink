@@ -20,5 +20,17 @@
 //! `docs/superpowers/specs/2026-07-23-find-stations-agent-native-redesign.md`.
 
 pub mod bounded;
+pub mod request;
+pub mod response;
 
 pub use bounded::{BoundedU8, BoundedVec, CapExceeded, CappedString, OutOfRange};
+pub use request::{
+    Band, BandwidthClass, BearingSector, CandidateId, Callsign, ConnectObjective, DistanceBucket,
+    FindStationsRequest, Ft8Policy, RecommendationGoal, SnapshotId, StationExportFormat,
+    StationFacet, StationFilters,
+};
+pub use response::{
+    AggregateBucket, AggregateGroup, Candidate, ConnectionDto, ContractViolation, Facet,
+    FacetCount, FindStationsResponse, Fitness, FitnessComponents, Population, RankingMeta,
+    Refinement, SnapshotMeta, StationResult, StationSummary, SubsetCoverage,
+};
