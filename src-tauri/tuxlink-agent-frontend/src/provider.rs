@@ -403,6 +403,23 @@ impl Provider for OpenAiProvider {
                     redacted_url(&self.endpoint)
                 )));
             }
+            // F2b SAFETY NET (tuxlink-ch4po): an OpenAI-compat server (OpenAI /
+            // vLLM / ...) rejects an over-long prompt with HTTP 400 naming its
+            // context length. The client-side `plan_output_budget` guard catches
+            // MOST of these before the POST, but its bytes/3 estimate can
+            // under-count by more than the proportional safety margin absorbs, so
+            // one can still slip through and 400. Classify that specific 400 as
+            // the BOUNDED `ContextWindowExceeded` (→ `RunOutcome::NeedsOperator`)
+            // rather than a generic transport error, so a runaway-context turn
+            // ALWAYS ends as a clean bounded outcome, never an opaque provider
+            // crash — regardless of estimate accuracy.
+            if status.as_u16() == 400 && is_context_overflow_body(&snippet) {
+                return Err(ProviderError::ContextWindowExceeded(format!(
+                    "model endpoint {} rejected the request as too long for its \
+                     context window (HTTP 400): {snippet}",
+                    redacted_url(&self.endpoint)
+                )));
+            }
             return Err(ProviderError::Transport(format!(
                 "model endpoint {} returned HTTP {status}: {snippet}",
                 redacted_url(&self.endpoint)
@@ -1145,6 +1162,23 @@ const SAFETY_MARGIN_DIVISOR: usize = 6;
 /// fixed floor and the proportional component (see [`SAFETY_MARGIN_DIVISOR`]).
 fn context_safety_margin(est_prompt: usize) -> usize {
     CONTEXT_SAFETY_MARGIN_TOKENS.max(est_prompt / SAFETY_MARGIN_DIVISOR)
+}
+
+/// Does an HTTP error body indicate the request exceeded the model's context
+/// window? OpenAI-compat servers (OpenAI, vLLM, ...) reject an over-long prompt
+/// with HTTP 400 and a body that names the context length (e.g. vLLM: "This
+/// model's maximum context length is 262144 tokens. However, you requested 4096
+/// output tokens and your prompt contains at least 258049 input tokens"). Matched
+/// case-insensitively on the stable phrases these servers share, so the F2b
+/// safety net can convert that specific 400 into a BOUNDED
+/// [`ProviderError::ContextWindowExceeded`] instead of a generic transport error.
+fn is_context_overflow_body(body: &str) -> bool {
+    let b = body.to_ascii_lowercase();
+    b.contains("context length")
+        || b.contains("context_length_exceeded")
+        || b.contains("maximum context")
+        || b.contains("exceed_context")
+        || b.contains("reduce the length of the messages")
 }
 
 /// Estimate the total prompt tokens a built request would occupy: the system
@@ -1905,6 +1939,28 @@ mod tests {
             ),
             OutputBudget::Omit => panic!("window is known; must not omit"),
         }
+    }
+
+    /// tuxlink-ch4po F2b safety net: the exact vLLM overflow-400 body (the one the
+    /// re-pilot base/EU3 + matched-control/EU3 cells hit) is classified as a
+    /// context-overflow so the caller can return the BOUNDED
+    /// `ContextWindowExceeded` outcome instead of a generic transport error.
+    /// Ordinary 400s (a genuine bad request) are NOT misclassified.
+    #[test]
+    fn context_overflow_body_is_detected_but_ordinary_400s_are_not() {
+        let vllm = "{\"error\":{\"message\":\"This model's maximum context length is 262144 \
+                    tokens. However, you requested 4096 output tokens and your prompt contains \
+                    at least 258049 input tokens\"}}";
+        assert!(is_context_overflow_body(vllm));
+        assert!(is_context_overflow_body("context_length_exceeded"));
+        assert!(is_context_overflow_body(
+            "Please reduce the length of the messages."
+        ));
+        // A normal bad-request body must NOT be swallowed as a context overflow.
+        assert!(!is_context_overflow_body(
+            "{\"error\":{\"message\":\"invalid value for 'temperature'\"}}"
+        ));
+        assert!(!is_context_overflow_body("unknown model"));
     }
 
     /// A normally-trimmed conversation (transcript trimmed to
