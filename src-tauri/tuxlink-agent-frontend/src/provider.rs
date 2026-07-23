@@ -1095,7 +1095,15 @@ fn transcript_budget(num_ctx: Option<u32>, system_prompt: &str, tools: &[ToolSpe
     let tools_tokens = serde_json::to_string(tools)
         .map(|s| s.len() / 3)
         .unwrap_or(tools.len() * 300);
-    let overhead = estimate_text_tokens(system_prompt) + tools_tokens + RESPONSE_RESERVE_TOKENS;
+    // Reserve a PROPORTIONAL slack (a window-sized share, `nctx /
+    // SAFETY_MARGIN_DIVISOR`) on top of the fixed response reserve, so the trim
+    // leaves the same percentage headroom the output-budget guard demands. Without
+    // it, a transcript trimmed right to this budget could still trip the (now
+    // proportional) `OutputBudget::Exceeded` guard on a large window — the two
+    // must agree on how much estimator under-count to expect (tuxlink-ch4po F2b).
+    let proportional_slack = nctx / SAFETY_MARGIN_DIVISOR;
+    let overhead =
+        estimate_text_tokens(system_prompt) + tools_tokens + RESPONSE_RESERVE_TOKENS + proportional_slack;
     Some(nctx.saturating_sub(overhead))
 }
 
@@ -1105,15 +1113,39 @@ fn transcript_budget(num_ctx: Option<u32>, system_prompt: &str, tools: &[ToolSpe
 /// outcome instead of POSTing a request the server rejects (F2).
 const MIN_OUTPUT_TOKENS: usize = 256;
 
-/// Fixed token back-off between the (heuristic) estimated prompt size and the
-/// model context window when sizing the requested `max_tokens`. The prompt-token
-/// estimate divides bytes by 3, which tracks real BPE for English prose but can
-/// UNDER-count dense content (code / CJK / base64); this margin absorbs that
-/// approximation error so the requested output cannot push the REAL prompt+output
-/// total past the window. 2048 fits comfortably inside the transcript trim's
-/// [`RESPONSE_RESERVE_TOKENS`] (4096) reserve, so a normally-trimmed conversation
-/// never trips the [`OutputBudget::Exceeded`] guard.
+/// FLOOR of the token back-off between the (heuristic) estimated prompt size and
+/// the model context window when sizing the requested `max_tokens`. The
+/// prompt-token estimate divides bytes by 3, which tracks real BPE for English
+/// prose but UNDER-counts dense content (JSON / code / CJK / base64); this margin
+/// absorbs that approximation error so the requested output cannot push the REAL
+/// prompt+output total past the window. See [`context_safety_margin`] for why the
+/// EFFECTIVE margin also has a proportional component.
 const CONTEXT_SAFETY_MARGIN_TOKENS: usize = 2048;
+
+/// Divisor for the PROPORTIONAL component of the context safety margin: the
+/// effective back-off is `max(CONTEXT_SAFETY_MARGIN_TOKENS, est_prompt /
+/// SAFETY_MARGIN_DIVISOR)` — i.e. `~1/6 ≈ 17%` of the estimated prompt.
+///
+/// **Why proportional (tuxlink-ch4po F2b).** Tokenizer estimation error scales
+/// with prompt size: a fixed 2048-token margin that is ample at 8k tokens is
+/// swamped by a ~10% bytes/3 under-count at 250k tokens. A re-pilot cell's REAL
+/// prompt reached 258 049 tokens while the estimate slipped under the guard, so
+/// the reserved 4096 output pushed the request to 262 145 > the 262 144 window
+/// and the vLLM server rejected the WHOLE turn with an opaque HTTP 400. A
+/// proportional margin absorbs that percentage error at any scale; `1/6` covers
+/// the observed ~10-11% dense-JSON under-count with headroom. The FLOOR keeps
+/// small prompts unaffected (`est/6 < 2048` until `est > 12 288`), so this only
+/// changes behavior for large near-window prompts — exactly where the bug lives.
+/// When even the proportional margin leaves no room, the turn ends as a BOUNDED
+/// [`OutputBudget::Exceeded`] (→ `ContextWindowExceeded`) rather than the opaque
+/// 400 — the correct conservative outcome for a runaway-context turn.
+const SAFETY_MARGIN_DIVISOR: usize = 6;
+
+/// The effective context safety margin for an estimated prompt: the larger of the
+/// fixed floor and the proportional component (see [`SAFETY_MARGIN_DIVISOR`]).
+fn context_safety_margin(est_prompt: usize) -> usize {
+    CONTEXT_SAFETY_MARGIN_TOKENS.max(est_prompt / SAFETY_MARGIN_DIVISOR)
+}
 
 /// Estimate the total prompt tokens a built request would occupy: the system
 /// prompt + serialized tool schemas + every transcript message. Mirrors the
@@ -1167,11 +1199,12 @@ fn plan_output_budget(
     let window = window as usize;
     let est_prompt = estimate_prompt_tokens(system_prompt, tools, messages);
     // Room left below the window after subtracting the estimated prompt AND a
-    // fixed safety back-off (absorbs estimator under-count so the requested
-    // output cannot push the REAL total past the window).
+    // safety back-off that scales with prompt size (absorbs the estimator's
+    // proportional under-count so the requested output cannot push the REAL total
+    // past the window — tuxlink-ch4po F2b).
     let usable = window
         .saturating_sub(est_prompt)
-        .saturating_sub(CONTEXT_SAFETY_MARGIN_TOKENS);
+        .saturating_sub(context_safety_margin(est_prompt));
     if usable < MIN_OUTPUT_TOKENS {
         return OutputBudget::Exceeded { est_prompt, window };
     }
@@ -1705,12 +1738,19 @@ mod tests {
         assert_eq!(transcript_budget(None, "sys", &[]), None);
     }
 
-    /// A configured window subtracts system-prompt + response-reserve overhead.
+    /// A configured window subtracts system-prompt + response-reserve + the
+    /// proportional safety slack (tuxlink-ch4po F2b) as overhead.
     #[test]
     fn transcript_budget_subtracts_overhead() {
-        let b = transcript_budget(Some(32_768), "short system", &[]).unwrap();
-        assert!(b < 32_768 && b > 32_768 - RESPONSE_RESERVE_TOKENS - 100,
-                "budget {b} should be nctx minus a small overhead");
+        let nctx = 32_768usize;
+        let b = transcript_budget(Some(nctx as u32), "short system", &[]).unwrap();
+        // Overhead = small system estimate + tools(0) + response reserve +
+        // proportional slack (nctx / SAFETY_MARGIN_DIVISOR).
+        let min_overhead = RESPONSE_RESERVE_TOKENS + nctx / SAFETY_MARGIN_DIVISOR;
+        assert!(
+            b < nctx && b > nctx - min_overhead - 100,
+            "budget {b} should be nctx minus (response reserve + proportional slack + system est)"
+        );
     }
 
     /// Codex P1: even a zero budget never yields an empty transcript, and never a
@@ -1813,17 +1853,13 @@ mod tests {
     /// reserve, but never zero — so the server always has room to answer.
     #[test]
     fn output_budget_reserves_positive_budget_near_window() {
-        // Choose a prompt whose estimate leaves room for MIN_OUTPUT + margin but
-        // less than the full RESPONSE_RESERVE_TOKENS.
-        // window - est - CONTEXT_SAFETY_MARGIN should land between MIN_OUTPUT and
-        // RESPONSE_RESERVE. Target usable ≈ 1000.
         let window = 40_000usize;
-        let target_usable = 1_000usize;
-        let sys = "s"; // estimate_text_tokens("s") = 8
+        let sys = "s";
         let sys_est = estimate_text_tokens(sys);
-        // est_prompt = window - CONTEXT_SAFETY_MARGIN - target_usable
-        let want_est = window - CONTEXT_SAFETY_MARGIN_TOKENS - target_usable;
-        // message estimate = len/3 + 8; solve len so total est (sys + msg) ≈ want_est
+        // Target est_prompt ≈ 32_000, chosen so `window - est - est/DIVISOR`
+        // (the proportional margin) lands between MIN_OUTPUT_TOKENS and
+        // RESPONSE_RESERVE_TOKENS — a positive sub-cap reserve.
+        let want_est = 32_000usize;
         let msg_est = want_est - sys_est;
         let msg = "y".repeat((msg_est.saturating_sub(8)) * 3);
         let msgs = vec![user(&msg)];
@@ -1835,6 +1871,39 @@ mod tests {
                 );
             }
             other => panic!("expected Reserve near the window, got {other:?}"),
+        }
+    }
+
+    /// tuxlink-ch4po F2b regression: the exact re-pilot overflow shape. A cell's
+    /// transcript ESTIMATED at ~233k tokens (bytes/3) against qwen's 262 144-token
+    /// window had a REAL prompt of 258 049 tokens; the old FIXED 2048 margin still
+    /// left room for the 4096 reserve, so the request reached 262 145 > 262 144 and
+    /// the vLLM server rejected the whole turn with an opaque HTTP 400. With the
+    /// PROPORTIONAL margin (`est/6 ≈ 38.8k` here) the planner BOUNDS the turn
+    /// (Exceeded → ContextWindowExceeded) instead of POSTing the overflowing
+    /// request — the failure becomes a clean, bounded outcome.
+    #[test]
+    fn output_budget_bounds_the_eu3_near_window_balloon() {
+        let window = 262_144u32;
+        let sys = "s";
+        // A single message estimated at ~233k tokens: the plausible bytes/3
+        // estimate for the 258k-real EU3 prompt (a ~10% dense-JSON under-count).
+        let est_target = 233_000usize;
+        let msg = "z".repeat((est_target.saturating_sub(16)) * 3);
+        let msgs = vec![user(&msg)];
+        match plan_output_budget(Some(window), sys, &[], &msgs) {
+            OutputBudget::Exceeded { est_prompt, window: win } => {
+                assert_eq!(win, window as usize);
+                assert!(
+                    est_prompt >= 200_000,
+                    "the balloon must estimate near the window; got {est_prompt}"
+                );
+            }
+            OutputBudget::Reserve(n) => panic!(
+                "a 233k-est prompt against a 262k window must be bounded, not sent: \
+                 the real 258k prompt + Reserve({n}) would overflow the window"
+            ),
+            OutputBudget::Omit => panic!("window is known; must not omit"),
         }
     }
 
