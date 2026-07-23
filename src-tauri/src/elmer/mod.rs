@@ -9,9 +9,10 @@
 //! - Task 7 (`provider` / `session`): `ElmerSession` + Tauri commands.
 //! - Task 8 (`pane`): full Tauri command surface.
 //!
-//! `workflow`: Routine CI slice 1a — Elmer's multi-phase "build me a
-//! routine" workflow. Task 1 lands the typed phase artifacts
-//! ([`workflow::artifacts`]) that later tasks in the slice build against.
+//! `workflow`: the deterministic mechanical pieces (affordance catalog +
+//! routine validator) salvaged from the discarded "Routine CI" workflow
+//! engine (bd tuxlink-t3jci). The hidden multi-phase cognition was torn out;
+//! the new routine-authoring scaffold is an agent-driven skill, not an engine.
 
 pub mod approval;
 pub mod commands;
