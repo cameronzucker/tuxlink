@@ -12,7 +12,7 @@
 #
 # Usage:
 #   run-matrix.sh --models <models.tsv> --corpus <corpus.json> --out <root> \
-#       [--arms "base matched-control full"] \
+#       [--arms "base matched-control skill"] \
 #       [--only "A1 C2 EU3"]   (subset of corpus prompt ids; default = all) \
 #       [--bin <path-to-elmer_battery>] \
 #       [--cell-ceiling-usd N] [--turn-cap N] [--turn-timeout-secs N] \
@@ -36,7 +36,7 @@
 # var is empty/unset is skipped with a loud warning (fail-loud, not silent).
 set -euo pipefail
 
-ARMS="base matched-control full"
+ARMS="base matched-control skill"
 ONLY=""
 BIN="elmer_battery"
 CORPUS=""

@@ -962,6 +962,159 @@ routines_actions_list already provides. \
 \
 Be concise and practical.";
 
+// ---------------------------------------------------------------------------
+// Build Carefully — routine-authoring skill delivery (tuxlink-t3jci P1)
+//
+// Design: dev/scratch/tuxlink-elmer-routine-scaffold-redesign-conversation.md
+// (GPT-5.6 redesign, operator-endorsed) + docs/superpowers/plans/
+// 2026-07-23-p1-build-carefully-skill-delivery.md. The agent-visible authoring
+// procedure is prose the agent follows; deterministic constraints stay in code
+// (P3 mechanical harness). NOT an engine that drives a blind agent.
+// ---------------------------------------------------------------------------
+
+/// Version of the embedded "Build Carefully" routine-authoring skill. Bump on
+/// any content change so a stored/eval transcript ties to the exact skill text
+/// it ran under.
+pub const AUTHORING_SKILL_VERSION: &str = "1.0.0";
+
+/// Routine-namespace + honesty invariant (redesign "Delivery layer 1").
+/// Injected WITH the authoring arm only (operator delta 2026-07-23) — NOT baked
+/// always-on into [`ELMER_SYSTEM_PROMPT`] — so the Base "no workflow" experiment
+/// arm stays the pure production prompt and the Base-vs-Skill A/B has no shared
+/// confound. Transcribed verbatim from the redesign document.
+pub const ROUTINE_INVARIANT: &str = r#"Routine namespace and honesty:
+- Routine actions are NOT the same namespace as your Elmer tools. Only the registered trigger/control/action catalog can execute inside a saved routine; an Elmer tool you can call while helping cannot be embedded as a routine step unless a corresponding routine action exists.
+- Never claim unsupported behavior. If a required capability has no routine action, say so; do not substitute a vaguely related one.
+- Transmission and configuration effects must be disclosed.
+- Operation-level safety gates remain authoritative."#;
+
+/// The "Build Carefully" routine-authoring skill — the versioned procedure the
+/// agent follows when the user selects authoring mode. Transcribed VERBATIM from
+/// the GPT-5.6 redesign document ("What the skill should contain"),
+/// operator-confirmed sound. Appended (not substituted) after the base prompt by
+/// [`compose_system_prompt`]. Keep it short and concrete; bump
+/// [`AUTHORING_SKILL_VERSION`] on any content change.
+pub const AUTHORING_SKILL: &str = r#"# Routine Authoring
+
+Use this procedure for difficult routine requests.
+
+1. Separate authoring-time tools from routine-time actions.
+   Only actions listed by routines_actions_list can execute inside a routine.
+   Other Elmer tools may provide evidence while authoring, but cannot be
+   inserted into a routine unless a corresponding routine action exists.
+
+2. Check every material requirement against the available trigger, control,
+   and action catalog before saving anything.
+   For each requirement, either:
+   - implement it with a listed primitive;
+   - identify an operator-provided value still needed; or
+   - state that it is unsupported.
+   Never substitute a vaguely related action for an unsupported capability.
+
+3. Choose a descriptive kebab-case routine name before the first write.
+
+4. Create a valid routine shell, then use fragment-edit tools.
+   Do not regenerate the entire document when a localized edit is sufficient.
+
+5. Resolve live facts with read tools before encoding them.
+   Do not invent stations, presets, rigs, paths, or action outputs.
+
+6. Preserve data flow explicitly.
+   Confirm that every later output reference names an earlier reachable step
+   and that each branch has the required value.
+
+7. Validate after construction.
+   Make at most one changed repair attempt for each distinct finding.
+   Never repeat an identical rejected tool call.
+
+8. If a material requirement is unsupported:
+   - do not claim the requested routine was completed;
+   - do not silently omit the requirement;
+   - do not save a misleading partial routine unless the user explicitly
+     requested the supported subset.
+
+9. In the final response, state:
+   - routine name and trigger;
+   - what it will do;
+   - what can transmit or change configuration;
+   - validation status;
+   - assumptions, missing values, and unsupported requirements."#;
+
+/// Compose the effective system prompt for a turn.
+///
+/// `None` is returned only when authoring is OFF and there is no operator
+/// override, so the provider's `unwrap_or(ELMER_SYSTEM_PROMPT)` default path
+/// (the pure Base arm) is left untouched. When authoring is ON, the routine
+/// invariant then the skill are APPENDED after the base (override, else the
+/// built-in prompt), separated by blank lines. This is the single composition
+/// point shared by the app "Build Carefully" toggle and the battery `+Skill`
+/// arm, so Base and Skill differ by *exactly* the invariant+skill (confound-free).
+pub fn compose_system_prompt(
+    system_prompt_override: Option<String>,
+    authoring: bool,
+) -> Option<String> {
+    match (system_prompt_override, authoring) {
+        (over, false) => over,
+        (Some(over), true) => Some(format!("{over}\n\n{ROUTINE_INVARIANT}\n\n{AUTHORING_SKILL}")),
+        (None, true) => Some(format!(
+            "{ELMER_SYSTEM_PROMPT}\n\n{ROUTINE_INVARIANT}\n\n{AUTHORING_SKILL}"
+        )),
+    }
+}
+
+#[cfg(test)]
+mod compose_system_prompt_tests {
+    use super::*;
+
+    #[test]
+    fn compose_off_no_override_is_none_passthrough() {
+        // Base ("no workflow") arm: pure production prompt, no invariant, no skill.
+        assert_eq!(compose_system_prompt(None, false), None);
+    }
+
+    #[test]
+    fn compose_off_with_override_is_unchanged() {
+        let o = "custom operator prompt".to_string();
+        assert_eq!(compose_system_prompt(Some(o.clone()), false), Some(o));
+    }
+
+    #[test]
+    fn compose_on_no_override_injects_invariant_then_skill() {
+        let got = compose_system_prompt(None, true).expect("authoring on -> Some");
+        assert!(got.starts_with(ELMER_SYSTEM_PROMPT), "base first");
+        let inv = got.find(ROUTINE_INVARIANT).expect("invariant present");
+        let skill = got.find(AUTHORING_SKILL).expect("skill present");
+        assert!(inv < skill, "invariant leads, skill follows");
+        assert!(got.ends_with(AUTHORING_SKILL));
+    }
+
+    #[test]
+    fn compose_on_with_override_uses_override_as_base() {
+        assert_eq!(
+            compose_system_prompt(Some("OVR".to_string()), true),
+            Some(format!("OVR\n\n{ROUTINE_INVARIANT}\n\n{AUTHORING_SKILL}"))
+        );
+    }
+
+    #[test]
+    fn base_prompt_has_no_invariant_or_skill() {
+        // Guard the experimental branch separation: the invariant/skill must NOT
+        // leak into the always-on base prompt (operator delta, this slice).
+        assert!(!ELMER_SYSTEM_PROMPT.contains(ROUTINE_INVARIANT));
+        assert!(!ELMER_SYSTEM_PROMPT.contains(AUTHORING_SKILL));
+    }
+
+    #[test]
+    fn authoring_skill_is_the_document_procedure() {
+        assert!(AUTHORING_SKILL.contains("# Routine Authoring"));
+        assert!(AUTHORING_SKILL.contains("routines_actions_list"));
+        assert!(AUTHORING_SKILL.contains("kebab-case"));
+        assert!(AUTHORING_SKILL.contains("Validate after construction"));
+        assert!(AUTHORING_SKILL.contains("unsupported"));
+        assert!(!AUTHORING_SKILL_VERSION.trim().is_empty());
+    }
+}
+
 /// Reserve, in estimated tokens, held back from the context budget for the
 /// model's response. gpt-oss emits a Harmony reasoning channel on top of the
 /// final answer, so this is generous.
