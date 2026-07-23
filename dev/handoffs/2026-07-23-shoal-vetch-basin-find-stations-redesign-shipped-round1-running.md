@@ -44,6 +44,12 @@ Commits `94d1b151` → `a8ff771d` (on top of the spec/plan commits):
   bounded responses. P8 property test proves worst legal value < 32 KB. Docs +
   Elmer system-prompt find_stations line updated.
 - **leniency** `a8ff771d` — `de_stringy_or_native` (the round-1 fix above).
+- **harness state** `7f997c41` — register `SnapshotStore` in the `elmer_battery`
+  binary. Round 1 caught a panic (`state() called before manage() for
+  Arc<SnapshotStore>`): the port resolves the store from Tauri managed state, the
+  main app registers it in `run()`, but the battery harness builds its own app.
+  This is exactly the seam the (bypassed) wire-walk gate guards — good that the
+  live run surfaced it. Fixed + rebuilt + round 1 restarted.
 
 **Verified on R2 (cargo 1.96):** full workspace `clippy --all-targets -D warnings`
 CLEAN; mcp-core 182 tests pass (incl. `<32 KB` property + object-root-schema
