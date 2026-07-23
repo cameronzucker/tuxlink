@@ -281,37 +281,43 @@ fn parse_artifact<T: serde::de::DeserializeOwned>(turn: &PhaseTurn) -> Result<T,
     serde_json::from_value(coerced).map_err(|e| PhaseError::Parse(e.to_string()))
 }
 
-/// The routine name the Emit phase's tool calls acted on, read straight off
-/// the calls themselves rather than threaded through as a side parameter:
-/// every routine edit verb except `routines_save` carries a top-level
-/// `routine` string param, and `routines_save` carries it nested in `def`
-/// (or, for the deprecated string form, inside `def_json`). Returns the
-/// first name found, in call order — an Emit phase operates on exactly one
-/// routine, so the first call that names one settles it. `None` when no
-/// call in `tool_calls` names a routine at all (a phase that produced no
-/// tool calls, or tool calls this function does not recognize).
-fn routine_name_from_tool_calls(tool_calls: &[ToolCall]) -> Option<String> {
+/// Every routine name the Emit phase's tool calls act on, in call order — read
+/// straight off the calls rather than threaded through as a side parameter:
+/// every routine edit verb except `routines_save` carries a top-level `routine`
+/// string param, and `routines_save` carries it nested in `def` (or, for the
+/// deprecated string form, inside `def_json`).
+///
+/// Returns ALL names, not just the first: a multi-turn Emit loop against a real
+/// model may name SEVERAL routines — early attempts the model got wrong (e.g. a
+/// non-kebab-case name the store rejects) plus the final accepted one — so
+/// [`capture_artifact`] resolves the one that ACTUALLY landed in the store,
+/// newest-first. (tuxlink-ch4po: a 40-turn qwen Emit named `build-routine v1.0.0`
+/// first — the store rejects it as non-kebab — then saved `build-routine-v1-0-0`;
+/// keying off the FIRST name reported a false failure while the valid routine sat
+/// orphaned in the store.) Empty when no call names a routine at all.
+fn routine_names_from_tool_calls(tool_calls: &[ToolCall]) -> Vec<String> {
+    let mut names = Vec::new();
     for call in tool_calls {
         if let Some(name) = call.args.get("routine").and_then(|v| v.as_str()) {
-            return Some(name.to_string());
+            names.push(name.to_string());
         }
         if call.name == "routines_save" {
             if let Some(def) = call.args.get("def") {
                 let coerced = parse_if_string(def.clone(), CompositeKind::Object);
                 if let Some(name) = coerced.get("routine").and_then(|v| v.as_str()) {
-                    return Some(name.to_string());
+                    names.push(name.to_string());
                 }
             }
             if let Some(def_json) = call.args.get("def_json").and_then(|v| v.as_str()) {
                 if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(def_json) {
                     if let Some(name) = parsed.get("routine").and_then(|v| v.as_str()) {
-                        return Some(name.to_string());
+                        names.push(name.to_string());
                     }
                 }
             }
         }
     }
-    None
+    names
 }
 
 /// Capture one phase's model turn into a typed [`CapturedArtifact`].
@@ -319,8 +325,8 @@ fn routine_name_from_tool_calls(tool_calls: &[ToolCall]) -> Option<String> {
 /// `Intent` / `Feasibility` / `Draft` / `Present` parse `turn.final_text`
 /// via [`parse_artifact`] (the direct-coercion path). `Emit` does not parse
 /// `final_text` at all — the model built the routine by calling tools, so
-/// this reads the routine name off `turn.tool_calls`
-/// ([`routine_name_from_tool_calls`]) and confirms it landed in `store`
+/// this reads the routine names off `turn.tool_calls`
+/// ([`routine_names_from_tool_calls`]) and confirms the one that landed in `store`
 /// (`DefinitionStore::get`, which itself round-trips through
 /// `RoutineDef::parse` — the "loads the def via store + `RoutineDef::parse`"
 /// the brief calls for). `Router` and `Ci` are not artifact-capturing phases
@@ -338,17 +344,25 @@ pub fn capture_artifact(
         PhaseName::Draft => parse_artifact(turn).map(CapturedArtifact::Draft),
         PhaseName::Present => parse_artifact(turn).map(CapturedArtifact::Present),
         PhaseName::Emit => {
-            let routine_name = routine_name_from_tool_calls(&turn.tool_calls).ok_or_else(|| {
-                PhaseError::Store(
+            let names = routine_names_from_tool_calls(&turn.tool_calls);
+            if names.is_empty() {
+                return Err(PhaseError::Store(
                     "emit phase's tool calls named no routine to look up".to_string(),
-                )
-            })?;
-            if store.get(&routine_name).is_none() {
-                return Err(PhaseError::Store(format!(
-                    "routine {routine_name:?} not found in store after emit"
-                )));
+                ));
             }
-            Ok(CapturedArtifact::Emitted { routine_name })
+            // Resolve the routine that ACTUALLY landed in the store, newest-first:
+            // a multi-turn Emit loop may name several (rejected early attempts +
+            // the accepted final one), so the last name present in the store is
+            // the routine the phase truly built.
+            match names.iter().rev().find(|n| store.get(n).is_some()) {
+                Some(routine_name) => Ok(CapturedArtifact::Emitted {
+                    routine_name: routine_name.clone(),
+                }),
+                None => Err(PhaseError::Store(format!(
+                    "none of the routines named by the emit phase are in the store \
+                     after emit: {names:?}"
+                ))),
+            }
         }
         PhaseName::Router | PhaseName::Ci => Err(PhaseError::Parse(format!(
             "{phase:?} does not capture an artifact"
@@ -745,6 +759,59 @@ mod tests {
             captured,
             CapturedArtifact::Emitted {
                 routine_name: "morning-ics-cycle".to_string()
+            }
+        );
+    }
+
+    // tuxlink-ch4po N2: a multi-turn Emit loop names a routine the store REJECTS
+    // first (a non-kebab name), then saves a valid one under a different name.
+    // Capture must resolve the routine that ACTUALLY landed in the store, not the
+    // first (rejected) name — otherwise a real Full-arm success is mis-recorded as
+    // a failure while the valid routine sits orphaned.
+    #[test]
+    fn capture_artifact_emit_resolves_the_saved_routine_not_the_first_rejected_name() {
+        use tuxlink_routines::types::{OnInterrupted, RoutineDef, TransmitMode};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = DefinitionStore::open(dir.path().to_path_buf());
+        // Only the SECOND, kebab-case name is actually in the store.
+        let def = RoutineDef {
+            routine: "build-routine-v1-0-0".to_string(),
+            schema_version: 1,
+            transmit_mode: TransmitMode::Attended,
+            transmit_ack: None,
+            write_ack: None,
+            on_interrupted: OnInterrupted::Stay,
+            inputs: vec![],
+            triggers: vec![],
+            tracks: vec![],
+        };
+        store.save(&def).expect("seed store with the accepted routine");
+
+        let turn = PhaseTurn {
+            outcome: RunOutcome::Completed(String::new()),
+            tool_calls: vec![
+                // First attempt: a non-kebab name the store would have rejected.
+                ToolCall::new(
+                    "routines_meta_set",
+                    serde_json::json!({ "routine": "build-routine v1.0.0", "patch": {} }),
+                ),
+                // Later attempt: the name that actually saved.
+                ToolCall::new(
+                    "routines_meta_set",
+                    serde_json::json!({ "routine": "build-routine-v1-0-0", "patch": {} }),
+                ),
+            ],
+            final_text: String::new(),
+            prompt_tokens: 0,
+        };
+
+        let captured = capture_artifact(PhaseName::Emit, &turn, &store)
+            .expect("resolves the routine that landed in the store");
+        assert_eq!(
+            captured,
+            CapturedArtifact::Emitted {
+                routine_name: "build-routine-v1-0-0".to_string()
             }
         );
     }
