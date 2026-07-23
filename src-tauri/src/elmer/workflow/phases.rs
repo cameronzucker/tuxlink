@@ -131,6 +131,18 @@ fn declared_inputs(phase: PhaseName) -> &'static [&'static str] {
 /// Phrased so each phase's model call knows exactly what shape to answer
 /// in — artifact phases are told to answer as a single JSON object matching
 /// their schema, `Emit` is told to call tools instead of narrating.
+///
+/// **Why the literal JSON shape is spelled out (tuxlink-ch4po F1b).** The CI
+/// StubModel was fed clean, schema-exact JSON, so a prose "matching the Intent
+/// schema" sufficed there. Real qwen-class models, given only that prose, NEST
+/// objects where a flat string is wanted (`"trigger": {"schedule": ...}`) and
+/// the Intent phase's parse failed (`invalid type: map, expected a string`),
+/// stopping the whole Full arm. `artifacts.rs`'s lenient `deserialize_with`
+/// adapters are the belt (they coerce the off-shape rather than reject it);
+/// these embedded shapes are the suspenders — SHOW the exact camelCase keys and
+/// FLAT types so a well-behaved model emits the right shape the first time and
+/// never needs the coercion. Keys are camelCase to match the artifacts' own
+/// `#[serde(rename_all = "camelCase")]`.
 fn phase_instruction(phase: PhaseName) -> &'static str {
     match phase {
         PhaseName::Router => {
@@ -139,23 +151,51 @@ fn phase_instruction(phase: PhaseName) -> &'static str {
              Answer with the routing decision only."
         }
         PhaseName::Intent => {
-            "Capture the operator's intent for the routine they want built: \
-             outcome, trigger, success condition, failure behavior, side \
-             effects, and any values that must persist across runs. Answer \
-             as a single JSON object matching the Intent schema — no prose \
-             outside the JSON."
+            "Capture the operator's intent for the routine they want built. \
+             Answer as a single JSON object EXACTLY matching this shape, and \
+             nothing else (no prose, no markdown fences):\n\
+             {\n\
+             \x20 \"outcome\": \"<one flat string: what the routine achieves>\",\n\
+             \x20 \"trigger\": \"<one flat string: what starts it, e.g. 'schedule: hourly at :00'>\",\n\
+             \x20 \"success\": \"<one flat string: the success condition>\",\n\
+             \x20 \"failure\": \"<one flat string: what to do on failure>\",\n\
+             \x20 \"sideEffects\": [\"<flat string>\", ...],\n\
+             \x20 \"persistedValues\": [\"<flat string>\", ...]\n\
+             }\n\
+             Every value above marked <flat string> MUST be a plain JSON string, \
+             NOT a nested object or array. Use [] for an empty list."
         }
         PhaseName::Feasibility => {
             "Given the captured intent below, determine what the routine \
              catalog can currently do and what the intent needs that the \
              catalog does not yet offer. Answer as a single JSON object \
-             matching the Affordances schema — no prose outside the JSON."
+             EXACTLY matching this shape, and nothing else (no prose, no fences):\n\
+             {\n\
+             \x20 \"actions\": [\n\
+             \x20\x20 { \"name\": \"<flat string>\", \"transmits\": <bool>, \"needsRadio\": <bool>, \
+             \"writesConfig\": <bool>, \"params\": [\"<flat string>\", ...], \"outputs\": [\"<flat string>\", ...] }\n\
+             \x20 ],\n\
+             \x20 \"missingPrimitives\": [\"<flat string naming a primitive the catalog lacks>\", ...]\n\
+             }\n\
+             Leave \"missingPrimitives\" as [] if the catalog can already do \
+             everything the intent needs. Every <flat string> MUST be a plain \
+             JSON string, not a nested object."
         }
         PhaseName::Draft => {
             "Given the intent and the available affordances below, draft a \
-             candidate routine graph: steps, actions, params, and any \
-             branches. Answer as a single JSON object matching the Draft \
-             schema — do not save anything yet, no prose outside the JSON."
+             candidate routine graph. Answer as a single JSON object EXACTLY \
+             matching this shape, and nothing else (no prose, no fences):\n\
+             {\n\
+             \x20 \"nodes\": [\n\
+             \x20\x20 { \"id\": \"<flat string step id>\", \"action\": \"<flat string action name>\", \
+             \"params\": { <arbitrary JSON object of this action's params> }, \
+             \"branch\": null }\n\
+             \x20 ]\n\
+             }\n\
+             \"id\" and \"action\" MUST be plain JSON strings. \"params\" is a \
+             free-form JSON object (it may nest). For a conditional step set \
+             \"branch\": { \"then\": [\"<step id>\", ...], \"else\": [\"<step id>\", ...] }, \
+             otherwise \"branch\": null. Do not save anything yet."
         }
         PhaseName::Emit => {
             "Given the intent, affordances, and drafted routine graph below, \
@@ -169,11 +209,18 @@ fn phase_instruction(phase: PhaseName) -> &'static str {
         }
         PhaseName::Present => {
             "Given the intent, the drafted routine, and the saved-routine \
-             confirmation below, summarize what was built for the operator: \
-             what it does, decisions you inferred along the way, how it \
-             behaves on failure, any gaps, and anything that needs an \
-             explicit acknowledgment before it can run for real. Answer as a \
-             single JSON object matching the Present schema."
+             confirmation below, summarize what was built for the operator. \
+             Answer as a single JSON object EXACTLY matching this shape, and \
+             nothing else (no prose, no fences):\n\
+             {\n\
+             \x20 \"built\": \"<one flat string: what the routine does>\",\n\
+             \x20 \"inferredDecisions\": [\"<flat string: a decision you inferred>\", ...],\n\
+             \x20 \"failureBehavior\": \"<one flat string: how it behaves on failure>\",\n\
+             \x20 \"gaps\": [\"<flat string: something still missing>\", ...],\n\
+             \x20 \"acksRequired\": [\"<flat string: something needing explicit ack before running>\", ...]\n\
+             }\n\
+             \"built\" and \"failureBehavior\" MUST be plain JSON strings, not \
+             nested objects. Use [] for an empty list."
         }
     }
 }
@@ -553,6 +600,52 @@ mod tests {
         let captured =
             capture_artifact(PhaseName::Intent, &turn, &store).expect("stringified intent parses");
         assert_eq!(captured, CapturedArtifact::Intent(intent));
+    }
+
+    // F1b end-to-end at the capture layer: the exact re-pilot failure shape —
+    // qwen returns a JSON object that NESTS an object under `trigger` (and an
+    // array under `success`) where the Intent schema declares flat strings.
+    // Before the lenient adapters this stopped the Full arm at Intent with
+    // `invalid type: map, expected a string`; now it captures, coercing the
+    // off-shape fields to their compact JSON text.
+    #[test]
+    fn capture_artifact_intent_tolerates_qwen_nested_object_fields() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = DefinitionStore::open(dir.path().to_path_buf());
+
+        let final_text = r#"{
+            "outcome": "pull VARA mail from the nearest 20m gateway hourly",
+            "trigger": {"schedule": "hourly at :00"},
+            "success": ["mail pulled"],
+            "failure": "log and retry next cycle",
+            "sideEffects": "radio TX",
+            "persistedValues": []
+        }"#;
+        let turn = PhaseTurn::text(final_text, 33);
+
+        let captured = capture_artifact(PhaseName::Intent, &turn, &store)
+            .expect("nested-object intent captures via the lenient adapters");
+        let CapturedArtifact::Intent(intent) = captured else {
+            panic!("expected an Intent artifact");
+        };
+        assert_eq!(intent.trigger, r#"{"schedule":"hourly at :00"}"#);
+        assert_eq!(intent.success, r#"["mail pulled"]"#);
+        assert_eq!(intent.side_effects, vec!["radio TX".to_string()]);
+    }
+
+    // The F1b prompt-side belt: each artifact phase's instruction SHOWS the
+    // exact camelCase field keys and the flat-string requirement, so a
+    // well-behaved model emits the right shape without leaning on the coercion.
+    #[test]
+    fn artifact_phase_instructions_embed_the_json_shape() {
+        let intent = phase_instruction(PhaseName::Intent);
+        assert!(intent.contains("\"trigger\""));
+        assert!(intent.contains("\"persistedValues\""));
+        assert!(intent.contains("flat string"));
+
+        assert!(phase_instruction(PhaseName::Feasibility).contains("\"missingPrimitives\""));
+        assert!(phase_instruction(PhaseName::Draft).contains("\"nodes\""));
+        assert!(phase_instruction(PhaseName::Present).contains("\"acksRequired\""));
     }
 
     #[test]

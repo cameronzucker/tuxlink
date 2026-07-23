@@ -55,8 +55,47 @@ use crate::routines::store::DefinitionStore;
 use super::artifacts::{CiVerdict, Depth, Draft, PhaseName, PhaseRecord, WorkflowRun};
 use super::ci::run_routine_ci;
 use super::manifest::WorkflowManifest;
-use super::model::PhaseModel;
+use super::model::{PhaseModel, PhaseTurn};
 use super::phases::{build_prompt, capture_artifact, tools_for, CapturedArtifact};
+
+/// A bounded slice of one phase turn's RAW output for the `PhaseRecord`'s
+/// `raw_output` debug field (tuxlink-ch4po F1b). Artifact phases answer in text
+/// (`final_text` is the JSON the phase parsed — or FAILED to parse, which is the
+/// case worth seeing), so that is captured; the Emit phase answers in tool calls
+/// (empty `final_text`), so its issued calls are dumped instead; a
+/// non-`Completed` turn has neither, so the bounded outcome kind is recorded.
+/// Capped so a runaway model answer cannot balloon the bundle.
+fn phase_raw_output(turn: &PhaseTurn) -> Option<String> {
+    const CAP: usize = 8192;
+    let raw = if !turn.final_text.is_empty() {
+        turn.final_text.clone()
+    } else if !turn.tool_calls.is_empty() {
+        let calls: Vec<serde_json::Value> = turn
+            .tool_calls
+            .iter()
+            .map(|c| serde_json::json!({ "tool": c.name, "args": c.args }))
+            .collect();
+        serde_json::to_string(&calls).unwrap_or_else(|_| format!("{:?}", turn.tool_calls))
+    } else {
+        format!("{:?}", turn.outcome)
+    };
+    Some(truncate_on_char_boundary(raw, CAP))
+}
+
+/// Truncate `s` to at most `cap` bytes, cutting on a UTF-8 char boundary and
+/// marking the cut. `String::truncate` panics on a non-boundary index, so back
+/// up to the nearest boundary at or below `cap` first.
+fn truncate_on_char_boundary(mut s: String, cap: usize) -> String {
+    if s.len() > cap {
+        let mut end = cap;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        s.truncate(end);
+        s.push_str("…[truncated]");
+    }
+    s
+}
 use super::present::build_present;
 use super::router::select_depth_with_tokens;
 
@@ -121,6 +160,10 @@ pub async fn run_workflow(
         name: PhaseName::Router,
         prompt_tokens: router_prompt_tokens,
         outcome: format!("selected {depth:?} depth"),
+        // Router's depth-selection turn text is not surfaced by
+        // `select_depth_with_tokens` (it returns only the parsed depth + tokens),
+        // and Router is not an artifact-capture phase, so nothing to capture.
+        raw_output: None,
     });
 
     let phase_list: &[PhaseName] = match depth {
@@ -142,6 +185,7 @@ pub async fn run_workflow(
                     name: phase,
                     prompt_tokens: turn.prompt_tokens,
                     outcome: format!("captured {}", artifact.kind()),
+                    raw_output: phase_raw_output(&turn),
                 });
                 // Feasibility gate (Task 1 honesty mechanism): a non-empty
                 // `missing_primitives` means the intent needs something the
@@ -184,6 +228,10 @@ pub async fn run_workflow(
                     name: phase,
                     prompt_tokens: turn.prompt_tokens,
                     outcome: format!("failed: {err}"),
+                    // The whole point of F1b: when capture FAILS, persist what the
+                    // model actually produced so the parse failure is diagnosable
+                    // from the bundle instead of invisible behind NullTranscript.
+                    raw_output: phase_raw_output(&turn),
                 });
                 return WorkflowRun {
                     depth,
@@ -242,6 +290,8 @@ pub async fn run_workflow(
         name: PhaseName::Ci,
         prompt_tokens: 0,
         outcome: format!("{:?}", ci_report.verdict),
+        // Ci is deterministic (no model turn) — nothing to capture.
+        raw_output: None,
     });
 
     if ci_report.verdict == CiVerdict::Red {
@@ -299,6 +349,8 @@ pub async fn run_workflow(
         name: PhaseName::Present,
         prompt_tokens: 0,
         outcome: "presented".to_string(),
+        // Slice-1a Present is a deterministic template build (no model turn).
+        raw_output: None,
     });
 
     WorkflowRun {
@@ -592,6 +644,51 @@ mod tests {
             prompts[3].contains(operator_request),
             "Draft prompt must also carry the operator request: {}",
             prompts[3]
+        );
+    }
+
+    // --- F1b debug aid: a failing phase persists its raw model output --------
+    //
+    // When a phase's capture FAILS, the raw text the model produced must land in
+    // the `PhaseRecord.raw_output` so the failure is diagnosable from the bundle
+    // (before this, the Full arm's phases ran against `NullTranscript` and the
+    // offending output was invisible). Here the Intent turn returns text that is
+    // not a JSON object at all, so Intent capture fails — and its raw output is
+    // recorded verbatim on the failed record.
+    #[tokio::test]
+    async fn failed_phase_capture_records_raw_model_output() {
+        let manifest = fixture_manifest();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = DefinitionStore::open(dir.path().to_path_buf());
+
+        let garbage = "I think you want an hourly VARA routine, but here is prose not JSON.";
+        let stub = StubModel::new(vec![
+            PhaseTurn::text("full", 5),
+            PhaseTurn::text(garbage, 21),
+        ]);
+
+        let run = run_workflow(
+            &manifest,
+            WorkflowInputs {
+                intent_text: "connect nearest 20m gateway hourly".to_string(),
+            },
+            &stub,
+            &StaticContext::new(),
+            &store,
+        )
+        .await;
+
+        assert!(run.saved_routine.is_none());
+        let intent_rec = run
+            .phases_run
+            .iter()
+            .find(|r| r.name == PhaseName::Intent)
+            .expect("an Intent record exists even though capture failed");
+        assert!(intent_rec.outcome.starts_with("failed:"));
+        assert_eq!(
+            intent_rec.raw_output.as_deref(),
+            Some(garbage),
+            "the raw model output must be captured on a failed phase for diagnosis"
         );
     }
 
