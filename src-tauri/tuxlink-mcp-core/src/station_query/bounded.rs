@@ -69,7 +69,7 @@ impl std::error::Error for OutOfRange {}
 // ---------------------------------------------------------------------------
 
 /// A `Vec<T>` that structurally holds at most `N` items.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoundedVec<T, const N: usize>(Vec<T>);
 
 impl<T, const N: usize> BoundedVec<T, N> {
