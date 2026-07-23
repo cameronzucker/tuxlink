@@ -31,6 +31,33 @@ use super::snapshot::{SnapshotError, SnapshotStore};
 /// `recommend` returns a ranked subset.
 const COMPLETE_SET_CAP: usize = 16;
 
+/// Whole-response byte budget (spec §"postcondition contract-violation error").
+/// Every result variant is bounded by construction and the response crate's
+/// worst-legal-value property test proves the serialized DTO stays under this,
+/// so this runtime check should never fire in normal operation. It is the belt
+/// that keeps the guarantee even if a FUTURE change breaks a structural bound:
+/// rather than emit a payload that could overflow the agent's context, the
+/// engine fails loud with a [`StationQueryError::Contract`].
+const RESPONSE_BYTE_BUDGET: usize = 32_768;
+
+/// Enforce the whole-response byte budget. Split out (with an explicit `budget`
+/// argument) so it is unit-testable: a legal response can never exceed the real
+/// budget by construction, so the test shrinks the budget to exercise the guard.
+fn enforce_byte_budget(
+    resp: &FindStationsResponse,
+    budget: usize,
+) -> Result<(), ContractViolation> {
+    let serialized_len = serde_json::to_vec(resp).map_or(usize::MAX, |v| v.len());
+    if serialized_len >= budget {
+        return Err(ContractViolation {
+            detail: format!(
+                "find_stations response serialized to {serialized_len} bytes, at/over the {budget}-byte budget"
+            ),
+        });
+    }
+    Ok(())
+}
+
 /// App-owned facts the engine needs, resolved by the adapter (never agent-supplied).
 pub struct StationContext {
     /// Operator's broadcast grid; distances/bearings are already stamped on the
@@ -137,7 +164,7 @@ impl<'a> StationQueryEngine<'a> {
         req: FindStationsRequest,
         ctx: &StationContext,
     ) -> Result<FindStationsResponse, StationQueryError> {
-        match req {
+        let response = match req {
             FindStationsRequest::Lookup {
                 snapshot_id,
                 callsigns,
@@ -202,7 +229,11 @@ impl<'a> StationQueryEngine<'a> {
                 let filtered = apply_filters(&gateways, &filters, ctx.now_ms);
                 self.finish_export(&filtered, format, ctx, snap_meta)
             }
-        }
+        }?;
+        // Runtime postcondition: fail loud if the built response is over budget
+        // (a broken bound), never emit a payload that could overflow the agent.
+        enforce_byte_budget(&response, RESPONSE_BYTE_BUDGET)?;
+        Ok(response)
     }
 
     /// Load the working population (from a snapshot, or a freshly minted one over
@@ -314,8 +345,9 @@ impl<'a> StationQueryEngine<'a> {
             RecommendationGoal::BestAt { at_utc_ms, .. } => at_utc_ms,
         };
 
-        // Score every eligible station (evaluated == eligible, always — the
-        // population is in memory so we never return an approximate best).
+        // Score every eligible station EXCEPT the excluded candidates. The whole
+        // population is in memory, so we score exhaustively (never an approximate
+        // best); coverage below is exact over exactly this scored set.
         let snap_id = snap_meta.id.as_str().to_string();
         let mut scored: Vec<(f32, Candidate)> = stations
             .iter()
@@ -326,7 +358,14 @@ impl<'a> StationQueryEngine<'a> {
         // Descending by score; stable so equal scores keep group (nearest-first) order.
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-        let evaluated = population.eligible_stations;
+        // Coverage is over the stations actually SCORED — eligible MINUS the
+        // excluded candidates — not the full eligible population, so
+        // evaluated/returned/omitted stay exact when the agent excludes (e.g.
+        // "give me another option"). When ALL eligible are excluded, `scored` is
+        // empty and the result is `no-matches`: an explicit, correct empty (the
+        // agent excluded everything). `population` still reports the full
+        // eligible set, so the envelope stays honest about the whole.
+        let evaluated = scored.len() as u32;
         let result = if scored.is_empty() {
             StationResult::NoMatches
         } else {

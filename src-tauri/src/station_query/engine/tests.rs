@@ -212,6 +212,61 @@ fn recommend_exclude_yields_next_best_across_snapshots() {
     assert_eq!(second_json["result"]["top_candidates"][0]["callsign"], "W2PRI");
 }
 
+#[test]
+fn recommend_coverage_is_exact_under_exclusions() {
+    // drift item 3: with one of three eligible stations excluded, coverage must
+    // report evaluated == eligible - excluded (2), and returned + omitted ==
+    // evaluated. Before the fix `evaluated` was copied from the full eligible
+    // count (3), overstating coverage whenever exclusions were used.
+    let store = SnapshotStore::new(60_000);
+    let engine = StationQueryEngine::new(&store);
+    let c = ctx(scored_population()); // W1FT8, W2PRI, W3PLN
+    let resp = engine
+        .evaluate(
+            recommend(ConnectObjective::Nearest, vec!["snap/W1FT8/FN31".to_string()], 1),
+            &c,
+        )
+        .unwrap();
+    let json = serde_json::to_value(&resp).unwrap();
+    let cov = &json["result"]["coverage"];
+    assert_eq!(cov["evaluated_stations"], 2, "3 eligible - 1 excluded");
+    assert_eq!(cov["returned_stations"], 1);
+    assert_eq!(cov["omitted_stations"], 1);
+    let (ev, ret, om) = (
+        cov["evaluated_stations"].as_u64().unwrap(),
+        cov["returned_stations"].as_u64().unwrap(),
+        cov["omitted_stations"].as_u64().unwrap(),
+    );
+    assert_eq!(ret + om, ev, "returned + omitted must equal evaluated");
+    // The envelope still reports the FULL eligible population.
+    assert_eq!(json["population"]["eligible_stations"], 3);
+}
+
+#[test]
+fn recommend_all_excluded_is_no_matches() {
+    // drift item 3: excluding every eligible station yields `no-matches` — an
+    // explicit, correct empty (the agent excluded everything), not an error.
+    let store = SnapshotStore::new(60_000);
+    let engine = StationQueryEngine::new(&store);
+    let c = ctx(scored_population());
+    let resp = engine
+        .evaluate(
+            recommend(
+                ConnectObjective::Nearest,
+                vec![
+                    "s/W1FT8/FN31".to_string(),
+                    "s/W2PRI/FN31".to_string(),
+                    "s/W3PLN/FN31".to_string(),
+                ],
+                3,
+            ),
+            &c,
+        )
+        .unwrap();
+    let json = serde_json::to_value(&resp).unwrap();
+    assert_eq!(json["result"]["kind"], "no-matches");
+}
+
 // --------------------------------------------------------------------------
 // P5.3 lookup
 // --------------------------------------------------------------------------
@@ -436,6 +491,25 @@ fn widening_a_snapshot_is_rejected() {
         )
         .unwrap_err();
     assert!(matches!(err, StationQueryError::SnapshotWiden));
+}
+
+// --------------------------------------------------------------------------
+// Runtime byte-budget postcondition (drift item 2b)
+// --------------------------------------------------------------------------
+
+#[test]
+fn response_byte_budget_guard_fires_on_synthetic_over_budget() {
+    // A legal response can never exceed the real budget by construction, so we
+    // shrink the budget to exercise the guard: the same response that passes the
+    // real budget must trip a synthetic tiny one with a Contract violation.
+    let store = SnapshotStore::new(60_000);
+    let engine = StationQueryEngine::new(&store);
+    let resp = engine
+        .evaluate(lookup(vec!["W1ABC"]), &ctx(vec![gw("W1ABC", 7100.0, Some(50.0))]))
+        .unwrap();
+    assert!(super::enforce_byte_budget(&resp, super::RESPONSE_BYTE_BUDGET).is_ok());
+    let err = super::enforce_byte_budget(&resp, 8).unwrap_err();
+    assert!(err.detail.contains("budget"), "got: {}", err.detail);
 }
 
 #[test]

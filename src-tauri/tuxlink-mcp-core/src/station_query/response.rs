@@ -621,8 +621,23 @@ mod tests {
 
     const BYTE_BUDGET: usize = 32_768;
 
+    /// The DTO's JSON, once, is what the byte budget bounds. The MCP router wraps
+    /// it in a `ContentBlock` whose `text` field re-encodes that JSON as an
+    /// escaped string value (`{"type":"text","text":"<escaped dto>"}`), which can
+    /// grow it up to ~2× (every `"`/`\` in the DTO gains a backslash). We prove
+    /// the wrapped form stays under this budget so the accounting covers the shape
+    /// that actually reaches the model — still an order of magnitude below the
+    /// 631 KB dump the redesign eliminated, and negligible against the context
+    /// window.
+    const WRAPPED_BYTE_BUDGET: usize = 2 * BYTE_BUDGET + 64;
+
     fn cap<const N: usize>() -> CappedString<N> {
-        CappedString::from_truncated(&"X".repeat(N))
+        // The TRUE worst legal value: control chars are stripped by
+        // `from_truncated`, so the widest-serializing char a `CappedString` can
+        // still hold is `"` (or `\`), which JSON-escapes to 2 bytes. An N-byte
+        // string of quotes serializes to 2N+2 bytes — worse than the old `X`
+        // fill (1×), so this is what the budget must actually withstand.
+        CappedString::from_truncated(&"\"".repeat(N))
     }
 
     fn max_filters() -> StationFilters {
@@ -805,9 +820,22 @@ mod tests {
     }
 
     fn check(resp: FindStationsResponse) -> usize {
-        let n = serde_json::to_vec(&resp).unwrap().len();
-        assert!(n < BYTE_BUDGET, "a variant serialized to {n} bytes (>= {BYTE_BUDGET})");
-        n
+        let dto = serde_json::to_vec(&resp).unwrap();
+        assert!(
+            dto.len() < BYTE_BUDGET,
+            "a variant serialized to {} bytes (>= {BYTE_BUDGET})",
+            dto.len()
+        );
+        // Model the MCP ContentBlock wrap: the DTO JSON re-encoded as an escaped
+        // JSON string value (what lands in the tool result's `text` field).
+        let wrapped =
+            serde_json::to_string(&String::from_utf8(dto.clone()).unwrap()).unwrap();
+        assert!(
+            wrapped.len() < WRAPPED_BYTE_BUDGET,
+            "a wrapped variant serialized to {} bytes (>= {WRAPPED_BYTE_BUDGET})",
+            wrapped.len()
+        );
+        dto.len()
     }
 
     #[test]

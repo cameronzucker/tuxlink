@@ -263,9 +263,25 @@ impl<const MIN: u8, const MAX: u8> JsonSchema for BoundedU8<MIN, MAX> {
 pub struct CappedString<const MAX: usize>(String);
 
 impl<const MAX: usize> CappedString<MAX> {
-    /// Build from `s`, truncating to the largest `char` boundary `<= MAX` bytes.
+    /// Build from `s`, stripping control characters and then truncating to the
+    /// largest `char` boundary `<= MAX` bytes.
+    ///
+    /// Control chars are stripped **before** the byte cap because they
+    /// JSON-escape to far more bytes than they occupy — an ASCII control char is
+    /// one byte but serializes to `\u00XX` (6 bytes), so a byte-capped string
+    /// full of them would serialize to ~6× its cap and defeat the whole-response
+    /// byte budget. The fields this type caps (callsigns, grids, app-minted ids,
+    /// reason codes, facet labels) never legitimately contain control chars, so
+    /// stripping is lossless for them and makes the byte cap an honest bound on
+    /// serialized length (the remaining worst case, a run of `"`/`\`, is only 2×).
     #[must_use]
     pub fn from_truncated(s: &str) -> Self {
+        let stripped: Cow<'_, str> = if s.chars().any(|c| c.is_control()) {
+            Cow::Owned(s.chars().filter(|c| !c.is_control()).collect())
+        } else {
+            Cow::Borrowed(s)
+        };
+        let s: &str = &stripped;
         if s.len() <= MAX {
             return Self(s.to_string());
         }
@@ -415,6 +431,30 @@ mod tests {
         let s: CappedString<4> = serde_json::from_str("\"abcdef\"").unwrap();
         assert_eq!(s.as_str(), "abcd");
         assert_eq!(serde_json::to_string(&s).unwrap(), "\"abcd\"");
+    }
+
+    #[test]
+    fn capped_string_strips_control_chars_so_serialized_stays_within_cap() {
+        // Control chars JSON-escape to up to 6 bytes each (`\u00XX`); if kept, a
+        // byte-capped string could serialize to ~6× its cap. Stripping them makes
+        // the byte cap an honest bound on serialized length. C0 (NUL, \n, \r, \t),
+        // DEL, and C1 (U+009F) controls must all be removed.
+        let nasty = "a\u{0}b\nc\r\td\u{7f}\u{9f}e";
+        let capped = CappedString::<32>::from_truncated(nasty);
+        assert!(!capped.as_str().chars().any(|c| c.is_control()));
+        assert_eq!(capped.as_str(), "abcde");
+        // Serialized length is bytes + 2 delimiter quotes — no escape blowup.
+        let serialized = serde_json::to_string(&capped).unwrap();
+        assert_eq!(serialized, "\"abcde\"");
+        assert_eq!(serialized.len(), capped.len() + 2);
+    }
+
+    #[test]
+    fn capped_string_deserialize_strips_control_chars() {
+        // The lenient deserialize path routes through from_truncated, so a
+        // control-laden wire value is cleaned on the way in too.
+        let s: CappedString<32> = serde_json::from_str("\"a\\u0000b\\tc\"").unwrap();
+        assert_eq!(s.as_str(), "abc");
     }
 
     #[test]
