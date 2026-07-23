@@ -252,7 +252,7 @@ This project employs bd (Beads) AND Claude Code's built-in primitives (TodoWrite
 
 ## Extended capabilities on this Pi
 
-- **Codex CLI** (adversarial review): `/usr/local/bin/codex` or `npx --yes @openai/codex`; already authenticated. **For directed adrev with custom prompts:** `cat prompt.txt | codex review -` (CLI v0.128.0 rejects combining `--base`/`--commit` with `[PROMPT]`). See [CLAUDE.md](CLAUDE.md#openai-codex-cli--for-build-robust-features-at-least-one-adversarial-round-via-codex-requirement) for full usage. **Model ceiling: GPT-5.5 authoritative; GPT-5.6 permitted ONLY as the non-authoritative shadow round of the ADR 0023 clause-5 assessment (paired ledger entry required in `dev/gpt56-assessment-ledger.md`); banned for everything else until assessed** — [ADR 0023](docs/adr/0023-ban-gpt-5-6-until-deception-assessed.md).
+- **Codex CLI** (adversarial review): `/usr/local/bin/codex` or `npx --yes @openai/codex`; already authenticated. **For directed adrev with custom prompts:** `cat prompt.txt | codex review -` (CLI v0.128.0 rejects combining `--base`/`--commit` with `[PROMPT]`). See [CLAUDE.md](CLAUDE.md#openai-codex-cli--for-build-robust-features-at-least-one-adversarial-round-via-codex-requirement) for full usage. **Model policy: GPT-5.6 is permitted for adrev and all tasks; a GPT-5.6 round satisfies the Codex requirement. GPT-5.5 stays the cost-free default (GPT-5.6 rides OpenRouter per-token pricing). No shadow rounds** — [ADR 0028](docs/adr/0028-lift-gpt-5-6-ban.md) (supersedes the ADR 0023/0026 ban).
 - **url-to-markdown** skill: prefer over WebFetch for full-page retrieval. See [CLAUDE.md](CLAUDE.md#url-to-markdown-skill--fetch-full-webpages-not-summaries).
 
 ## Session Completion
