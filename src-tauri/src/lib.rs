@@ -47,6 +47,7 @@ pub mod mcp_connection;
 pub mod elmer;
 pub mod wwv_offair;
 pub mod routines;
+pub mod station_query;
 
 #[cfg(test)]
 pub mod test_helpers;

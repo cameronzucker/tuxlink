@@ -2790,23 +2790,21 @@ fn sort_gateways_by_distance(gateways: &mut [GatewayDto]) {
 }
 
 /// Flatten every listing's gateways into curated, STRUCTURED-ONLY
-/// [`GatewayDto`]s, apply the client-side BAND filter, and sort nearest-first.
+/// [`GatewayDto`]s and apply the client-side BAND filter — but do **not** rank.
 ///
-/// The three stages, in order:
+/// The two curation stages, in order:
 /// 1. **Band filter** (when `bands` is non-empty): keep only gateways with ≥1
 ///    dial in a requested band ([`any_freq_in_bands`]).
 /// 2. **Curation** ([`curate_gateway`]): PII (`sysop_name`/`email`/`homepage`)
 ///    and untrusted free-text (`location`/`last_update`) are dropped; a bogus
 ///    callsign DROPS the whole listing; an invalid grid is NULLED; the channel
 ///    is control-stripped + length-capped.
-/// 3. **Distance sort** ([`sort_gateways_by_distance`]): nearest-first from
-///    `operator_grid`, unknown-distance sinking to the end (stable).
 ///
-/// SHARED by [`MonolithStationPort::find_stations`] (the MCP `find_stations`
-/// tool) AND the routines `data.find_stations` action's `StationQueryService`
-/// path, so the two surfaces are curated BYTE-IDENTICALLY by construction — the
-/// routines PII-omission pin drives this exact fn.
-pub(crate) fn curate_and_rank_gateways(
+/// This is the shared curation seam WITHOUT a baked-in "distance sort" — split
+/// out (tuxlink-m0n38 P4) so the agent-facing `StationQueryEngine` can apply its
+/// own goal-specific ranking/faceting to the same curated population the GUI
+/// path ranks by distance. Return order is the input listing order.
+pub(crate) fn curate_gateways(
     listings: &[crate::catalog::stations::StationListing],
     bands: &[String],
     operator_grid: Option<&str>,
@@ -2825,6 +2823,25 @@ pub(crate) fn curate_and_rank_gateways(
             }
         }
     }
+    gateways
+}
+
+/// Curate ([`curate_gateways`]) then sort nearest-first
+/// ([`sort_gateways_by_distance`]): unknown-distance sinking to the end (stable).
+///
+/// SHARED by [`MonolithStationPort::find_stations`] (the MCP `find_stations`
+/// tool) AND the routines `data.find_stations` action's `StationQueryService`
+/// path, so the two surfaces are curated BYTE-IDENTICALLY by construction — the
+/// routines PII-omission pin drives this exact fn. Kept as a thin wrapper over
+/// [`curate_gateways`] + [`sort_gateways_by_distance`] so every existing caller
+/// (GUI / routines) stays byte-for-byte unchanged after the P4 curation/rank
+/// split.
+pub(crate) fn curate_and_rank_gateways(
+    listings: &[crate::catalog::stations::StationListing],
+    bands: &[String],
+    operator_grid: Option<&str>,
+) -> Vec<GatewayDto> {
+    let mut gateways = curate_gateways(listings, bands, operator_grid);
     // Nearest-first; unknown-distance gateways sink to the end (stable sort).
     sort_gateways_by_distance(&mut gateways);
     gateways
@@ -5743,6 +5760,41 @@ mod tests {
             antenna: Some(GatewayAntenna::Dipole),
             channel_details: Vec::new(),
         }
+    }
+
+    #[test]
+    fn curate_gateways_matches_curate_and_rank_unsorted() {
+        // P4 split guard: `curate_and_rank_gateways` must equal `curate_gateways`
+        // followed by the distance sort — same population, GUI order preserved
+        // for existing callers.
+        let listing = crate::catalog::stations::StationListing {
+            mode: crate::catalog::stations::ListingMode::VaraHf,
+            title: None,
+            gateways: vec![
+                gateway_fixture("W1AW", Some("FN31")), // far east
+                gateway_fixture("K7RA", Some("CN87")), // north-west
+                gateway_fixture("W6AB", Some("DM34")), // near DM43
+            ],
+            raw: String::new(),
+            parsed_ok: true,
+            fetched_at_ms: None,
+        };
+        let listings = [listing];
+        let unsorted = curate_gateways(&listings, &[], Some("DM43"));
+        let ranked = curate_and_rank_gateways(&listings, &[], Some("DM43"));
+
+        // Same set of callsigns regardless of order.
+        let mut u: Vec<&str> = unsorted.iter().map(|g| g.callsign.as_str()).collect();
+        let mut r: Vec<&str> = ranked.iter().map(|g| g.callsign.as_str()).collect();
+        u.sort_unstable();
+        r.sort_unstable();
+        assert_eq!(u, r);
+
+        // curate_and_rank == curate_gateways then distance-sorted (byte-identical
+        // to the pre-split behavior every GUI/routines caller depends on).
+        let mut manually_sorted = unsorted.clone();
+        sort_gateways_by_distance(&mut manually_sorted);
+        assert_eq!(manually_sorted, ranked);
     }
 
     #[test]

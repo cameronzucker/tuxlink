@@ -278,6 +278,74 @@ pub struct StationFilters {
     pub history_hours: Option<u32>,
 }
 
+impl Ft8Policy {
+    /// Ordinal restrictiveness (`ignore` < `prefer` < `require`) for the
+    /// snapshot-narrowing check — a stricter FT-8 policy narrows the population.
+    fn restrictiveness(self) -> u8 {
+        match self {
+            Ft8Policy::Ignore => 0,
+            Ft8Policy::Prefer => 1,
+            Ft8Policy::Require => 2,
+        }
+    }
+}
+
+impl StationFilters {
+    /// True when `self` is at least as restrictive as `base` on **every** axis —
+    /// i.e. applying `self` to any population can only ever return a SUBSET of
+    /// what `base` returns. Snapshots may only narrow: the engine rejects a
+    /// follow-up filter for which this is `false` (spec §Error handling —
+    /// "Filters that would widen a snapshot are rejected"). Reflexive: a filter
+    /// always narrows itself.
+    #[must_use]
+    pub fn is_narrowing_of(&self, base: &StationFilters) -> bool {
+        // A set constraint narrows iff base is unconstrained (empty = all) OR
+        // self restricts to a subset of base's allowed set.
+        fn set_narrows<T: PartialEq>(this: &[T], base: &[T]) -> bool {
+            base.is_empty() || (!this.is_empty() && this.iter().all(|x| base.contains(x)))
+        }
+        // An equality constraint (operating_now, bearing) narrows iff base is
+        // unset or self pins the same value.
+        fn eq_narrows<T: PartialEq>(this: Option<T>, base: Option<T>) -> bool {
+            match base {
+                None => true,
+                Some(b) => this == Some(b),
+            }
+        }
+        // Distance narrows iff self's inclusive upper bound is <= base's (an
+        // unset/`Beyond*` upper is +inf).
+        // Map each bucket to its inclusive upper bound in miles; an unset filter
+        // or an open `Beyond*` bucket is +inf. Then self narrows base on distance
+        // iff self's ceiling is at or below base's — this single comparison covers
+        // every None/Some combination correctly.
+        let upper = |bucket: Option<DistanceBucket>| -> f64 {
+            bucket.and_then(DistanceBucket::upper_mi).unwrap_or(f64::INFINITY)
+        };
+        let distance_ok = upper(self.distance) <= upper(base.distance);
+        let prefix_ok = match &base.callsign_prefix {
+            None => true,
+            Some(bp) => self
+                .callsign_prefix
+                .as_ref()
+                .is_some_and(|tp| tp.as_str().starts_with(bp.as_str())),
+        };
+        let hours_ok = match base.history_hours {
+            None => true,
+            Some(bh) => self.history_hours.is_some_and(|th| th <= bh),
+        };
+
+        set_narrows(self.modes.as_slice(), base.modes.as_slice())
+            && set_narrows(self.bands.as_slice(), base.bands.as_slice())
+            && set_narrows(self.bandwidths.as_slice(), base.bandwidths.as_slice())
+            && self.ft8_policy.restrictiveness() >= base.ft8_policy.restrictiveness()
+            && eq_narrows(self.operating_now, base.operating_now)
+            && distance_ok
+            && eq_narrows(self.bearing, base.bearing)
+            && prefix_ok
+            && hours_ok
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Recommendation goal
 // ---------------------------------------------------------------------------
@@ -532,5 +600,56 @@ mod tests {
     fn unknown_intent_tag_errors() {
         let json = r#"{ "intent": "teleport" }"#;
         assert!(serde_json::from_str::<FindStationsRequest>(json).is_err());
+    }
+
+    // ---- snapshot monotonicity (widening rejection) ------------------------
+
+    fn with_bands(bands: Vec<Band>) -> StationFilters {
+        StationFilters {
+            bands: BoundedVec::from_capped(bands).0,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn narrowing_is_reflexive() {
+        let f = with_bands(vec![Band::B40m]);
+        assert!(f.is_narrowing_of(&f));
+        assert!(StationFilters::default().is_narrowing_of(&StationFilters::default()));
+    }
+
+    #[test]
+    fn adding_a_band_narrows_but_dropping_one_widens() {
+        let base = StationFilters::default(); // no band constraint
+        let narrowed = with_bands(vec![Band::B40m]);
+        assert!(narrowed.is_narrowing_of(&base));
+        // Dropping the constraint widens — rejected.
+        assert!(!base.is_narrowing_of(&narrowed));
+        // A subset of the base's allowed bands narrows; a superset widens.
+        let base_two = with_bands(vec![Band::B40m, Band::B20m]);
+        assert!(with_bands(vec![Band::B40m]).is_narrowing_of(&base_two));
+        assert!(!with_bands(vec![Band::B40m, Band::B20m, Band::B80m]).is_narrowing_of(&base_two));
+    }
+
+    #[test]
+    fn distance_and_ft8_monotonicity() {
+        let closer = StationFilters {
+            distance: Some(DistanceBucket::Within100mi),
+            ..Default::default()
+        };
+        let farther = StationFilters {
+            distance: Some(DistanceBucket::Within300mi),
+            ..Default::default()
+        };
+        assert!(closer.is_narrowing_of(&farther));
+        assert!(!farther.is_narrowing_of(&closer));
+
+        let require = StationFilters {
+            ft8_policy: Ft8Policy::Require,
+            ..Default::default()
+        };
+        let ignore = StationFilters::default(); // Ft8Policy::Ignore
+        assert!(require.is_narrowing_of(&ignore));
+        assert!(!ignore.is_narrowing_of(&require));
     }
 }
