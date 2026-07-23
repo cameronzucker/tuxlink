@@ -1,0 +1,19 @@
+{
+    "schemaVersion": 1,
+    "name": "build-routine",
+    "version": "1.0.0",
+    "entry": "router",
+    "exit": "present",
+    "requiredInputs": ["outcome"],
+    "optionalInputs": ["priorRoutineId"],
+    "allowedToolFamilies": ["routines"],
+    "expectedArtifacts": ["intent", "affordances", "draft", "present"],
+    "deterministicGates": ["structure", "validate"],
+    "failureEscalation": { "onRed": "quarantineDraft" },
+    "provenance": {
+        "compatibleCapabilityVersions": ["routines-v1"],
+        "evalScenarios": ["task1", "task2", "task3"],
+        "knownModelCompat": ["stub"],
+        "traceableOutputs": ["savedRoutine"]
+    }
+}

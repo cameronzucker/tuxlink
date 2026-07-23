@@ -43,7 +43,9 @@ use tokio_util::sync::CancellationToken;
 
 use tuxlink_agent_frontend::endpoint::AgentEndpoint;
 use tuxlink_agent_frontend::ApiKey;
-use tuxlink_agent_runner::{CallAuthority, RunOutcome, ToolCall, ToolInvoker, ToolOutcome, ToolSpec};
+use tuxlink_agent_runner::{
+    CallAuthority, Limits, RunEvent, RunOutcome, ToolCall, ToolInvoker, ToolOutcome, ToolSpec,
+};
 use tuxlink_lib::elmer::events::ElmerEvent;
 use tuxlink_lib::elmer::executor::InProcessMcpInvoker;
 use tuxlink_lib::elmer::keyring::{ElmerKeyring, EntryFactory};
@@ -51,6 +53,14 @@ use tuxlink_lib::elmer::model_config_state::ElmerModelConfigState;
 use tuxlink_lib::elmer::provider::ElmerProvider;
 use tuxlink_lib::elmer::session::{ElmerSession, EventSink};
 use tuxlink_lib::elmer::transcript_sink::ElmerTranscriptSink;
+use tuxlink_lib::elmer::workflow::model::SessionPhaseModel;
+use tuxlink_lib::elmer::workflow::{
+    build_affordance_catalog, load_manifest, run_workflow, PhaseName, WorkflowInputs, WorkflowRun,
+};
+use tuxlink_lib::routines::commands::list_actions;
+use tuxlink_lib::routines::session::RoutinesState;
+use tuxlink_lib::routines::store::DefinitionStore;
+use tuxlink_lib::routines::validation::MonolithValidationContext;
 use tuxlink_lib::winlink::credentials::EntryLike;
 
 // ---------------------------------------------------------------------------
@@ -219,6 +229,53 @@ const PRESEED_NEAREST_40M_DIAL: &str = r#"{
 // CLI
 // ---------------------------------------------------------------------------
 
+/// The experiment condition this cell runs under (Routine CI slice 1a, Task
+/// 13b). Base and Full are the two poles; MatchedControl is the confound-buster
+/// between them (see [`run_cell`]'s arm dispatch).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum Arm {
+    /// A single `ElmerSession::send` over the operator's raw prompt — today's
+    /// behavior. `phase_payloads = []`, `workflow_run = None`.
+    Base,
+    /// Base's single send, but the prompt is augmented with the deterministic
+    /// affordance catalog Full's Feasibility phase surfaces — holding the model,
+    /// tools, and budget constant with Full but with NO phase pipeline. Isolates
+    /// the workflow STRUCTURE (Full − MatchedControl) from the affordance
+    /// AFFORDANCE (MatchedControl − Base).
+    MatchedControl,
+    /// The real workflow engine (`run_workflow`) driven by `SessionPhaseModel`,
+    /// with per-phase token instrumentation and the meters bridged into the same
+    /// `Meters` all arms share.
+    Full,
+}
+
+impl std::str::FromStr for Arm {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "base" => Ok(Arm::Base),
+            "matched-control" => Ok(Arm::MatchedControl),
+            "full" => Ok(Arm::Full),
+            other => Err(format!(
+                "unknown --arm {other:?} (expected base | matched-control | full)"
+            )),
+        }
+    }
+}
+
+impl Arm {
+    /// The kebab-case wire name (mirrors `FromStr` + the `Serialize` rename).
+    fn as_str(self) -> &'static str {
+        match self {
+            Arm::Base => "base",
+            Arm::MatchedControl => "matched-control",
+            Arm::Full => "full",
+        }
+    }
+}
+
 struct CliArgs {
     corpus: PathBuf,
     model: String,
@@ -230,12 +287,16 @@ struct CliArgs {
     temperature: f32,
     ledger: Option<PathBuf>,
     turn_timeout_secs: u32,
+    /// The experiment condition (default [`Arm::Base`], preserving today's
+    /// behavior and the existing default-args test).
+    arm: Arm,
 }
 
 const USAGE: &str = "usage: elmer_battery --corpus <path> --model <openrouter-model-id> \
-     --prompt <corpus-id> --out <bundle-dir> [--endpoint <url>] [--turn-cap N] \
-     [--cell-ceiling-usd X] [--temperature T] [--ledger <path>] \
-     [--turn-timeout-secs N]   (reads OPENROUTER_API_KEY from the environment)";
+     --prompt <corpus-id> --out <bundle-dir> [--arm base|matched-control|full] \
+     [--endpoint <url>] [--turn-cap N] [--cell-ceiling-usd X] [--temperature T] \
+     [--ledger <path>] [--turn-timeout-secs N]   (reads OPENROUTER_API_KEY from \
+     the environment)";
 
 fn parse_cli(args: &[String]) -> Result<CliArgs, String> {
     let mut corpus = None;
@@ -248,6 +309,7 @@ fn parse_cli(args: &[String]) -> Result<CliArgs, String> {
     let mut temperature = DEFAULT_TEMPERATURE;
     let mut ledger = None;
     let mut turn_timeout_secs = DEFAULT_TURN_TIMEOUT_SECS;
+    let mut arm = Arm::Base;
 
     let mut it = args.iter();
     while let Some(flag) = it.next() {
@@ -278,6 +340,9 @@ fn parse_cli(args: &[String]) -> Result<CliArgs, String> {
                     .map_err(|e| format!("--temperature: {e}"))?;
             }
             "--ledger" => ledger = Some(PathBuf::from(val("--ledger")?)),
+            "--arm" => {
+                arm = val("--arm")?.parse()?;
+            }
             "--turn-timeout-secs" => {
                 turn_timeout_secs = val("--turn-timeout-secs")?
                     .parse()
@@ -298,6 +363,7 @@ fn parse_cli(args: &[String]) -> Result<CliArgs, String> {
         temperature,
         ledger,
         turn_timeout_secs,
+        arm,
     })
 }
 
@@ -613,6 +679,33 @@ impl ToolInvoker for AllowlistInvoker {
             "elapsed_ms": elapsed_ms,
         }));
         outcome
+    }
+}
+
+/// Adapts a shared `Arc<dyn ToolInvoker>` into the `Box<dyn ToolInvoker>`
+/// `ElmerSession::new_with_invoker` wants, by delegating every method to the
+/// inner `Arc`. This is how the Base-arm session and the Full-arm
+/// `SessionPhaseModel::emit_invoker` reach the SAME underlying invoker (one
+/// [`AllowlistInvoker`] over one `McpState` → one `config_dir/routines` store):
+/// the invoker is built once as an `Arc`, `Box::new(SharedInvoker(arc.clone()))`
+/// goes into the session, and `arc.clone()` goes into the Emit phase's dispatch.
+/// Without sharing, Full's Emit saves would land in a different store than the
+/// one CI validates and Base's session writes to.
+struct SharedInvoker(Arc<dyn ToolInvoker>);
+
+#[async_trait]
+impl ToolInvoker for SharedInvoker {
+    fn tools(&self) -> &[ToolSpec] {
+        self.0.tools()
+    }
+
+    async fn invoke(
+        &self,
+        call: &ToolCall,
+        authority: CallAuthority,
+        cancel: &CancellationToken,
+    ) -> ToolOutcome {
+        self.0.invoke(call, authority, cancel).await
     }
 }
 
@@ -1074,7 +1167,28 @@ fn real_main() -> Result<(), String> {
         meters: Arc::clone(&meters),
         sink,
         transcript: Arc::clone(&transcript),
+        config_dir: &config_dir,
+        routines_state: Arc::clone(&routines_state),
     }))?;
+
+    // ── assert-no-egress (Part-97 belt; adrev disposition 2) ────────────────
+    // The guard was created DISARMED and nothing in this binary can arm it, so
+    // every agent egress `authorize()` during the cell fail-closed — no send
+    // could fire. `EgressGuard` exposes no numeric send counter, so the
+    // invariant "zero live sends" is expressed through its actual fail-closed
+    // API: a still-disarmed, still-untainted guard AFTER the cell proves no
+    // agent egress was ever authorized. A violation is a HARD cell failure
+    // (Full's edit-verb dispatch, in particular, must never have reached a
+    // transmit/egress verb — the Emit surface is `tools_for`'s Part-97-filtered
+    // allow-set).
+    if guard.armed_remaining() != 0 || guard.is_tainted() {
+        return Err(format!(
+            "ASSERT-NO-EGRESS FAILED: egress guard is not disarmed+untainted after the cell \
+             (armed_remaining={}, tainted={}) — a live send may have been authorized",
+            guard.armed_remaining(),
+            guard.is_tainted()
+        ));
+    }
 
     // Flush the durable transcript before harvesting (queued writer thread).
     if !transcript.flush(Duration::from_secs(10)) {
@@ -1145,6 +1259,10 @@ fn real_main() -> Result<(), String> {
             "denied_calls": meters.denied_calls.load(Ordering::SeqCst),
             "prompt_tokens": meters.prompt_tokens.load(Ordering::SeqCst),
             "eval_tokens": meters.eval_tokens.load(Ordering::SeqCst),
+            "arm": cli.arm.as_str(),
+            // Full-arm instrumentation (empty / null for Base + MatchedControl).
+            "phase_payloads": cell.phase_payloads,
+            "workflow_run": cell.workflow_run,
         }),
         &writable_roots,
     )?;
@@ -1186,6 +1304,7 @@ fn real_main() -> Result<(), String> {
         &serde_json::json!({
             "schema": "elmer-battery/1",
             "git_sha": git_head_sha(),
+            "arm": cli.arm.as_str(),
             "corpus_path": cli.corpus.display().to_string(),
             "corpus_sha256": corpus_sha,
             "global_predicates_count": corpus.global_predicates.len(),
@@ -1241,6 +1360,15 @@ struct RunCellArgs<'a> {
     meters: Arc<Meters>,
     sink: EventSink,
     transcript: Arc<ElmerTranscriptSink>,
+    /// The scratch profile's config dir (`scratch_root/config`). The Full arm
+    /// opens `config_dir/routines` as the workflow's `DefinitionStore` — the
+    /// SAME dir the routines MCP port writes to, so Emit's save is visible to
+    /// CI's `store.get`.
+    config_dir: &'a Path,
+    /// The managed routines state, used by the Full arm to build the production
+    /// `ValidationContext` (`MonolithValidationContext::for_state`) and the
+    /// MatchedControl arm to enumerate the affordance catalog.
+    routines_state: Arc<RoutinesState>,
 }
 
 struct CellResult {
@@ -1250,6 +1378,35 @@ struct CellResult {
     credits_after: Option<CreditsSnapshot>,
     pricing: Option<Pricing>,
     tool_schema_sha256: String,
+    /// Per-phase prompt tokens for the Full arm's workflow run (empty for
+    /// Base / MatchedControl — neither runs the phase pipeline).
+    phase_payloads: Vec<(PhaseName, u64)>,
+    /// The Full arm's `WorkflowRun`, persisted verbatim so Task-14 scorers
+    /// (`score_task1_honesty(&WorkflowRun, ..)` etc.) can consume it post-hoc.
+    /// `None` for Base / MatchedControl. It — not `outcome` — is the
+    /// authoritative scoring artifact.
+    workflow_run: Option<WorkflowRun>,
+}
+
+/// Map a Full-arm [`WorkflowRun`] to the cell's coarse [`RunOutcome`]. The
+/// `workflow_run` field is the authoritative artifact; this is only the
+/// human-glanceable outcome kind. A fully-green run (`saved_routine` set, no
+/// `stopped_reason`) is `Completed`; a run that stopped (capability gap, CI
+/// red, capture failure) surfaces its reason honestly as a non-`Completed`
+/// outcome rather than a false `Completed`.
+fn outcome_from_workflow_run(run: &WorkflowRun) -> RunOutcome {
+    match (&run.saved_routine, &run.stopped_reason) {
+        (Some(name), None) => {
+            RunOutcome::Completed(format!("workflow saved routine {name:?}"))
+        }
+        (_, Some(reason)) => RunOutcome::InvalidAction(reason.clone()),
+        // Defensive: the engine never returns this shape (a run without a
+        // saved routine always carries a stop reason), but do not fabricate a
+        // Completed if it ever did.
+        (None, None) => RunOutcome::InvalidAction(
+            "workflow produced no routine and no stop reason".to_string(),
+        ),
+    }
 }
 
 async fn run_cell(args: RunCellArgs<'_>) -> Result<CellResult, String> {
@@ -1265,6 +1422,8 @@ async fn run_cell(args: RunCellArgs<'_>) -> Result<CellResult, String> {
         meters,
         sink,
         transcript,
+        config_dir,
+        routines_state,
     } = args;
 
     // Credits BEFORE is the spend baseline. For OpenRouter it is a hard gate
@@ -1332,11 +1491,17 @@ async fn run_cell(args: RunCellArgs<'_>) -> Result<CellResult, String> {
     let tool_schema_sha256 = sha256_hex(
         &serde_json::to_vec(invoker.tools()).map_err(|e| e.to_string())?,
     );
-    let allow = AllowlistInvoker {
+    // Built as an `Arc<dyn ToolInvoker>` (not `Box`ed straight into the
+    // session) so BOTH the Base-arm session and the Full-arm Emit dispatch can
+    // share this ONE invoker over this ONE `McpState`. Its `routines_save`
+    // routes through `MonolithRoutinesPort` to `config_dir/routines`, the same
+    // dir the Full arm opens as the workflow `DefinitionStore` — so an Emit save
+    // is visible to CI's `store.get` and to the harvest, whichever arm ran.
+    let allow: Arc<dyn ToolInvoker> = Arc::new(AllowlistInvoker {
         inner: invoker,
         log: Arc::clone(&tool_log),
         meters: Arc::clone(&meters),
-    };
+    });
 
     // ── Provider + model config (temperature PINNED from the CLI) ───────────
     let endpoint = AgentEndpoint::parse(&cli.endpoint)
@@ -1379,8 +1544,8 @@ async fn run_cell(args: RunCellArgs<'_>) -> Result<CellResult, String> {
     );
 
     let session = Arc::new(ElmerSession::new_with_invoker(
-        Box::new(allow),
-        provider,
+        Box::new(SharedInvoker(Arc::clone(&allow))),
+        Arc::clone(&provider),
         model_config,
         keyring,
         Arc::clone(&guard),
@@ -1398,11 +1563,19 @@ async fn run_cell(args: RunCellArgs<'_>) -> Result<CellResult, String> {
     // per-turn timeout) bound the cell regardless.
     let cancel_reason: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let watchdog_stop = CancellationToken::new();
+    // 13c: the Full arm's workflow runs via `run_workflow` INDEPENDENTLY of the
+    // `ElmerSession`, so `session.cancel_and_abort()` is a no-op for it. This
+    // token is threaded into the Full arm's `SessionPhaseModel`; the watchdog
+    // fires BOTH it and `cancel_and_abort()` on a trip, so every arm observes
+    // the same turn-cap / cost-ceiling cancellation. Harmless no-op for
+    // Base/MatchedControl (nothing observes it there).
+    let workflow_cancel = CancellationToken::new();
     let watchdog = {
         let session = Arc::clone(&session);
         let meters = Arc::clone(&meters);
         let reason_slot = Arc::clone(&cancel_reason);
         let stop = watchdog_stop.clone();
+        let workflow_cancel = workflow_cancel.clone();
         let turn_cap = cli.turn_cap;
         let ceiling = cli.cell_ceiling_usd;
         // Live-spend poll inputs: the credits endpoint is the ONLY honest
@@ -1458,6 +1631,12 @@ async fn run_cell(args: RunCellArgs<'_>) -> Result<CellResult, String> {
                     eprintln!("elmer_battery: watchdog cancel — {reason}");
                     *reason_slot.lock().expect("cancel-reason lock poisoned") =
                         Some(reason);
+                    // Cancel BOTH paths: `cancel_and_abort` stops the Base/MC
+                    // session; `workflow_cancel` stops the Full arm's
+                    // `run_workflow` (which the session cannot reach). Firing the
+                    // Full token for Base/MC is a harmless no-op (nothing there
+                    // observes it), so no `arm == Full` gate is needed.
+                    workflow_cancel.cancel();
                     session.cancel_and_abort().await;
                     return;
                 }
@@ -1465,8 +1644,39 @@ async fn run_cell(args: RunCellArgs<'_>) -> Result<CellResult, String> {
         })
     };
 
-    // ── ONE send; the agent loop runs tools internally ──────────────────────
-    let outcome = session.send(entry.prompt.clone(), sink).await;
+    // ── The measured run, per condition arm ─────────────────────────────────
+    // All three arms feed the SAME `sink`/`Meters` (Full via the bridged
+    // forwarder), so the cross-arm token/turn comparison is apples-to-apples.
+    let (outcome, phase_payloads, workflow_run) = match cli.arm {
+        // Base: today's behavior — one send over the raw prompt, no pipeline.
+        Arm::Base => {
+            let outcome = session.send(entry.prompt.clone(), sink).await;
+            (outcome, Vec::new(), None)
+        }
+        // MatchedControl: Base's single send, but the prompt is augmented with
+        // the deterministic affordance catalog (see `matched_control_prompt`).
+        // Same model / tools / budget as Full; NO phase pipeline.
+        Arm::MatchedControl => {
+            let prompt = matched_control_prompt(&entry.prompt, &routines_state);
+            let outcome = session.send(prompt, sink).await;
+            (outcome, Vec::new(), None)
+        }
+        // Full: the real workflow engine driven by `SessionPhaseModel`, with the
+        // meters bridged so Full's turns hit the same `Meters` as Base.
+        Arm::Full => {
+            run_full_arm(RunFullArgs {
+                intent_text: entry.prompt.clone(),
+                provider: Arc::clone(&provider),
+                emit_invoker: Arc::clone(&allow),
+                sink,
+                config_dir,
+                routines_state: &routines_state,
+                turn_timeout_secs: cli.turn_timeout_secs,
+                workflow_cancel: workflow_cancel.clone(),
+            })
+            .await?
+        }
+    };
 
     watchdog_stop.cancel();
     let _ = watchdog.await;
@@ -1492,7 +1702,214 @@ async fn run_cell(args: RunCellArgs<'_>) -> Result<CellResult, String> {
         credits_after,
         pricing,
         tool_schema_sha256,
+        phase_payloads,
+        workflow_run,
     })
+}
+
+// ---------------------------------------------------------------------------
+// MatchedControl — the confound-buster (Task 13b Part 4)
+// ---------------------------------------------------------------------------
+
+/// Build the MatchedControl prompt: the operator's raw prompt, prefixed with the
+/// deterministic affordance catalog Full's Feasibility phase surfaces.
+///
+/// ## Interpretation (the design leaves the exact tool/prompt delta open)
+///
+/// The brief says MatchedControl augments the prompt with "the same affordance
+/// catalog Full's Feasibility phase builds (`build_affordance_catalog`)". Two
+/// judgment calls, stated here rather than made silently:
+///
+/// 1. **Family set.** `build_affordance_catalog(actions, families)` filters
+///    ACTION names (`radio.connect` → family `radio`) by `families`. The shipped
+///    manifest's `allowedToolFamilies` is `["routines"]` — but that is an
+///    MCP-*tool* family (`routines_*`), NOT an action family, so passing it would
+///    match no actions and hit `CatalogError::Empty`. To surface the affordance
+///    surface the workflow reasons over, this enumerates the DISTINCT action
+///    families present in the live registry and builds the catalog over all of
+///    them. That yields the full, deterministic action catalog projected to
+///    `AffordanceAction` — the thing the Feasibility phase's value is exposing.
+/// 2. **Tool set.** MatchedControl holds the tool surface constant with Base
+///    (the full router surface behind `AllowlistInvoker`) — the ONLY delta from
+///    Base is the catalog in the prompt, and the ONLY delta from Full is the
+///    absence of the phase pipeline. So a Full − MatchedControl gap is
+///    attributable to workflow STRUCTURE, a MatchedControl − Base gap to the
+///    affordance AFFORDANCE.
+///
+/// If the catalog cannot be built (an empty registry — never true in the wired
+/// battery), MatchedControl degrades to the raw prompt (logged), never crashes.
+fn matched_control_prompt(raw_prompt: &str, routines_state: &RoutinesState) -> String {
+    let actions = list_actions(routines_state);
+    // Distinct action families, in first-seen order (deterministic).
+    let mut families: Vec<String> = Vec::new();
+    for a in &actions {
+        let family = a.name.split('.').next().unwrap_or(a.name.as_str()).to_string();
+        if !families.contains(&family) {
+            families.push(family);
+        }
+    }
+
+    match build_affordance_catalog(&actions, &families) {
+        Ok(catalog) => match serde_json::to_string_pretty(&catalog) {
+            Ok(catalog_json) => format!(
+                "Available affordances (the actions this station's routines can use, \
+                 with their capability flags, parameters, and outputs):\n\n{catalog_json}\n\n\
+                 Using only those affordances, respond to the following request:\n\n{raw_prompt}"
+            ),
+            Err(e) => {
+                eprintln!(
+                    "elmer_battery: MatchedControl catalog serialize failed ({e}); \
+                     falling back to the raw prompt"
+                );
+                raw_prompt.to_string()
+            }
+        },
+        Err(e) => {
+            eprintln!(
+                "elmer_battery: MatchedControl affordance catalog empty ({e}); \
+                 falling back to the raw prompt"
+            );
+            raw_prompt.to_string()
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Full arm — the real workflow engine, driven by SessionPhaseModel (Part 3)
+// ---------------------------------------------------------------------------
+
+struct RunFullArgs<'a> {
+    intent_text: String,
+    provider: Arc<dyn tuxlink_agent_runner::Provider>,
+    /// The SHARED routines invoker (same `Arc` the Base session wraps). The Emit
+    /// phase dispatches its edit verbs against this, so a save lands in
+    /// `config_dir/routines`.
+    emit_invoker: Arc<dyn ToolInvoker>,
+    sink: EventSink,
+    config_dir: &'a Path,
+    routines_state: &'a RoutinesState,
+    /// The cell's per-provider-turn timeout, so each Full phase's bounded loop
+    /// runs under the SAME budget as a Base send (session.rs derives its
+    /// `Limits.per_turn_timeout` from this same value) — else a reasoning-heavy
+    /// model could time out per-turn in Full but not Base, a confound.
+    turn_timeout_secs: u32,
+    /// The cell watchdog's cancel token (13c). Threaded into the phase model so
+    /// a turn-cap / cost-ceiling trip cancels the in-flight phase — the Full-arm
+    /// equivalent of `session.cancel_and_abort()`, which cannot reach
+    /// `run_workflow`. Without it, the Full arm escaped the `turn_cap` that
+    /// hard-bounds Base/MatchedControl and could not be cost-cancelled mid-run.
+    workflow_cancel: CancellationToken,
+}
+
+/// Drive one Full-arm workflow run and project it onto the cell result triple
+/// `(outcome, phase_payloads, workflow_run)`.
+async fn run_full_arm(
+    args: RunFullArgs<'_>,
+) -> Result<(RunOutcome, Vec<(PhaseName, u64)>, Option<WorkflowRun>), String> {
+    let RunFullArgs {
+        intent_text,
+        provider,
+        emit_invoker,
+        sink,
+        config_dir,
+        routines_state,
+        turn_timeout_secs,
+        workflow_cancel,
+    } = args;
+
+    // 1. The workflow's DefinitionStore — the SAME dir the routines MCP port
+    //    writes to, so Emit's save is visible to `capture_artifact`'s `store.get`.
+    let store = DefinitionStore::open(config_dir.join("routines"));
+
+    // 2. Meters bridge (REQUIRED for a valid experiment): forward EVERY phase
+    //    `RunEvent` into the battery `sink` exactly as `ElmerSession::send` does,
+    //    so the watchdog + ledger + turn/token meters see Full's turns identically
+    //    to Base's. This is the same `RunEvent → ElmerEvent` match as session.rs.
+    let sink_for_forwarder = Arc::clone(&sink);
+    let forwarder: tuxlink_lib::elmer::workflow::model::EventForwarder =
+        Arc::new(move |ev: RunEvent| {
+            let elmer_event = match ev {
+                RunEvent::AssistantText { text } => ElmerEvent::Turn {
+                    role: "assistant".to_string(),
+                    text,
+                },
+                RunEvent::ToolCall { tool } => ElmerEvent::Chip {
+                    tool,
+                    status: "calling".to_string(),
+                },
+                RunEvent::AssistantDelta { chunk } => ElmerEvent::Delta {
+                    delta_kind: "assistant".to_string(),
+                    chunk,
+                },
+                RunEvent::ReasoningDelta { chunk } => ElmerEvent::Delta {
+                    delta_kind: "reasoning".to_string(),
+                    chunk,
+                },
+                RunEvent::ContextUsage {
+                    prompt_tokens,
+                    eval_tokens,
+                    num_ctx,
+                } => ElmerEvent::Context {
+                    prompt_tokens,
+                    eval_tokens,
+                    num_ctx,
+                },
+                RunEvent::ToolDenied { tool, reason: _ } => ElmerEvent::Chip {
+                    tool,
+                    status: "denied".to_string(),
+                },
+                _ => return,
+            };
+            sink_for_forwarder(elmer_event);
+        });
+
+    // 3. The production adapter, over the same provider + the shared invoker,
+    //    with the meters forwarder installed and each phase's bounded loop held
+    //    to the SAME per-turn budget as a Base send (session.rs derives its
+    //    `Limits.per_turn_timeout` from `turn_timeout_secs` identically).
+    let limits = Limits {
+        per_turn_timeout: Duration::from_secs(u64::from(turn_timeout_secs)),
+        ..Limits::default()
+    };
+    let phase_model = SessionPhaseModel::with_limits(provider, emit_invoker, limits)
+        .with_event_forwarder(forwarder)
+        .with_cancel_token(workflow_cancel);
+
+    // 4. The shipped manifest + the PRODUCTION ValidationContext over this
+    //    cell's (scratch) config. `MonolithValidationContext::for_state` is the
+    //    exact context the routines feature validates against — same registry,
+    //    same store, same station profile — so a Full-arm CI verdict reflects
+    //    this cell's environment, not a fabricated one.
+    let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("resources/workflows/build-routine.manifest.json");
+    let manifest = load_manifest(&manifest_path)
+        .map_err(|e| format!("could not load workflow manifest {manifest_path:?}: {e:?}"))?;
+    let ctx = MonolithValidationContext::for_state(routines_state);
+
+    // 5. Run the workflow end to end.
+    let run = run_workflow(
+        &manifest,
+        WorkflowInputs { intent_text },
+        &phase_model,
+        &ctx,
+        &store,
+    )
+    .await;
+
+    // 6. Project onto the cell result.
+    let phase_payloads = phase_payloads_of(&run);
+    let outcome = outcome_from_workflow_run(&run);
+    Ok((outcome, phase_payloads, Some(run)))
+}
+
+/// Project a [`WorkflowRun`]'s per-phase records to `(phase, prompt_tokens)`
+/// pairs — the Full arm's `phase_payloads`. Pure, so it is unit-tested against a
+/// synthetic run without standing up a cell.
+fn phase_payloads_of(run: &WorkflowRun) -> Vec<(PhaseName, u64)> {
+    run.phases_run
+        .iter()
+        .map(|r| (r.name, r.prompt_tokens))
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1662,7 +2079,7 @@ mod tests {
     }
 
     #[test]
-    fn corpus_loads_with_all_seven_prompts_and_global_predicates() {
+    fn corpus_loads_with_the_full_prompt_ladder_and_global_predicates() {
         let (corpus, sha) = load_corpus(&repo_corpus_path()).expect("corpus must load");
         assert_eq!(sha.len(), 64, "corpus sha must be full sha256 hex");
         assert!(
@@ -1670,10 +2087,16 @@ mod tests {
             "global predicates must be present"
         );
         let ids: Vec<&str> = corpus.prompts.iter().map(|p| p.id.as_str()).collect();
-        for expected in ["P2", "P1", "S1", "S2", "S4", "S3", "P3"] {
+        // The 7 prescriptive (TaskRabbit) tasks plus the 11 operator-authored
+        // intent-deciphering rungs (2 Assistant, 3 Collaborator, 3 Elmer, 3
+        // Elmer-ultra) — Task 14a.
+        for expected in [
+            "P2", "P1", "S1", "S2", "S4", "S3", "P3", "A1", "A2", "C1", "C2", "C3", "E1", "E2",
+            "E3", "EU1", "EU2", "EU3",
+        ] {
             assert!(ids.contains(&expected), "corpus must carry prompt {expected}");
         }
-        assert_eq!(corpus.prompts.len(), 7, "exactly the 7-prompt ladder");
+        assert_eq!(corpus.prompts.len(), 18, "the 7-prompt ladder + 11 rung tasks");
         // S2 is the only preseeded cell.
         for p in &corpus.prompts {
             assert_eq!(
@@ -1753,11 +2176,128 @@ mod tests {
         assert!((cli.cell_ceiling_usd - DEFAULT_CELL_CEILING_USD).abs() < f64::EPSILON);
         assert!((cli.temperature - DEFAULT_TEMPERATURE).abs() < f32::EPSILON);
         assert!(cli.ledger.is_none());
+        // --arm defaults to Base (preserves today's single-send behavior).
+        assert_eq!(cli.arm, Arm::Base);
 
         let missing = parse_cli(&["--corpus".to_string(), "x".to_string()]);
         assert!(missing.is_err(), "missing required args must fail");
 
         let unknown = parse_cli(&["--frobnicate".to_string()]);
         assert!(unknown.is_err(), "unknown flags must fail loudly");
+    }
+
+    // ── Arm parsing + projection (Task 13b) ─────────────────────────────────
+
+    #[test]
+    fn arm_from_str_parses_the_three_conditions_and_rejects_unknown() {
+        assert_eq!("base".parse::<Arm>().unwrap(), Arm::Base);
+        assert_eq!(
+            "matched-control".parse::<Arm>().unwrap(),
+            Arm::MatchedControl
+        );
+        assert_eq!("full".parse::<Arm>().unwrap(), Arm::Full);
+        // Unknown / near-miss spellings fail loudly, not silently to Base.
+        assert!("Base".parse::<Arm>().is_err(), "parse is case-sensitive");
+        assert!("matched_control".parse::<Arm>().is_err(), "hyphen, not underscore");
+        assert!("".parse::<Arm>().is_err());
+        assert!("control".parse::<Arm>().is_err());
+    }
+
+    #[test]
+    fn cli_parses_explicit_arm() {
+        let args: Vec<String> = [
+            "--corpus", "tests/battery/corpus.json",
+            "--model", "openai/gpt-5.5",
+            "--prompt", "P2",
+            "--out", "battery-results/x/P2",
+            "--arm", "full",
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+        let cli = parse_cli(&args).expect("explicit --arm must parse");
+        assert_eq!(cli.arm, Arm::Full);
+
+        // A bad --arm value is a loud parse error, not a silent default.
+        let bad: Vec<String> = [
+            "--corpus", "c", "--model", "m", "--prompt", "P2", "--out", "o", "--arm", "sideways",
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+        assert!(parse_cli(&bad).is_err(), "unknown --arm value must fail");
+    }
+
+    #[test]
+    fn phase_payloads_projects_name_and_prompt_tokens_in_order() {
+        use tuxlink_lib::elmer::workflow::{Depth, PhaseRecord};
+
+        // A synthetic Full-depth run with known per-phase records.
+        let run = WorkflowRun {
+            depth: Depth::Full,
+            phases_run: vec![
+                PhaseRecord {
+                    name: PhaseName::Router,
+                    prompt_tokens: 5,
+                    outcome: "selected Full depth".to_string(),
+                },
+                PhaseRecord {
+                    name: PhaseName::Intent,
+                    prompt_tokens: 137,
+                    outcome: "captured intent".to_string(),
+                },
+                PhaseRecord {
+                    name: PhaseName::Emit,
+                    prompt_tokens: 42,
+                    outcome: "captured emitted".to_string(),
+                },
+            ],
+            saved_routine: Some("hourly-20m-vara-cms".to_string()),
+            present: None,
+            stopped_reason: None,
+        };
+
+        let payloads = phase_payloads_of(&run);
+        assert_eq!(
+            payloads,
+            vec![
+                (PhaseName::Router, 5),
+                (PhaseName::Intent, 137),
+                (PhaseName::Emit, 42),
+            ],
+            "phase_payloads must be (name, prompt_tokens) in phase order"
+        );
+    }
+
+    #[test]
+    fn outcome_from_workflow_run_is_honest_about_completion() {
+        use tuxlink_lib::elmer::workflow::Depth;
+
+        // Saved + no stop reason → Completed.
+        let green = WorkflowRun {
+            depth: Depth::Full,
+            phases_run: vec![],
+            saved_routine: Some("r".to_string()),
+            present: None,
+            stopped_reason: None,
+        };
+        assert!(matches!(
+            outcome_from_workflow_run(&green),
+            RunOutcome::Completed(_)
+        ));
+
+        // A stop reason → a non-Completed outcome carrying the reason (never a
+        // false Completed).
+        let stopped = WorkflowRun {
+            depth: Depth::Full,
+            phases_run: vec![],
+            saved_routine: None,
+            present: None,
+            stopped_reason: Some("routine CI red for \"r\", draft quarantined".to_string()),
+        };
+        match outcome_from_workflow_run(&stopped) {
+            RunOutcome::InvalidAction(reason) => assert!(reason.contains("CI red")),
+            other => panic!("a stopped run must be non-Completed, got {other:?}"),
+        }
     }
 }
