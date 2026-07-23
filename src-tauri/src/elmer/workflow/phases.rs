@@ -178,12 +178,21 @@ fn phase_instruction(phase: PhaseName) -> &'static str {
     }
 }
 
-/// Render one phase's model prompt: the phase's static instruction, then
-/// each artifact [`declared_inputs`] names for that phase — if present in
-/// `artifacts` — as a fenced JSON block. `manifest` names the workflow the
-/// phase belongs to (surfaced as a one-line header) so a phase's prompt is
-/// self-identifying without threading a second string parameter through
-/// every call site.
+/// Render one phase's model prompt: the phase's static instruction, then the
+/// operator's original request (`intent_text`), then each artifact
+/// [`declared_inputs`] names for that phase — if present in `artifacts` — as a
+/// fenced JSON block. `manifest` names the workflow the phase belongs to
+/// (surfaced as a one-line header) so a phase's prompt is self-identifying
+/// without threading a second string parameter through every call site.
+///
+/// `intent_text` is the operator's raw stated request — the GROUND-TRUTH
+/// INPUT to the whole workflow, not a prior phase's captured artifact. Every
+/// phase (Intent included) needs it: without it the Intent phase is told to
+/// "capture the operator's intent" with nothing to capture FROM, and returns
+/// an artifact missing its required fields. Rendering it does NOT violate the
+/// context-bound invariant, which is about prior phases' captured artifacts
+/// never leaking except where `declared_inputs` names them — the operator's
+/// own request is not such an artifact.
 ///
 /// Artifacts NOT in `declared_inputs(phase)` are never rendered, even if
 /// present in `artifacts` — the context-bound invariant this module exists
@@ -191,10 +200,11 @@ fn phase_instruction(phase: PhaseName) -> &'static str {
 pub fn build_prompt(
     phase: PhaseName,
     manifest: &WorkflowManifest,
+    intent_text: &str,
     artifacts: &[CapturedArtifact],
 ) -> String {
     let mut prompt = format!(
-        "Workflow: {} v{}\n\n{}",
+        "Workflow: {} v{}\n\n{}\n\nOperator request:\n{intent_text}",
         manifest.name,
         manifest.version,
         phase_instruction(phase)
@@ -438,7 +448,12 @@ mod tests {
             CapturedArtifact::Present(present_not_declared_by_draft),
         ];
 
-        let prompt = build_prompt(PhaseName::Draft, &manifest, &artifacts);
+        let prompt = build_prompt(
+            PhaseName::Draft,
+            &manifest,
+            "OPERATOR-ASK-build-a-mail-routine",
+            &artifacts,
+        );
 
         assert!(prompt.contains(phase_instruction(PhaseName::Draft)));
         assert!(prompt.contains(&intent.outcome));
@@ -454,10 +469,64 @@ mod tests {
 
         // Intent is the phase that PRODUCES the Intent artifact — its own
         // `declared_inputs` row is empty, so even though an Intent is in
-        // scope (e.g. a re-run), it must not leak into the prompt.
-        let prompt = build_prompt(PhaseName::Intent, &manifest, &artifacts);
+        // scope (e.g. a re-run), it must not leak into the prompt. The
+        // operator request here is deliberately worded to share NO substring
+        // with `fixture_intent().outcome`, so the leak assertion below cannot
+        // pass merely because `intent_text` echoes the artifact.
+        let prompt = build_prompt(
+            PhaseName::Intent,
+            &manifest,
+            "please set something up for me on 40 meters",
+            &artifacts,
+        );
         assert!(prompt.contains(phase_instruction(PhaseName::Intent)));
         assert!(!prompt.contains(&intent.outcome));
+    }
+
+    // F1 regression: the Intent phase's prompt MUST carry the operator's raw
+    // request. `declared_inputs(Intent)` is empty (no prior artifact exists
+    // yet), so before this fix the Intent model was told "capture the
+    // operator's intent" with nothing to capture FROM — it returned JSON
+    // missing `outcome` and the whole Full arm died at capture. The operator
+    // request is the ground-truth input, not a prior-phase artifact, so it is
+    // rendered on every phase including Intent.
+    #[test]
+    fn build_prompt_intent_phase_renders_the_operator_request() {
+        let manifest = fixture_manifest(vec!["routines".to_string()]);
+        let operator_request =
+            "OPERATOR-REQUEST-SENTINEL: pull VARA mail from the nearest 20m gateway every hour";
+
+        let prompt = build_prompt(PhaseName::Intent, &manifest, operator_request, &[]);
+
+        assert!(prompt.contains(phase_instruction(PhaseName::Intent)));
+        assert!(
+            prompt.contains(operator_request),
+            "Intent prompt must contain the operator's raw request: {prompt}"
+        );
+    }
+
+    // The operator request rides EVERY phase, not just Intent — a downstream
+    // phase (Draft) sees it too, alongside (not instead of) its declared
+    // prior-phase artifacts.
+    #[test]
+    fn build_prompt_downstream_phase_also_renders_the_operator_request() {
+        let manifest = fixture_manifest(vec!["routines".to_string()]);
+        let operator_request = "OPERATOR-REQUEST-SENTINEL: draft me a morning ICS check-in";
+        let artifacts = vec![
+            CapturedArtifact::Intent(fixture_intent()),
+            CapturedArtifact::Affordances(fixture_affordances()),
+        ];
+
+        let prompt = build_prompt(PhaseName::Draft, &manifest, operator_request, &artifacts);
+
+        assert!(
+            prompt.contains(operator_request),
+            "Draft prompt must also carry the operator's raw request: {prompt}"
+        );
+        // Declared prior-phase artifacts still render — the operator request
+        // is additive, it does not displace the context-bound artifacts.
+        assert!(prompt.contains(&fixture_intent().outcome));
+        assert!(prompt.contains("radio.connect"));
     }
 
     // (b) capture_artifact(Intent, turn_with_json_object_as_string, _) uses

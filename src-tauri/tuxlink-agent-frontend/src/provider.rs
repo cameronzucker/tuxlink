@@ -322,6 +322,31 @@ impl Provider for OpenAiProvider {
         });
         let conversation = trimmed.as_ref().unwrap_or(conversation);
 
+        // F2 (context-window headroom): the OpenAI-compat request never set an
+        // output cap, so a vLLM-class server defaulted `max_tokens` to
+        // (max_model_len - prompt_tokens); when a large or untrimmable prompt
+        // filled the window that default was <= 0 and the server rejected the
+        // WHOLE turn with an opaque HTTP 400 ("requested 0 output tokens …").
+        // Reserve a bounded output budget below the discovered window; and when
+        // even the trimmed prompt cannot leave room for a usable answer (a single
+        // oversized message the trim cannot drop, or an under-counted transcript),
+        // end the turn with a clear, BOUNDED outcome (ContextWindowExceeded →
+        // NeedsOperator) instead of POSTing a request the server will reject with
+        // the opaque 400. No-op when the window is unknown (counter-mode).
+        let max_tokens: Option<u32> =
+            match plan_output_budget(window, system_prompt, tools, conversation.messages()) {
+                OutputBudget::Omit => None,
+                OutputBudget::Reserve(n) => Some(n),
+                OutputBudget::Exceeded { est_prompt, window: win } => {
+                    return Err(ProviderError::ContextWindowExceeded(format!(
+                        "conversation is too long for this model: the estimated prompt \
+                         (~{est_prompt} tokens) leaves no room for a response below the model's \
+                         {win}-token context window. Start a new conversation or switch to a \
+                         model with a larger context window."
+                    )));
+                }
+            };
+
         let mut body = build_request_body(
             &self.model,
             conversation,
@@ -329,6 +354,13 @@ impl Provider for OpenAiProvider {
             self.temperature,
             system_prompt,
         );
+        // Broadly-supported OpenAI-compat field (vLLM / llama.cpp / OpenRouter all
+        // honor `max_tokens`): guarantees the server always has positive output
+        // headroom rather than defaulting it to (window - prompt) = 0 when the
+        // prompt approaches the window. Omitted when the window is unknown.
+        if let Some(n) = max_tokens {
+            body["max_tokens"] = json!(n);
+        }
         body["stream"] = json!(true);
         // Ask the server to append a final usage chunk to the stream (vLLM /
         // OpenAI / OpenRouter honor this; without it, streamed usage is omitted).
@@ -1067,6 +1099,86 @@ fn transcript_budget(num_ctx: Option<u32>, system_prompt: &str, tools: &[ToolSpe
     Some(nctx.saturating_sub(overhead))
 }
 
+/// Smallest output budget (tokens) a turn must be able to request below the model
+/// context window to be worth attempting. Below this the answer would be uselessly
+/// truncated, so the turn is ended with a bounded [`ProviderError::ContextWindowExceeded`]
+/// outcome instead of POSTing a request the server rejects (F2).
+const MIN_OUTPUT_TOKENS: usize = 256;
+
+/// Fixed token back-off between the (heuristic) estimated prompt size and the
+/// model context window when sizing the requested `max_tokens`. The prompt-token
+/// estimate divides bytes by 3, which tracks real BPE for English prose but can
+/// UNDER-count dense content (code / CJK / base64); this margin absorbs that
+/// approximation error so the requested output cannot push the REAL prompt+output
+/// total past the window. 2048 fits comfortably inside the transcript trim's
+/// [`RESPONSE_RESERVE_TOKENS`] (4096) reserve, so a normally-trimmed conversation
+/// never trips the [`OutputBudget::Exceeded`] guard.
+const CONTEXT_SAFETY_MARGIN_TOKENS: usize = 2048;
+
+/// Estimate the total prompt tokens a built request would occupy: the system
+/// prompt + serialized tool schemas + every transcript message. Mirrors the
+/// estimators the transcript trim uses (see [`transcript_budget`] /
+/// [`estimate_message_tokens`]) so the two agree on what "fits". Errs HIGH
+/// (bytes/3 + per-message framing overhead) like the trim, so the derived output
+/// reserve stays conservative. Pure — no IO.
+fn estimate_prompt_tokens(system_prompt: &str, tools: &[ToolSpec], messages: &[Message]) -> usize {
+    let tools_tokens = serde_json::to_string(tools)
+        .map(|s| s.len() / 3)
+        .unwrap_or(tools.len() * 300);
+    estimate_text_tokens(system_prompt)
+        + tools_tokens
+        + messages.iter().map(estimate_message_tokens).sum::<usize>()
+}
+
+/// How much output budget to request for a turn, given the discovered context
+/// `window` and the estimated prompt size.
+#[derive(Debug, PartialEq, Eq)]
+enum OutputBudget {
+    /// No known window (compat endpoint advertises none) — omit `max_tokens` and
+    /// let the server apply its own default. Pre-existing counter-mode behavior.
+    Omit,
+    /// Request this many output tokens via `max_tokens` — positive and sized so
+    /// the (conservatively estimated) prompt + this reserve stays under the window.
+    Reserve(u32),
+    /// The estimated prompt leaves no usable room below the window for a response:
+    /// POSTing it would overflow the server context (the F2 opaque-400 case).
+    /// Carries `(est_prompt, window)` so the caller can build a clear operator
+    /// message.
+    Exceeded { est_prompt: usize, window: usize },
+}
+
+/// Decide the output budget for a turn (pure — no IO).
+///
+/// * `window == None` → [`OutputBudget::Omit`] (server default applies).
+/// * Enough room below the window (after the fixed [`CONTEXT_SAFETY_MARGIN_TOKENS`]
+///   back-off) for at least [`MIN_OUTPUT_TOKENS`] → [`OutputBudget::Reserve`],
+///   capped at [`RESPONSE_RESERVE_TOKENS`].
+/// * Otherwise → [`OutputBudget::Exceeded`] — the turn cannot fit a usable
+///   response and must end as a bounded outcome rather than overflow the server.
+fn plan_output_budget(
+    window: Option<u32>,
+    system_prompt: &str,
+    tools: &[ToolSpec],
+    messages: &[Message],
+) -> OutputBudget {
+    let Some(window) = window else {
+        return OutputBudget::Omit;
+    };
+    let window = window as usize;
+    let est_prompt = estimate_prompt_tokens(system_prompt, tools, messages);
+    // Room left below the window after subtracting the estimated prompt AND a
+    // fixed safety back-off (absorbs estimator under-count so the requested
+    // output cannot push the REAL total past the window).
+    let usable = window
+        .saturating_sub(est_prompt)
+        .saturating_sub(CONTEXT_SAFETY_MARGIN_TOKENS);
+    if usable < MIN_OUTPUT_TOKENS {
+        return OutputBudget::Exceeded { est_prompt, window };
+    }
+    // Never request more than the response reserve, even when the window is huge.
+    OutputBudget::Reserve(usable.min(RESPONSE_RESERVE_TOKENS) as u32)
+}
+
 /// Build the chat-completions request body from the transcript + tool surface.
 /// Pure — no IO. Exposed for unit testing the message + tools shaping.
 ///
@@ -1642,6 +1754,107 @@ mod tests {
                 );
             }
             assert!(!kept.is_empty());
+        }
+    }
+
+    // --- F2: output-budget headroom below the model context window -----------
+
+    /// An unknown window (compat endpoint that advertises none) omits `max_tokens`
+    /// entirely — the server default applies (pre-existing counter-mode).
+    #[test]
+    fn output_budget_omits_when_window_unknown() {
+        let msgs = vec![user("hello")];
+        assert_eq!(
+            plan_output_budget(None, "sys", &[], &msgs),
+            OutputBudget::Omit
+        );
+    }
+
+    /// A tiny prompt against a large window reserves the FULL response reserve,
+    /// capped at `RESPONSE_RESERVE_TOKENS` (never more, even with a huge window).
+    #[test]
+    fn output_budget_reserves_capped_reserve_for_small_prompt() {
+        let msgs = vec![user("hi")];
+        match plan_output_budget(Some(40_000), "short system", &[], &msgs) {
+            OutputBudget::Reserve(n) => {
+                assert_eq!(
+                    n as usize, RESPONSE_RESERVE_TOKENS,
+                    "a small prompt against a 40k window should reserve the full cap"
+                );
+            }
+            other => panic!("expected Reserve, got {other:?}"),
+        }
+    }
+
+    /// F2 regression: a single oversized user message (the trim cannot drop it —
+    /// it is the newest and only unit) against a KNOWN window is detected as
+    /// Exceeded, so the caller ends the turn with a bounded outcome rather than
+    /// POSTing a prompt that overflows the server context (the opaque HTTP 400
+    /// "requested 0 output tokens" the pilot hit on the vLLM endpoint).
+    #[test]
+    fn output_budget_exceeded_for_single_oversized_message() {
+        // ~40k-token window; a ~40k-token single message fills it.
+        let huge = "x".repeat(3 * 40_000); // len/3 ≈ 40_000 estimated tokens
+        let msgs = vec![user(&huge)];
+        match plan_output_budget(Some(40_000), "short system", &[], &msgs) {
+            OutputBudget::Exceeded { est_prompt, window } => {
+                assert_eq!(window, 40_000);
+                assert!(
+                    est_prompt >= 40_000,
+                    "the oversized message must estimate at/over the window; got {est_prompt}"
+                );
+            }
+            other => panic!("expected Exceeded for an over-window prompt, got {other:?}"),
+        }
+    }
+
+    /// A prompt that sits just below the window (inside the trim's reserve) still
+    /// gets a POSITIVE, headroom-safe output budget — smaller than the full
+    /// reserve, but never zero — so the server always has room to answer.
+    #[test]
+    fn output_budget_reserves_positive_budget_near_window() {
+        // Choose a prompt whose estimate leaves room for MIN_OUTPUT + margin but
+        // less than the full RESPONSE_RESERVE_TOKENS.
+        // window - est - CONTEXT_SAFETY_MARGIN should land between MIN_OUTPUT and
+        // RESPONSE_RESERVE. Target usable ≈ 1000.
+        let window = 40_000usize;
+        let target_usable = 1_000usize;
+        let sys = "s"; // estimate_text_tokens("s") = 8
+        let sys_est = estimate_text_tokens(sys);
+        // est_prompt = window - CONTEXT_SAFETY_MARGIN - target_usable
+        let want_est = window - CONTEXT_SAFETY_MARGIN_TOKENS - target_usable;
+        // message estimate = len/3 + 8; solve len so total est (sys + msg) ≈ want_est
+        let msg_est = want_est - sys_est;
+        let msg = "y".repeat((msg_est.saturating_sub(8)) * 3);
+        let msgs = vec![user(&msg)];
+        match plan_output_budget(Some(window as u32), sys, &[], &msgs) {
+            OutputBudget::Reserve(n) => {
+                assert!(
+                    (n as usize) >= MIN_OUTPUT_TOKENS && (n as usize) < RESPONSE_RESERVE_TOKENS,
+                    "near-window prompt should reserve a positive sub-cap budget; got {n}"
+                );
+            }
+            other => panic!("expected Reserve near the window, got {other:?}"),
+        }
+    }
+
+    /// A normally-trimmed conversation (transcript trimmed to
+    /// `transcript_budget`, which reserves `RESPONSE_RESERVE_TOKENS`) must NOT
+    /// trip the Exceeded guard: the fixed safety margin fits inside that reserve.
+    /// This guards against the fix rejecting healthy conversations.
+    #[test]
+    fn output_budget_does_not_exceed_for_normally_trimmed_transcript() {
+        let window = 40_000u32;
+        let sys = "short system";
+        let tools: &[ToolSpec] = &[];
+        let budget = transcript_budget(Some(window), sys, tools).unwrap();
+        // Build a transcript estimated right at the trim budget (worst case the
+        // trim would keep), as one message.
+        let msg = "z".repeat(budget.saturating_sub(8) * 3);
+        let msgs = vec![user(&msg)];
+        match plan_output_budget(Some(window), sys, tools, &msgs) {
+            OutputBudget::Reserve(n) => assert!(n >= MIN_OUTPUT_TOKENS as u32),
+            other => panic!("a maximally-trimmed transcript must not be Exceeded, got {other:?}"),
         }
     }
 

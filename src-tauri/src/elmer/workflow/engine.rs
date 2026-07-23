@@ -5,12 +5,15 @@
 //! template `Present` builder (Task 9) into one `run_workflow` call.
 //!
 //! **The context-bound invariant.** Every phase's prompt is built via
-//! [`super::phases::build_prompt`], which renders ONLY the artifacts that
-//! phase's `declared_inputs` row names — never a prior phase's raw
-//! `PhaseTurn::final_text`, never the full artifact set. This module's job
-//! is to thread [`super::phases::CapturedArtifact`]s through `collected`
-//! and hand `build_prompt` that list on every call; it never concatenates a
-//! prior turn's raw text into a later prompt itself. The engine test module
+//! [`super::phases::build_prompt`], which — of the PRIOR-PHASE ARTIFACTS —
+//! renders ONLY the ones that phase's `declared_inputs` row names, never a
+//! prior phase's raw `PhaseTurn::final_text`, never the full artifact set.
+//! (It also renders `inputs.intent_text`, the operator's raw request, on
+//! every phase; that is the workflow's ground-truth input, not a prior-phase
+//! artifact, so it is outside the invariant.) This module's job is to thread
+//! [`super::phases::CapturedArtifact`]s through `collected` and hand
+//! `build_prompt` that list on every call; it never concatenates a prior
+//! turn's raw text into a later prompt itself. The engine test module
 //! below proves the WIRING holds (that this file actually calls
 //! `build_prompt` with the right `collected` slice on every phase), not the
 //! rendering rule itself — `phases.rs`'s own tests already cover that a
@@ -31,15 +34,19 @@
 //! router prompt itself via `build_prompt(PhaseName::Router, ..)` and parse
 //! the answer with a new `router::parse_depth`, or (b) add a router variant
 //! that returns `(Depth, u64)`. This module uses (b) —
-//! [`super::router::select_depth_with_tokens`] — because (a) silently drops
-//! `intent_text` from the router prompt: `phases::declared_inputs(Router)` is
-//! empty (no artifact exists yet when Router runs), so `build_prompt` would
-//! render only the phase's static instruction text, never the operator's
-//! actual ask. `router.rs` still gained `parse_depth` as the extracted, pure
-//! parsing half (used internally by both `select_depth` and
-//! `select_depth_with_tokens`), since the brief also asked for it and it is
-//! a harmless, purely-additive refactor — but the engine calls the token-aware
-//! variant, not `build_prompt(Router, ..)`.
+//! [`super::router::select_depth_with_tokens`] — because (a) has no way to
+//! hand back the router turn's `prompt_tokens` (`build_prompt` returns only a
+//! prompt) and because the router classifies from `router::classification_prompt`'s
+//! own wording, not the generic per-phase instruction `build_prompt` leads
+//! with. (Historical note: `build_prompt` used to render nothing but the
+//! phase's static instruction for Router — `declared_inputs(Router)` is empty
+//! — so path (a) would also have dropped the operator's ask; the F1 fix now
+//! renders `intent_text` on every phase, so that hazard is gone, but the two
+//! reasons above still favor (b).) `router.rs` still gained `parse_depth` as
+//! the extracted, pure parsing half (used internally by both `select_depth`
+//! and `select_depth_with_tokens`), since the brief also asked for it and it
+//! is a harmless, purely-additive refactor — but the engine calls the
+//! token-aware variant, not `build_prompt(Router, ..)`.
 
 use tuxlink_routines::validate::ValidationContext;
 
@@ -125,7 +132,7 @@ pub async fn run_workflow(
     // its prompt from ONLY `collected` (the context-bound invariant) —
     // never from a prior `PhaseTurn`'s raw text.
     for &phase in phase_list {
-        let prompt = build_prompt(phase, manifest, &collected);
+        let prompt = build_prompt(phase, manifest, &inputs.intent_text, &collected);
         let tools = tools_for(phase, manifest);
         let turn = model.run_phase(prompt, &tools).await;
 
@@ -525,6 +532,67 @@ mod tests {
         // Affordances artifact (pretty-printed), it does not carry the raw
         // turn text through.
         assert!(!draft_prompt.contains(&feasibility_final_text));
+    }
+
+    // --- F1 regression: the operator request reaches the phase prompts -----
+    //
+    // The pilot's Full arm died at Intent capture ("missing field `outcome`")
+    // because the Intent phase's prompt never contained the operator's
+    // request — `declared_inputs(Intent)` is empty, so `build_prompt` had
+    // nothing to render but the static instruction. This proves the engine
+    // now threads `inputs.intent_text` into every phase prompt, Intent
+    // included, so the model has the request to capture FROM.
+    #[tokio::test]
+    async fn engine_threads_operator_request_into_intent_and_downstream_prompts() {
+        let manifest = fixture_manifest();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store = DefinitionStore::open(dir.path().to_path_buf());
+
+        let operator_request =
+            "OPERATOR-REQUEST-SENTINEL: pull VARA mail from the nearest 20m gateway every hour";
+
+        let stub = StubModel::new(vec![
+            PhaseTurn::text("full", 5),
+            PhaseTurn::text(
+                &serde_json::to_string(&fixture_intent()).expect("serialize"),
+                10,
+            ),
+            PhaseTurn::text(
+                &serde_json::to_string(&fixture_affordances()).expect("serialize"),
+                10,
+            ),
+            PhaseTurn::text(
+                &serde_json::to_string(&fixture_draft()).expect("serialize"),
+                10,
+            ),
+            // Emit produces no tool calls, so capture errors and the run
+            // stops — fine, this test only needs the prompts through Draft.
+            PhaseTurn::text("", 1),
+        ]);
+
+        let _run = run_workflow(
+            &manifest,
+            WorkflowInputs {
+                intent_text: operator_request.to_string(),
+            },
+            &stub,
+            &StaticContext::new(),
+            &store,
+        )
+        .await;
+
+        let prompts = stub.prompts_seen();
+        // Router(0), Intent(1), Feasibility(2), Draft(3), Emit(4).
+        assert!(
+            prompts[1].contains(operator_request),
+            "Intent prompt must carry the operator request: {}",
+            prompts[1]
+        );
+        assert!(
+            prompts[3].contains(operator_request),
+            "Draft prompt must also carry the operator request: {}",
+            prompts[3]
+        );
     }
 
     // --- Happy path: Full depth, Green CI ----------------------------------

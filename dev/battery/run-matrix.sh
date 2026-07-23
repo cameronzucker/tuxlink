@@ -93,6 +93,16 @@ echo "run-matrix: ${n_models} model(s) × ${n_arms} arm(s) × ${#IDS[@]} prompt(
 echo "run-matrix: arms=[$ARMS] prompts=[${IDS[*]}] out=$OUTROOT"
 [ "$DRY" = 1 ] && echo "run-matrix: --dry-run (no cells will run)"
 
+# elmer_battery builds a (windowless) Tauri app that still initializes GTK, so a
+# headless box (e.g. R2 over SSH, no DISPLAY) panics at startup. Wrap each cell in
+# a per-invocation virtual framebuffer when there is no X display — matching the
+# prior R2 run scripts (xvfb-run -a). No-op when a real DISPLAY is present.
+WRAP=()
+if [ -z "${DISPLAY:-}" ] && command -v xvfb-run >/dev/null 2>&1; then
+  WRAP=(xvfb-run -a)
+  echo "run-matrix: no DISPLAY — wrapping each cell in 'xvfb-run -a'"
+fi
+
 ran=0; skipped=0; failed=0
 while IFS=$'\t' read -r label model endpoint keyvar; do
   case "$label" in ''|\#*) continue;; esac   # skip blanks/comments
@@ -121,7 +131,7 @@ while IFS=$'\t' read -r label model endpoint keyvar; do
       # Set it per-model from this model's key, for this invocation only; never
       # argv, never disk. Local/non-OpenRouter endpoints tolerate a non-OpenRouter
       # key (the credits baseline is non-fatal there, tuxlink-g31en).
-      if OPENROUTER_API_KEY="$key" "${cmd[@]}"; then ran=$((ran+1)); else
+      if OPENROUTER_API_KEY="$key" "${WRAP[@]}" "${cmd[@]}"; then ran=$((ran+1)); else
         failed=$((failed+1)); echo "run-matrix: CELL FAILED (continuing): $label/$arm/$id" >&2
       fi
     done
