@@ -1098,6 +1098,12 @@ fn real_main() -> Result<(), String> {
             data_dir.join("channels-feed-cache.json"),
         ),
     ));
+    // find_stations query-snapshot store (tuxlink-m0n38): the redesigned MCP tool
+    // resolves this from managed state; the main app registers it in run(), so
+    // this harness must too or the port panics (state() before manage()).
+    app.manage(Arc::new(
+        tuxlink_lib::station_query::snapshot::SnapshotStore::new(300_000),
+    ));
     // Search service (docs_search / docs_read / catalog_list).
     {
         let search_root = data_dir.join("native-mbox");
