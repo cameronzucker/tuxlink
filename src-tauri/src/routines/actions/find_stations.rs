@@ -39,6 +39,18 @@ use super::{StationDirectory, StationQueryService};
 
 const DATA_FIND_STATIONS: &str = "data.find_stations";
 
+/// Default number of DISTINCT stations returned when the routine author omits
+/// `limit`. A shortlist to feed `radio.connect` — NOT the whole catalog. An
+/// omitted `limit` USED to mean "return everything" (~1,400 stations dumped into
+/// the routine journal, which the agent can read → the same context overflow the
+/// MCP `find_stations` tool was redesigned away from, tuxlink-m0n38). It now
+/// means this default.
+const DEFAULT_STATION_LIMIT: usize = 8;
+
+/// Hard ceiling on DISTINCT stations regardless of the author's `limit`, so this
+/// action can never emit an un-survivable payload into the journal.
+const MAX_STATION_LIMIT: usize = 16;
+
 /// Shape-true dry-run output for `data.find_stations` (D6): a params-blind,
 /// empty-but-well-shaped directory result whose single `DRYRUN-1` callsign lets
 /// a routine's `$s.callsigns` → `radio.connect` composition take its "found a
@@ -49,6 +61,9 @@ fn find_stations_dry_run_shape(_params: &Value) -> Value {
         "callsigns": ["DRYRUN-1"],
         "fetched_at_ms": null,
         "operator_grid": null,
+        "total_matched_stations": 1,
+        "returned_stations": 1,
+        "truncated": false,
         "dry_run": true
     })
 }
@@ -70,8 +85,10 @@ struct FindStationsParams {
     /// the MCP `find_stations` port uses — a 721 is rejected verbatim.
     #[serde(default)]
     history_hours: Option<u32>,
-    /// Cap the number of DISTINCT callsigns returned. `Some(0)` is invalid
-    /// params (a request for zero stations is a mistake, not an empty result).
+    /// Cap the number of DISTINCT callsigns returned. Omitted =
+    /// [`DEFAULT_STATION_LIMIT`]; any value is clamped to [`MAX_STATION_LIMIT`]
+    /// (the action never returns the whole catalog). `Some(0)` is invalid params
+    /// (a request for zero stations is a mistake, not an empty result).
     #[serde(default)]
     limit: Option<usize>,
 }
@@ -132,7 +149,8 @@ impl Action for FindStations {
                     key: "limit",
                     ty: ValueType::Number,
                     required: false,
-                    description: "Cap on DISTINCT callsigns after distance-sorted dedup",
+                    description: "Cap on DISTINCT callsigns after distance-sorted dedup \
+                                  (omitted = 8; clamped to 16 max — never the whole catalog)",
                     allowed: None,
                     example: "10",
                 },
@@ -162,6 +180,25 @@ impl Action for FindStations {
                     ty: ValueType::String,
                     description: "The operator grid distances were computed from; may be null",
                     nullable: true,
+                },
+                OutputSpec {
+                    key: "total_matched_stations",
+                    ty: ValueType::Number,
+                    description: "How many DISTINCT stations matched before the limit — so a \
+                                  truncation is disclosed, never silent",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "returned_stations",
+                    ty: ValueType::Number,
+                    description: "How many DISTINCT stations this result actually returned",
+                    nullable: false,
+                },
+                OutputSpec {
+                    key: "truncated",
+                    ty: ValueType::Boolean,
+                    description: "True when matched exceeded the limit and stations were dropped",
+                    nullable: false,
                 },
             ],
             dry_run_shape: Some(find_stations_dry_run_shape),
@@ -227,11 +264,21 @@ impl Action for FindStations {
             }
         }
 
-        // Truncate the DEDUPED callsign list to `limit` (over DISTINCT
-        // callsigns, never rows).
-        if let Some(limit) = parsed.limit {
-            callsigns.truncate(limit);
-        }
+        // BOUND the result so this action can never emit the whole catalog into
+        // the routine journal (which the agent can read — the same context
+        // overflow class the MCP find_stations tool was redesigned away from,
+        // tuxlink-m0n38). An omitted `limit` now means the default shortlist (not
+        // "everything"), and any explicit `limit` is clamped to a hard maximum.
+        // Truncation is DISCLOSED via coverage fields, never silent. Over DISTINCT
+        // callsigns, never rows.
+        let total_matched_stations = callsigns.len();
+        let effective_limit = parsed
+            .limit
+            .unwrap_or(DEFAULT_STATION_LIMIT)
+            .min(MAX_STATION_LIMIT);
+        callsigns.truncate(effective_limit);
+        let returned_stations = callsigns.len();
+        let truncated = total_matched_stations > returned_stations;
 
         // `gateways` = every gateway ROW whose callsign survived the truncation
         // (a surviving callsign keeps ALL its rows/modes), preserving sort order.
@@ -254,6 +301,9 @@ impl Action for FindStations {
             "fetched_at_ms": directory.fetched_at_ms,
             "operator_grid": directory.operator_grid,
             "callsigns": callsigns,
+            "total_matched_stations": total_matched_stations,
+            "returned_stations": returned_stations,
+            "truncated": truncated,
         }))
     }
 }
@@ -733,5 +783,62 @@ mod tests {
         for m in ListingMode::ALL {
             assert!(modes.contains(&m), "must retain every confirmed mode");
         }
+    }
+
+    // ---- bounded-by-default: never dump the whole catalog (tuxlink-a4zzo) ---
+
+    fn many_stations(n: usize) -> StationDirectory {
+        let gws: Vec<Gateway> = (0..n)
+            .map(|i| gw(&format!("W{i}AA"), &format!("W{i}AA.WINLINK"), None))
+            .collect();
+        directory(gws, None)
+    }
+
+    #[tokio::test]
+    async fn omitted_limit_returns_default_shortlist_not_full_catalog() {
+        // Regression: an omitted `limit` USED to return EVERY station (~1,400 in
+        // prod) into the routine journal — the same context overflow the MCP tool
+        // was redesigned away from. It now returns the default shortlist and
+        // DISCLOSES the truncation.
+        let out = action(FakeStationQueryService::returning(many_stations(20)))
+            .execute(json!({}), CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(callsigns(&out).len(), DEFAULT_STATION_LIMIT);
+        assert_eq!(gateway_callsigns(&out).len(), DEFAULT_STATION_LIMIT);
+        assert_eq!(out["total_matched_stations"].as_u64().unwrap(), 20);
+        assert_eq!(out["returned_stations"].as_u64().unwrap(), DEFAULT_STATION_LIMIT as u64);
+        assert!(out["truncated"].as_bool().unwrap());
+    }
+
+    #[tokio::test]
+    async fn explicit_limit_is_clamped_to_hard_max() {
+        // Even a huge explicit limit can't emit an un-survivable payload.
+        let out = action(FakeStationQueryService::returning(many_stations(30)))
+            .execute(json!({ "limit": 100 }), CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(callsigns(&out).len(), MAX_STATION_LIMIT);
+        assert_eq!(out["total_matched_stations"].as_u64().unwrap(), 30);
+        assert!(out["truncated"].as_bool().unwrap());
+    }
+
+    #[tokio::test]
+    async fn under_default_reports_no_truncation() {
+        let dir = directory(
+            vec![
+                gw("AA1AA", "AA1AA.WINLINK", None),
+                gw("BB2BB", "BB2BB.WINLINK", None),
+            ],
+            None,
+        );
+        let out = action(FakeStationQueryService::returning(dir))
+            .execute(json!({}), CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(callsigns(&out).len(), 2);
+        assert_eq!(out["total_matched_stations"].as_u64().unwrap(), 2);
+        assert_eq!(out["returned_stations"].as_u64().unwrap(), 2);
+        assert!(!out["truncated"].as_bool().unwrap());
     }
 }
