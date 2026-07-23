@@ -173,12 +173,16 @@ fn outcome_to_event(outcome: &RunOutcome) -> ElmerEvent {
 #[tauri::command]
 pub async fn elmer_send(
     msg: String,
+    authoring: bool,
     session: State<'_, Arc<ElmerSession>>,
     app: AppHandle,
 ) -> Result<(), String> {
     let sink = make_event_sink(app.clone());
     let session = Arc::clone(&session);
-    let outcome = session.send(msg, sink).await;
+    // `authoring` = the "Build Carefully" toggle (tuxlink-t3jci P1): when true,
+    // the routine invariant + authoring skill are composed into this turn's
+    // system prompt (see ElmerSession::build_turn_provider).
+    let outcome = session.send(msg, authoring, sink).await;
 
     // Always emit the terminal outcome event so the pane can update its state.
     let _ = app.emit(EV_OUTCOME, outcome_to_event(&outcome));

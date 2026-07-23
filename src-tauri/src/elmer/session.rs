@@ -380,17 +380,25 @@ impl ElmerSession {
     /// D-Bus round-trip, so it runs inside [`tokio::task::spawn_blocking`].  A
     /// backend error (locked keyring) maps to a NeedsOperator reason — it is
     /// NEVER collapsed to a keyless send.
-    async fn build_turn_provider(&self) -> Result<Arc<ElmerProvider>, String> {
+    async fn build_turn_provider(&self, authoring: bool) -> Result<Arc<ElmerProvider>, String> {
         // Hold the model-config tokio mutex across the whole build so the
         // {endpoint, model, key} triple is atomic w.r.t. a concurrent
         // `elmer_config_set`.  No `inner` std-Mutex is touched here.
         let snap = self.model_config.lock().await;
+        // Build Carefully (tuxlink-t3jci P1): when `authoring` is on, the routine
+        // invariant + authoring skill are appended to the base prompt via the
+        // single shared composition point; when off, this is the untouched
+        // `system_prompt_override` passthrough (Base "no workflow" arm stays pure).
+        let system_prompt = tuxlink_agent_frontend::provider::compose_system_prompt(
+            snap.system_prompt_override.clone(),
+            authoring,
+        );
         build_turn_provider_from_parts(
             &snap.endpoint,
             &snap.model,
             snap.num_ctx,
             snap.temperature,
-            snap.system_prompt_override.clone(),
+            system_prompt,
             &self.keyring,
         )
         .await
@@ -419,7 +427,12 @@ impl ElmerSession {
     /// while the `inner` std-`Mutex` is held. The bridge closure runs inline on
     /// the runner's loop (inside the spawned run task), and the run task does
     /// not hold `inner` during the run — see the file-level proof above.
-    pub async fn send(self: &Arc<Self>, user_msg: String, emit: EventSink) -> RunOutcome {
+    pub async fn send(
+        self: &Arc<Self>,
+        user_msg: String,
+        authoring: bool,
+        emit: EventSink,
+    ) -> RunOutcome {
         // ── Single-flight gate ──────────────────────────────────────────────
         // REJECT (non-blocking): try_lock returns Err if op_lock is taken.
         let _op = match self.op_lock.try_lock() {
@@ -435,7 +448,7 @@ impl ElmerSession {
         // pre-spawn section: NO `inner` std-Mutex is held, and a build failure
         // returns NeedsOperator WITHOUT spawning a run task and WITHOUT mutating
         // the conversation (no dangling user turn).
-        let provider = match self.build_turn_provider().await {
+        let provider = match self.build_turn_provider(authoring).await {
             Ok(p) => p,
             Err(reason) => {
                 return RunOutcome::NeedsOperator(reason);

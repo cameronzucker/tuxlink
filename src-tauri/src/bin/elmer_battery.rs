@@ -1580,13 +1580,16 @@ async fn run_cell(args: RunCellArgs<'_>) -> Result<CellResult, String> {
     // Both arms feed the SAME `sink`/`Meters`, so the cross-arm token/turn
     // comparison is apples-to-apples.
     let outcome = match cli.arm {
-        // Base: one send over the operator's raw prompt.
-        Arm::Base => session.send(entry.prompt.clone(), sink).await,
+        // Base: one send over the operator's raw prompt. authoring=false — the
+        // pure "no workflow" reference arm (Build Carefully skill NOT injected).
+        Arm::Base => session.send(entry.prompt.clone(), false, sink).await,
         // MatchedControl: Base's single send, but the prompt is augmented with
         // the deterministic affordance catalog (see `matched_control_prompt`).
+        // authoring=false — this is a user-prompt catalog control, distinct from
+        // the Build Carefully system-prompt skill (the +Skill arm is P5).
         Arm::MatchedControl => {
             let prompt = matched_control_prompt(&entry.prompt, &routines_state);
-            session.send(prompt, sink).await
+            session.send(prompt, false, sink).await
         }
     };
 
