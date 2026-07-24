@@ -361,6 +361,22 @@ impl Provider for OpenAiProvider {
         if let Some(n) = max_tokens {
             body["max_tokens"] = json!(n);
         }
+        // Explicit output-budget override (OPT-IN via env). When an endpoint's
+        // context window can't be probed (some OpenRouter routes report nothing
+        // usable), `max_tokens` is omitted above and the serving provider falls
+        // back to its OWN default output cap (e.g. StreamLake's ~4096). A
+        // reasoning-heavy model then truncates mid-thought BEFORE it emits a tool
+        // call, ending the turn with no action ("completed" but empty)
+        // (experimentally derived, 2026-07-24 GLM-5.2 battery run). ELMER_MAX_TOKENS
+        // forces an explicit output budget so reasoning + the tool call fit. Unset
+        // = unchanged (window-derived or provider default).
+        if let Ok(v) = std::env::var("ELMER_MAX_TOKENS") {
+            if let Ok(n) = v.trim().parse::<u64>() {
+                if n > 0 {
+                    body["max_tokens"] = json!(n);
+                }
+            }
+        }
         body["stream"] = json!(true);
         // Ask the server to append a final usage chunk to the stream (vLLM /
         // OpenAI / OpenRouter honor this; without it, streamed usage is omitted).
