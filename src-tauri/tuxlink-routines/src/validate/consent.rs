@@ -58,6 +58,7 @@ pub const MIXED_MODE_STALL_WRITE: &str = "MIXED_MODE_STALL_WRITE";
 pub const ATTENDED_UNDER_SCHEDULE: &str = "ATTENDED_UNDER_SCHEDULE";
 pub const ATTENDED_WRITE_UNDER_SCHEDULE: &str = "ATTENDED_WRITE_UNDER_SCHEDULE";
 pub const WRITE_VALUE_RUNTIME: &str = "WRITE_VALUE_RUNTIME";
+pub const CALLEE_CONSENT_UNREACHABLE: &str = "CALLEE_CONSENT_UNREACHABLE";
 
 /// Which consent class a closure is being computed for. The transmit class
 /// (`transmits: true`) and the config-write class (`writes_config: true`) share
@@ -79,6 +80,14 @@ impl ConsentClass {
             })
             .unwrap_or(false)
     }
+
+    /// Human phrase for a finding message.
+    fn describe(self) -> &'static str {
+        match self {
+            ConsentClass::Transmit => "transmits",
+            ConsentClass::Write => "writes config",
+        }
+    }
 }
 
 /// Append every consent-closure finding for `def` into `findings`.
@@ -90,6 +99,78 @@ pub fn check(def: &RoutineDef, ctx: &dyn ValidationContext, findings: &mut Vec<F
     check_attended_under_schedule(def, ctx, findings);
     check_attended_write_under_schedule(def, ctx, findings);
     check_write_value_runtime(def, ctx, findings);
+    check_callee_consent(def, ctx, findings);
+}
+
+/// Authoring must catch every consent refusal the runtime child-start gate
+/// (`session.rs::consent_gate_error`) would produce. For every routine reachable
+/// through `Control::Call` from `def` (transitively, cycle-guarded), emit a
+/// finding if that callee — evaluated AS A ROOT — is `automatic`, its own closure
+/// for a consent class is non-empty, and its ack for that class does not bind.
+/// Without this, an attended (or acked-automatic) parent that calls an
+/// unacked-automatic callee passes authoring but dead-ends at runtime
+/// child-start (tuxlink-kbh4t Part A). The parent's OWN consent is other checks'
+/// business; `visited` seeds with the root so a cycle back to it is skipped.
+fn check_callee_consent(def: &RoutineDef, ctx: &dyn ValidationContext, findings: &mut Vec<Finding>) {
+    let mut visited: HashSet<String> = HashSet::new();
+    visited.insert(def.routine.clone());
+    let mut flagged: HashSet<String> = HashSet::new();
+    collect_callee_consent(def, ctx, def, &mut visited, &mut flagged, findings);
+}
+
+fn collect_callee_consent(
+    root: &RoutineDef,
+    ctx: &dyn ValidationContext,
+    node: &RoutineDef,
+    visited: &mut HashSet<String>,
+    flagged: &mut HashSet<String>,
+    findings: &mut Vec<Finding>,
+) {
+    for track in &node.tracks {
+        for step in &track.steps {
+            let Step::Control(c) = step else { continue };
+            let Control::Call { routine: callee, .. } = &c.control else {
+                continue;
+            };
+            let Some(callee_def) = ctx.routine_def(callee) else {
+                continue; // CALL_TARGET_MISSING's problem, not ours.
+            };
+            if !visited.insert(callee_def.routine.clone()) {
+                continue;
+            }
+            if callee_def.transmit_mode == TransmitMode::Automatic
+                && !flagged.contains(&callee_def.routine)
+            {
+                for (class, ack) in [
+                    (ConsentClass::Transmit, &callee_def.transmit_ack),
+                    (ConsentClass::Write, &callee_def.write_ack),
+                ] {
+                    let closure = closure_for(&callee_def, ctx, class);
+                    if first_hit(&closure).is_some()
+                        && !ack_binds_closure(ack, &closure_digest(&closure))
+                    {
+                        flagged.insert(callee_def.routine.clone());
+                        findings.push(Finding::error(
+                            CALLEE_CONSENT_UNREACHABLE,
+                            root.routine.clone(),
+                            format!(
+                                "routine \"{}\" calls \"{}\", which runs automatically and {} \
+                                 without a current operator acknowledgment; the call will be \
+                                 refused at run time. Make \"{}\" attended, or have the operator \
+                                 acknowledge it in the routine designer.",
+                                root.routine,
+                                callee_def.routine,
+                                class.describe(),
+                                callee_def.routine,
+                            ),
+                        ));
+                        break;
+                    }
+                }
+            }
+            collect_callee_consent(root, ctx, &callee_def, visited, flagged, findings);
+        }
+    }
 }
 
 /// A single relevant step found in a routine's closure: `routine` names
@@ -697,6 +778,61 @@ mod tests {
             window: None,
             if_missed: IfMissed::Skip,
         }
+    }
+
+    // --- CALLEE_CONSENT_UNREACHABLE: authoring is a superset of the runtime gate ---
+
+    #[test]
+    fn callee_automatic_unacked_is_surfaced_at_authoring() {
+        // Parent is ATTENDED (its own consent is fine) but CALLS an AUTOMATIC
+        // child that transmits with no binding ack — the runtime child-start gate
+        // would refuse that child. Authoring must surface it (tuxlink-kbh4t A).
+        let child = routine_named(
+            "child",
+            TransmitMode::Automatic,
+            vec![],
+            vec![track("t", vec![tx_action("s1")])],
+        );
+        let parent = routine_named(
+            "parent",
+            TransmitMode::Attended,
+            vec![],
+            vec![track("t", vec![call_step("s1", "child")])],
+        );
+        let ctx = base_ctx().with_routine(child);
+        let mut findings = vec![];
+        check(&parent, &ctx, &mut findings);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.code == CALLEE_CONSENT_UNREACHABLE && f.message.contains("child")),
+            "authoring must flag the unacked automatic callee, got {findings:?}"
+        );
+    }
+
+    #[test]
+    fn callee_attended_is_not_flagged() {
+        // An attended callee is not a runtime refusal (it parks for a person), so
+        // authoring must not flag it as unreachable.
+        let child = routine_named(
+            "child",
+            TransmitMode::Attended,
+            vec![],
+            vec![track("t", vec![tx_action("s1")])],
+        );
+        let parent = routine_named(
+            "parent",
+            TransmitMode::Attended,
+            vec![],
+            vec![track("t", vec![call_step("s1", "child")])],
+        );
+        let ctx = base_ctx().with_routine(child);
+        let mut findings = vec![];
+        check(&parent, &ctx, &mut findings);
+        assert!(
+            !findings.iter().any(|f| f.code == CALLEE_CONSENT_UNREACHABLE),
+            "attended callee must not be flagged, got {findings:?}"
+        );
     }
 
     // --- AUTO_TX_UNACKED: the consent matrix -----------------------------
