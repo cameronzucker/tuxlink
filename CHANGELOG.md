@@ -31,6 +31,29 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.100.0](https://github.com/cameronzucker/tuxlink/compare/v0.99.0...v0.100.0) (2026-07-24)
+
+
+### Features
+
+* **battery:** --list-arms preflight guard so a launcher can't request a missing arm (tuxlink-m0n38) ([b4986c6](https://github.com/cameronzucker/tuxlink/commit/b4986c6ac4e0b8c2b24dda4607c75478c4786d2b))
+* **battery:** confound-proof one-command lift runner (tuxlink-m0n38 / t3jci) ([c6c1017](https://github.com/cameronzucker/tuxlink/commit/c6c10173c7b8221a42a0789f2bba451c0a96550a))
+* **routines:** typed authoring disposition + revision-bound remedies (tuxlink-kbh4t Part B) ([66653d2](https://github.com/cameronzucker/tuxlink/commit/66653d2a922a4b370ec8c7e6f5806cfdefcd9e8d))
+
+
+### Bug Fixes
+
+* **lint:** allow too_many_arguments on finish_recommend after threading the band filter ([857bcb7](https://github.com/cameronzucker/tuxlink/commit/857bcb7ccf8fb622c595db426dad6fe3beb3d941))
+* **lint:** drop now-unused FindingDto import from mcp-core lib stub ([80697d5](https://github.com/cameronzucker/tuxlink/commit/80697d556eff44fe8e1752a469e2d0659c847eb0))
+* **lint:** drop now-unused FindingDto import from testserver mock ([3d35f22](https://github.com/cameronzucker/tuxlink/commit/3d35f228e2f52c0bc1e107d4dac2e2bba1ff5e6a))
+* **routines:** authoring surfaces callee consent refusals (tuxlink-kbh4t Part A) ([4798093](https://github.com/cameronzucker/tuxlink/commit/47980930d69ff9b07b9e2221b98c5096c4af880e))
+* **routines:** bound data.find_stations so it can't dump the whole catalog (tuxlink-a4zzo) ([82f3f5a](https://github.com/cameronzucker/tuxlink/commit/82f3f5af65f83bcf3def2e5fc369c66ef1f52fdc))
+* **routines:** byte-bound the data.find_stations gateway detail rows (drift item 4) ([d5a3d52](https://github.com/cameronzucker/tuxlink/commit/d5a3d52b7770265ad33a8ea0f451c0bfedb0cb8d))
+* **routines:** report applied:false on a no-op edit so agents stop looping (tuxlink-m5oia) ([c067019](https://github.com/cameronzucker/tuxlink/commit/c067019e4e24f0bad26b71e58d6e24379bd13dff))
+* **station-query:** make partial-as-complete + inconsistent coverage unrepresentable (drift item 1) ([67e797a](https://github.com/cameronzucker/tuxlink/commit/67e797a8abc965a73ebe3c3275d84901fc2e1577))
+* **station-query:** make the &lt;32KB guarantee real + exact coverage under exclusions (drift items 2, 3) ([a5d65a5](https://github.com/cameronzucker/tuxlink/commit/a5d65a5e2c697e3fd2c5a201fc3385849ec37fdb))
+* **station-query:** recommend an IN-BAND dial — band filter now constrains connections, not just gateways (tuxlink-8rpw5) ([e9b526d](https://github.com/cameronzucker/tuxlink/commit/e9b526d884d896adbc3560221d9994b4d1fcfba9))
+
 ## [0.99.0](https://github.com/cameronzucker/tuxlink/compare/v0.98.0...v0.99.0) (2026-07-23)
 
 
