@@ -2576,27 +2576,46 @@ fn channel_passes_bandwidth(bandwidth_hz: Option<u32>, wanted: &[u32]) -> bool {
 /// back to its bare dial list, whose synthesized channels carry no bandwidth
 /// (so they pass every bandwidth filter) and are placed by dial band, matching
 /// the frontend's `frequenciesKhz` fallback in `stationModel`.
+/// Does a SINGLE connection (dial + occupied bandwidth) satisfy the band and
+/// bandwidth filters? Empty filters degrade to "any". A `None` bandwidth (a
+/// synthesized/unknown occupied width) passes every bandwidth filter.
+///
+/// This is the per-connection core shared by two callers so their notion of
+/// "in filter" can never drift: [`gateway_dto_passes_band_and_bandwidth`] uses
+/// it to decide gateway *eligibility*, and the `find_stations` engine uses it to
+/// keep only in-filter *connections* on a station — so "best 15m station" can
+/// never recommend a 40m dial (tuxlink-8rpw5).
+pub(crate) fn connection_passes_band_and_bandwidth(
+    freq_khz: f64,
+    bandwidth_hz: Option<u32>,
+    bands: &[String],
+    bandwidths: &[u32],
+) -> bool {
+    let band_ok = bands.is_empty()
+        || match khz_to_band(freq_khz) {
+            Some(b) => bands.iter().any(|w| w.eq_ignore_ascii_case(b)),
+            None => false,
+        };
+    band_ok && channel_passes_bandwidth(bandwidth_hz, bandwidths)
+}
+
 pub(crate) fn gateway_dto_passes_band_and_bandwidth(
     gw: &GatewayDto,
     bands: &[String],
     bandwidths: &[u32],
 ) -> bool {
-    let band_ok = |freq_khz: f64| -> bool {
-        bands.is_empty()
-            || match khz_to_band(freq_khz) {
-                Some(b) => bands.iter().any(|w| w.eq_ignore_ascii_case(b)),
-                None => false,
-            }
-    };
     if gw.channels.is_empty() {
         // Synthesized null-bandwidth channels pass every bandwidth filter, so the
         // gateway survives iff SOME bare dial is in a wanted band (band-only when
         // `bands` is empty degrades to "has any dial").
-        return gw.frequencies_khz.iter().any(|f| band_ok(*f));
+        return gw
+            .frequencies_khz
+            .iter()
+            .any(|f| connection_passes_band_and_bandwidth(*f, None, bands, bandwidths));
     }
     gw.channels
         .iter()
-        .any(|c| band_ok(c.frequency_khz) && channel_passes_bandwidth(c.bandwidth_hz, bandwidths))
+        .any(|c| connection_passes_band_and_bandwidth(c.frequency_khz, c.bandwidth_hz, bands, bandwidths))
 }
 
 /// The amateur-band labels (e.g. `"20m"`) a gateway operates on, for FT-8

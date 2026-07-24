@@ -19,7 +19,7 @@ use tuxlink_mcp_core::ports::{GatewayDto, StationModeDto};
 use tuxlink_mcp_core::station_query::{
     AggregateBucket, AggregateGroup, Band, BoundedVec, Candidate, CappedString, ConnectObjective,
     ConnectionDto, ContractViolation, DistanceBucket, Facet, FacetCount, FindStationsRequest,
-    FindStationsResponse, Fitness, FitnessComponents, Ft8Policy, Population, RankingMeta,
+    FindStationsResponse, Fitness, FitnessComponents, Ft8Policy, Population, RankedSubset, RankingMeta,
     RecommendationGoal, Refinement, SnapshotMeta, StationExportFormat, StationFacet, StationFilters,
     StationResult, StationSummary, SubsetCoverage,
 };
@@ -30,6 +30,33 @@ use super::snapshot::{SnapshotError, SnapshotStore};
 /// returned whole; above it, `explore` returns `refinement-required` and
 /// `recommend` returns a ranked subset.
 const COMPLETE_SET_CAP: usize = 16;
+
+/// Whole-response byte budget (spec §"postcondition contract-violation error").
+/// Every result variant is bounded by construction and the response crate's
+/// worst-legal-value property test proves the serialized DTO stays under this,
+/// so this runtime check should never fire in normal operation. It is the belt
+/// that keeps the guarantee even if a FUTURE change breaks a structural bound:
+/// rather than emit a payload that could overflow the agent's context, the
+/// engine fails loud with a [`StationQueryError::Contract`].
+const RESPONSE_BYTE_BUDGET: usize = 32_768;
+
+/// Enforce the whole-response byte budget. Split out (with an explicit `budget`
+/// argument) so it is unit-testable: a legal response can never exceed the real
+/// budget by construction, so the test shrinks the budget to exercise the guard.
+fn enforce_byte_budget(
+    resp: &FindStationsResponse,
+    budget: usize,
+) -> Result<(), ContractViolation> {
+    let serialized_len = serde_json::to_vec(resp).map_or(usize::MAX, |v| v.len());
+    if serialized_len >= budget {
+        return Err(ContractViolation {
+            detail: format!(
+                "find_stations response serialized to {serialized_len} bytes, at/over the {budget}-byte budget"
+            ),
+        });
+    }
+    Ok(())
+}
 
 /// App-owned facts the engine needs, resolved by the adapter (never agent-supplied).
 pub struct StationContext {
@@ -137,7 +164,7 @@ impl<'a> StationQueryEngine<'a> {
         req: FindStationsRequest,
         ctx: &StationContext,
     ) -> Result<FindStationsResponse, StationQueryError> {
-        match req {
+        let response = match req {
             FindStationsRequest::Lookup {
                 snapshot_id,
                 callsigns,
@@ -185,6 +212,7 @@ impl<'a> StationQueryEngine<'a> {
                     .collect();
                 self.finish_recommend(
                     &filtered,
+                    &filters,
                     goal,
                     candidate_count.get() as usize,
                     &excluded,
@@ -195,14 +223,18 @@ impl<'a> StationQueryEngine<'a> {
             FindStationsRequest::Aggregate { filters, group_by } => {
                 let (gateways, snap_meta) = self.resolve_population(None, None, &filters, ctx)?;
                 let filtered = apply_filters(&gateways, &filters, ctx.now_ms);
-                self.finish_aggregate(&filtered, group_by.as_slice(), ctx.now_ms, snap_meta)
+                self.finish_aggregate(&filtered, &filters, group_by.as_slice(), ctx.now_ms, snap_meta)
             }
             FindStationsRequest::Export { filters, format } => {
                 let (gateways, snap_meta) = self.resolve_population(None, None, &filters, ctx)?;
                 let filtered = apply_filters(&gateways, &filters, ctx.now_ms);
-                self.finish_export(&filtered, format, ctx, snap_meta)
+                self.finish_export(&filtered, &filters, format, ctx, snap_meta)
             }
-        }
+        }?;
+        // Runtime postcondition: fail loud if the built response is over budget
+        // (a broken bound), never emit a payload that could overflow the agent.
+        enforce_byte_budget(&response, RESPONSE_BYTE_BUDGET)?;
+        Ok(response)
     }
 
     /// Load the working population (from a snapshot, or a freshly minted one over
@@ -250,7 +282,9 @@ impl<'a> StationQueryEngine<'a> {
         now_ms: u64,
         snap_meta: SnapshotMeta,
     ) -> Result<FindStationsResponse, StationQueryError> {
-        let stations = group_stations(matched, now_ms);
+        // Lookup is exact-callsign; the caller supplied no band/bandwidth filter,
+        // so every advertised connection is kept.
+        let stations = group_stations(matched, &StationFilters::default(), now_ms);
         let population = population_of(&stations);
         let result = if stations.is_empty() {
             StationResult::NoMatches
@@ -269,11 +303,11 @@ impl<'a> StationQueryEngine<'a> {
     fn finish_explore(
         &self,
         filtered: &[&GatewayDto],
-        _filters: &StationFilters,
+        filters: &StationFilters,
         now_ms: u64,
         snap_meta: SnapshotMeta,
     ) -> Result<FindStationsResponse, StationQueryError> {
-        let stations = group_stations(filtered, now_ms);
+        let stations = group_stations(filtered, filters, now_ms);
         let population = population_of(&stations);
         let result = if stations.is_empty() {
             StationResult::NoMatches
@@ -294,16 +328,23 @@ impl<'a> StationQueryEngine<'a> {
         Ok(FindStationsResponse::new(snap_meta, population, result))
     }
 
+    // Distinct inputs for a single dispatch arm (filtered rows, the band filter,
+    // the goal, count, exclusions, app context, snapshot meta); bundling them into
+    // a struct would obscure more than it clarifies.
+    #[allow(clippy::too_many_arguments)]
     fn finish_recommend(
         &self,
         filtered: &[&GatewayDto],
+        filters: &StationFilters,
         goal: RecommendationGoal,
         candidate_count: usize,
         excluded: &HashSet<String>,
         ctx: &StationContext,
         snap_meta: SnapshotMeta,
     ) -> Result<FindStationsResponse, StationQueryError> {
-        let stations = group_stations(filtered, ctx.now_ms);
+        // The band/bandwidth filter constrains the CONNECTIONS considered, so the
+        // selected dial is in-band (tuxlink-8rpw5).
+        let stations = group_stations(filtered, filters, ctx.now_ms);
         let population = population_of(&stations);
         let objective = match goal {
             RecommendationGoal::ConnectNow { objective, .. }
@@ -314,8 +355,9 @@ impl<'a> StationQueryEngine<'a> {
             RecommendationGoal::BestAt { at_utc_ms, .. } => at_utc_ms,
         };
 
-        // Score every eligible station (evaluated == eligible, always — the
-        // population is in memory so we never return an approximate best).
+        // Score every eligible station EXCEPT the excluded candidates. The whole
+        // population is in memory, so we score exhaustively (never an approximate
+        // best); coverage below is exact over exactly this scored set.
         let snap_id = snap_meta.id.as_str().to_string();
         let mut scored: Vec<(f32, Candidate)> = stations
             .iter()
@@ -326,7 +368,14 @@ impl<'a> StationQueryEngine<'a> {
         // Descending by score; stable so equal scores keep group (nearest-first) order.
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-        let evaluated = population.eligible_stations;
+        // Coverage is over the stations actually SCORED — eligible MINUS the
+        // excluded candidates — not the full eligible population, so
+        // evaluated/returned/omitted stay exact when the agent excludes (e.g.
+        // "give me another option"). When ALL eligible are excluded, `scored` is
+        // empty and the result is `no-matches`: an explicit, correct empty (the
+        // agent excluded everything). `population` still reports the full
+        // eligible set, so the envelope stays honest about the whole.
+        let evaluated = scored.len() as u32;
         let result = if scored.is_empty() {
             StationResult::NoMatches
         } else {
@@ -336,16 +385,14 @@ impl<'a> StationQueryEngine<'a> {
             );
             debug_assert_eq!(omitted, 0, "take(returned<=8) can't exceed the cap");
             let returned_u32 = top.len() as u32;
-            let coverage = SubsetCoverage::top_of_all_eligible(
-                evaluated,
-                returned_u32,
-                evaluated.saturating_sub(returned_u32),
-            );
-            StationResult::RankedSubset {
-                ranking: ranking_meta(objective, ctx),
+            // `omitted` is derived inside the constructor (evaluated - returned),
+            // so the coverage counts are consistent by construction.
+            let coverage = SubsetCoverage::top_of_all_eligible(evaluated, returned_u32)?;
+            StationResult::RankedSubset(RankedSubset::new(
+                ranking_meta(objective, ctx),
                 coverage,
-                top_candidates: top,
-            }
+                top,
+            ))
         };
         Ok(FindStationsResponse::new(snap_meta, population, result))
     }
@@ -353,11 +400,14 @@ impl<'a> StationQueryEngine<'a> {
     fn finish_aggregate(
         &self,
         filtered: &[&GatewayDto],
+        filters: &StationFilters,
         group_by: &[StationFacet],
         now_ms: u64,
         snap_meta: SnapshotMeta,
     ) -> Result<FindStationsResponse, StationQueryError> {
-        let stations = group_stations(filtered, now_ms);
+        // Aggregate counts run over the in-filter connections only, so a band-
+        // filtered aggregate reflects the requested band (tuxlink-8rpw5).
+        let stations = group_stations(filtered, filters, now_ms);
         let population = population_of(&stations);
         let (groups, _) = BoundedVec::<AggregateGroup, 3>::from_capped(
             group_by
@@ -371,11 +421,13 @@ impl<'a> StationQueryEngine<'a> {
     fn finish_export(
         &self,
         filtered: &[&GatewayDto],
+        filters: &StationFilters,
         format: StationExportFormat,
         ctx: &StationContext,
         snap_meta: SnapshotMeta,
     ) -> Result<FindStationsResponse, StationQueryError> {
-        let stations = group_stations(filtered, ctx.now_ms);
+        // The exported artifact carries only the in-filter connections.
+        let stations = group_stations(filtered, filters, ctx.now_ms);
         let population = population_of(&stations);
         let sink = ctx
             .export_sink
@@ -424,7 +476,16 @@ struct Conn {
 /// Group filtered gateway rows into stations, preserving first-seen order (which,
 /// for the fresh-query path, is nearest-first because curation feeds the sorted
 /// population... but the engine never relies on incoming order for correctness).
-fn group_stations<'a>(gateways: &[&'a GatewayDto], now_ms: u64) -> Vec<Station<'a>> {
+fn group_stations<'a>(
+    gateways: &[&'a GatewayDto],
+    filters: &StationFilters,
+    now_ms: u64,
+) -> Vec<Station<'a>> {
+    // Derive the band/bandwidth filter once so only IN-FILTER connections are
+    // collected onto a station (band filter constrains connections, not just
+    // gateway eligibility — tuxlink-8rpw5). Empty filters keep everything.
+    let bands: Vec<String> = filters.bands.as_slice().iter().map(|b| b.label().to_string()).collect();
+    let bandwidths: Vec<u32> = filters.bandwidths.as_slice().iter().map(|b| b.hz()).collect();
     let mut order: Vec<String> = Vec::new();
     let mut by_call: BTreeMap<String, Station<'a>> = BTreeMap::new();
     for gw in gateways {
@@ -456,7 +517,7 @@ fn group_stations<'a>(gateways: &[&'a GatewayDto], now_ms: u64) -> Vec<Station<'
             entry.ft8_corroborated = Some(true);
         }
         entry.operating_now = entry.operating_now || row_operating;
-        entry.connections.extend(connections_of(gw));
+        entry.connections.extend(connections_of(gw, &bands, &bandwidths));
     }
     // Return in first-seen order.
     order
@@ -466,12 +527,20 @@ fn group_stations<'a>(gateways: &[&'a GatewayDto], now_ms: u64) -> Vec<Station<'
         .collect()
 }
 
-/// Extract a row's connection options: one per channel-detail row, or one per
-/// bare dial when the gateway has no channel details.
-fn connections_of(gw: &GatewayDto) -> Vec<Conn> {
+/// Extract a row's connection options that match the requested band/bandwidth:
+/// one per channel-detail row, or one per bare dial when the gateway has no
+/// channel details. Connections outside the requested `bands`/`bandwidths` are
+/// dropped here — a gateway is *eligible* if it has ANY in-band channel, but only
+/// its IN-BAND connections may be recommended/summarized, so "best 15m station"
+/// never returns a 40m dial (tuxlink-8rpw5). Empty filters keep every connection.
+fn connections_of(gw: &GatewayDto, bands: &[String], bandwidths: &[u32]) -> Vec<Conn> {
+    let keep = |freq: f64, bw: Option<u32>| {
+        crate::mcp_ports::connection_passes_band_and_bandwidth(freq, bw, bands, bandwidths)
+    };
     if gw.channels.is_empty() {
         gw.frequencies_khz
             .iter()
+            .filter(|&&f| keep(f, None))
             .map(|&f| Conn {
                 mode: gw.mode,
                 frequency_khz: f,
@@ -481,6 +550,7 @@ fn connections_of(gw: &GatewayDto) -> Vec<Conn> {
     } else {
         gw.channels
             .iter()
+            .filter(|c| keep(c.frequency_khz, c.bandwidth_hz))
             .map(|c| Conn {
                 mode: gw.mode,
                 frequency_khz: c.frequency_khz,

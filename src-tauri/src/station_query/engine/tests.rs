@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use tuxlink_mcp_core::ports::{GatewayDto, StationModeDto};
+use tuxlink_mcp_core::ports::{ChannelDto, GatewayDto, StationModeDto};
 use tuxlink_mcp_core::station_query::{
     Band, BoundedU8, BoundedVec, CandidateId, Callsign, ConnectObjective, FindStationsRequest,
     RecommendationGoal, StationExportFormat, StationFacet, StationFilters,
@@ -24,6 +24,33 @@ fn gw(callsign: &str, freq_khz: f64, dist_mi: Option<f64>) -> GatewayDto {
         grid: Some("FN31".into()),
         frequencies_khz: vec![freq_khz],
         channels: Vec::new(),
+        antenna: None,
+        distance_km: dist_mi.map(|m| m / 0.621_371),
+        distance_mi: dist_mi,
+        bearing_deg: Some(90.0),
+        ft8_corroborated: None,
+    }
+}
+
+/// A gateway that carries several channels spanning multiple bands (as a real
+/// Winlink gateway does), so the band filter's gateway-vs-connection distinction
+/// is exercised. Each `(freq_khz, bandwidth_hz)` becomes one channel.
+fn gw_multiband(callsign: &str, channels: &[(f64, Option<u32>)], dist_mi: Option<f64>) -> GatewayDto {
+    GatewayDto {
+        mode: StationModeDto::VaraHf,
+        channel: "multi".into(),
+        callsign: callsign.into(),
+        grid: Some("FN31".into()),
+        frequencies_khz: channels.iter().map(|(f, _)| *f).collect(),
+        channels: channels
+            .iter()
+            .map(|(f, bw)| ChannelDto {
+                frequency_khz: *f,
+                bandwidth_hz: *bw,
+                mode: "vara-hf".into(),
+                operating_hours: None,
+            })
+            .collect(),
         antenna: None,
         distance_km: dist_mi.map(|m| m / 0.621_371),
         distance_mi: dist_mi,
@@ -210,6 +237,113 @@ fn recommend_exclude_yields_next_best_across_snapshots() {
         .unwrap();
     let second_json = serde_json::to_value(&second).unwrap();
     assert_eq!(second_json["result"]["top_candidates"][0]["callsign"], "W2PRI");
+}
+
+#[test]
+fn recommend_selects_an_in_band_dial_for_a_multiband_station() {
+    // tuxlink-8rpw5 (load-bearing): a station with BOTH a 40m (7102) and a 15m
+    // (21100) dial. Asking for the best 15m VARA station to CALL must recommend a
+    // 15m dial, never the lower 40m one. Before the fix the band filter gated the
+    // GATEWAY (kept because it has a 15m channel) but not the CONNECTIONS, so
+    // select_connection picked the lowest dial (7102/40m) — the exact defect seen
+    // in the live Nemotron transcript.
+    let pop = vec![gw_multiband("KJ7MRQ", &[(7102.0, None), (21100.0, None)], Some(100.0))];
+    let store = SnapshotStore::new(60_000);
+    let engine = StationQueryEngine::new(&store);
+    let filters = StationFilters {
+        modes: BoundedVec::from_capped(vec![StationModeDto::VaraHf]).0,
+        bands: BoundedVec::from_capped(vec![Band::B15m]).0,
+        ..Default::default()
+    };
+    let req = FindStationsRequest::Recommend {
+        goal: RecommendationGoal::ConnectNow {
+            at_utc_ms: None,
+            objective: ConnectObjective::EstimatedSuccess,
+        },
+        filters,
+        candidate_count: count(3),
+        exclude_candidate_ids: BoundedVec::empty(),
+    };
+    let resp = engine.evaluate(req, &ctx(pop)).unwrap();
+    let json = serde_json::to_value(&resp).unwrap();
+    let cand = &json["result"]["top_candidates"][0];
+    assert_eq!(
+        cand["selected_connection"]["frequency_khz"].as_f64().unwrap(),
+        21100.0,
+        "recommend must return the in-band (15m) dial, not the 40m one"
+    );
+    // Only the in-band connection remains, so there is no out-of-band alternate.
+    assert_eq!(cand["alternate_connection_count"], 0);
+    // The population's connection-option count reflects in-band connections only.
+    assert_eq!(json["population"]["eligible_connection_options"], 1);
+}
+
+#[test]
+fn no_band_filter_keeps_all_connections_for_a_multiband_station() {
+    // Guard against over-filtering: with NO band filter, a lookup keeps every
+    // dial the station advertises (both 40m and 15m).
+    let pop = vec![gw_multiband("W1MB", &[(7102.0, None), (21100.0, None)], Some(50.0))];
+    let store = SnapshotStore::new(60_000);
+    let engine = StationQueryEngine::new(&store);
+    let resp = engine.evaluate(lookup(vec!["W1MB"]), &ctx(pop)).unwrap();
+    let json = serde_json::to_value(&resp).unwrap();
+    let freqs = json["result"]["stations"][0]["frequencies_khz"].as_array().unwrap();
+    assert_eq!(freqs.len(), 2, "no band filter must retain both dials");
+}
+
+#[test]
+fn recommend_coverage_is_exact_under_exclusions() {
+    // drift item 3: with one of three eligible stations excluded, coverage must
+    // report evaluated == eligible - excluded (2), and returned + omitted ==
+    // evaluated. Before the fix `evaluated` was copied from the full eligible
+    // count (3), overstating coverage whenever exclusions were used.
+    let store = SnapshotStore::new(60_000);
+    let engine = StationQueryEngine::new(&store);
+    let c = ctx(scored_population()); // W1FT8, W2PRI, W3PLN
+    let resp = engine
+        .evaluate(
+            recommend(ConnectObjective::Nearest, vec!["snap/W1FT8/FN31".to_string()], 1),
+            &c,
+        )
+        .unwrap();
+    let json = serde_json::to_value(&resp).unwrap();
+    let cov = &json["result"]["coverage"];
+    assert_eq!(cov["evaluated_stations"], 2, "3 eligible - 1 excluded");
+    assert_eq!(cov["returned_stations"], 1);
+    assert_eq!(cov["omitted_stations"], 1);
+    let (ev, ret, om) = (
+        cov["evaluated_stations"].as_u64().unwrap(),
+        cov["returned_stations"].as_u64().unwrap(),
+        cov["omitted_stations"].as_u64().unwrap(),
+    );
+    assert_eq!(ret + om, ev, "returned + omitted must equal evaluated");
+    // The envelope still reports the FULL eligible population.
+    assert_eq!(json["population"]["eligible_stations"], 3);
+}
+
+#[test]
+fn recommend_all_excluded_is_no_matches() {
+    // drift item 3: excluding every eligible station yields `no-matches` — an
+    // explicit, correct empty (the agent excluded everything), not an error.
+    let store = SnapshotStore::new(60_000);
+    let engine = StationQueryEngine::new(&store);
+    let c = ctx(scored_population());
+    let resp = engine
+        .evaluate(
+            recommend(
+                ConnectObjective::Nearest,
+                vec![
+                    "s/W1FT8/FN31".to_string(),
+                    "s/W2PRI/FN31".to_string(),
+                    "s/W3PLN/FN31".to_string(),
+                ],
+                3,
+            ),
+            &c,
+        )
+        .unwrap();
+    let json = serde_json::to_value(&resp).unwrap();
+    assert_eq!(json["result"]["kind"], "no-matches");
 }
 
 // --------------------------------------------------------------------------
@@ -436,6 +570,25 @@ fn widening_a_snapshot_is_rejected() {
         )
         .unwrap_err();
     assert!(matches!(err, StationQueryError::SnapshotWiden));
+}
+
+// --------------------------------------------------------------------------
+// Runtime byte-budget postcondition (drift item 2b)
+// --------------------------------------------------------------------------
+
+#[test]
+fn response_byte_budget_guard_fires_on_synthetic_over_budget() {
+    // A legal response can never exceed the real budget by construction, so we
+    // shrink the budget to exercise the guard: the same response that passes the
+    // real budget must trip a synthetic tiny one with a Contract violation.
+    let store = SnapshotStore::new(60_000);
+    let engine = StationQueryEngine::new(&store);
+    let resp = engine
+        .evaluate(lookup(vec!["W1ABC"]), &ctx(vec![gw("W1ABC", 7100.0, Some(50.0))]))
+        .unwrap();
+    assert!(super::enforce_byte_budget(&resp, super::RESPONSE_BYTE_BUDGET).is_ok());
+    let err = super::enforce_byte_budget(&resp, 8).unwrap_err();
+    assert!(err.detail.contains("budget"), "got: {}", err.detail);
 }
 
 #[test]
