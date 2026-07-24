@@ -40,7 +40,8 @@ use tuxlink_mcp_core::ports::{
     AudioCardDto, AudioDevicesDto, ControlInfoDto, TriggerKindDto,
     BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ChannelDto, ChannelReliabilityDto,
     ComposeDraftDto, ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocBodyDto, DocsHitDto,
-    DryRunStartedDto, EgressPort, EgressPortError, EnableResultDto, EvidenceParamsDto, FindingDto,
+    AuthoringDispositionDto, DryRunStartedDto, EgressPort, EgressPortError, EnableResultDto,
+    EvidenceParamsDto, FindingDto, ValidateResultDto,
     FindingSeverityDto, FolderDto,
     Ft8AudioDeviceDto, Ft8HeardStationDto, Ft8Port, Ft8StatusDto, GatewayAntennaDto, GatewayDto,
     GribRequestDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto, ModemStatusDto,
@@ -4836,11 +4837,15 @@ impl RoutinesPort for MonolithRoutinesPort {
         Ok(RoutineGetDto { revision, def })
     }
 
-    async fn validate(&self, name: &str) -> Result<Vec<FindingDto>, PortError> {
+    async fn validate(&self, name: &str) -> Result<ValidateResultDto, PortError> {
         let state = self.state();
         let findings =
             crate::routines::commands::validate_routine(&state, name).map_err(routines_port_err)?;
-        Ok(findings.into_iter().map(map_finding).collect())
+        let findings: Vec<FindingDto> = findings.into_iter().map(map_finding).collect();
+        // validate is read-only and carries no revision; the agent supplies the
+        // current one when it applies a revision-bound remedy.
+        let disposition = AuthoringDispositionDto::classify(&findings, name, "");
+        Ok(ValidateResultDto { findings, disposition })
     }
 
     async fn save(&self, req: SaveRoutineRequestDto) -> Result<SaveResultDto, PortError> {
@@ -4852,11 +4857,15 @@ impl RoutinesPort for MonolithRoutinesPort {
             req.expected_revision.as_deref(),
         )
         .map_err(|e| save_err_with_catalog_pointer(routines_port_err(e)))?;
+        let findings: Vec<FindingDto> = result.findings.into_iter().map(map_finding).collect();
+        let disposition =
+            AuthoringDispositionDto::classify(&findings, &result.routine, &result.revision);
         Ok(SaveResultDto {
             routine: result.routine,
             revision: result.revision,
-            findings: result.findings.into_iter().map(map_finding).collect(),
+            findings,
             blocked: result.blocked,
+            disposition,
         })
     }
 
@@ -4870,6 +4879,19 @@ impl RoutinesPort for MonolithRoutinesPort {
             op,
         )
         .map_err(routines_port_err)?;
+        let step_findings_dto: Vec<FindingDto> =
+            result.step_findings.into_iter().map(map_finding).collect();
+        let routine_findings_dto: Vec<FindingDto> =
+            result.routine_findings.into_iter().map(map_finding).collect();
+        // Classify over ALL findings (step + routine) so a callee/consent blocker
+        // anchored to either surfaces in the disposition.
+        let all_findings: Vec<FindingDto> = step_findings_dto
+            .iter()
+            .chain(routine_findings_dto.iter())
+            .cloned()
+            .collect();
+        let disposition =
+            AuthoringDispositionDto::classify(&all_findings, &result.routine, &result.revision);
         Ok(EditResultDto {
             routine: result.routine,
             revision: result.revision,
@@ -4884,13 +4906,10 @@ impl RoutinesPort for MonolithRoutinesPort {
                     step: s.step,
                 })
                 .collect(),
-            step_findings: result.step_findings.into_iter().map(map_finding).collect(),
-            routine_findings: result
-                .routine_findings
-                .into_iter()
-                .map(map_finding)
-                .collect(),
+            step_findings: step_findings_dto,
+            routine_findings: routine_findings_dto,
             blocked: result.blocked,
+            disposition,
         })
     }
 
