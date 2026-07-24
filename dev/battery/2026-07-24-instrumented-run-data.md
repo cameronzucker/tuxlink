@@ -1,4 +1,4 @@
-# Instrumented battery run — raw data record (2026-07-24)
+# Instrumented battery run: raw data record (2026-07-24)
 
 Author: tanager-owl-cardinal.
 
@@ -12,9 +12,9 @@ yet reflected here. Do not cite anything in this file as a conclusion.
 ## Provenance
 
 - **Runs** (on R2, `~/tuxlink-eig6e-build/battery-results/`):
-  - `qwen-instrumented-1` — qwen-3.5-122b-nvfp4, local Spark vLLM (keyless),
+  - `qwen-instrumented-1`: qwen-3.5-122b-nvfp4, local Spark vLLM (keyless),
     `https://inference.twin-bramble.ts.net`. base + skill arms, all 18 cells. COMPLETE.
-  - `glm52-3` — GLM-5.2 (`z-ai/glm-5.2`) via OpenRouter. base + skill. **15 of 36
+  - `glm52-3`: GLM-5.2 (`z-ai/glm-5.2`) via OpenRouter. base + skill. **15 of 36
     cells ran; the other 21 hit HTTP 402 (OpenRouter out of credit) and did NOT run.**
     The 15 that ran are NOT yet predicate-judged. Blocked pending a credit top-up.
 - **Binary**: origin/main `0ae53b5e` + this session's harness patches (below).
@@ -75,7 +75,7 @@ Verdict = judgment against the prompt's requirements this one run. `sv`=saved,
 | EU3 | base | completed | n/n | (none) | FAIL | built nothing (diagnostic-help prompt) |
 | EU3 | skill | completed | n/n | (none) | FAIL | built nothing (diagnostic-help prompt) |
 
-## GLM-5.2, `glm52-3` — NOT yet predicate-judged
+## GLM-5.2, `glm52-3`: NOT yet predicate-judged
 
 15/36 cells ran (P1-3, S1-4, A1 both arms) and each saved a routine; 21 cells
 (A2, C*, E*, EU*) did NOT run (HTTP 402, out of credit). The 15 are recorded on
