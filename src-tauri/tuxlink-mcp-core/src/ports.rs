@@ -1546,6 +1546,154 @@ pub struct FindingDto {
     pub message: String,
 }
 
+/// The agent-facing outcome class of a routine authoring op (save/edit/validate).
+/// The load-bearing field of the disposition: it tells a weak model whether to
+/// repair the routine itself, or to stop because only the operator can proceed
+/// (tuxlink-kbh4t).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum DispositionState {
+    /// No blocking findings; enable/run-ready.
+    Valid,
+    /// Blocked, but an agent-only edit clears it (see `remedies`).
+    InvalidAgentRepairable,
+    /// Saved, but preserving the requested behavior needs an OPERATOR
+    /// acknowledgment (design-time). Paired with `agent_terminal: true` — the
+    /// agent must stop and tell the user, not loop or coerce.
+    SavedNeedsOperator,
+}
+
+/// Who can apply a remedy.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum RemedyActor {
+    Agent,
+    Operator,
+}
+
+/// A concrete step toward a valid routine. An `agent` remedy names the exact
+/// tool + arguments to apply (revision-bound); an `operator` remedy names NO
+/// tool — acknowledgment is operator authority and never an agent op.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RemedyDto {
+    pub actor: RemedyActor,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub routine: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub patch: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_revision: Option<String>,
+    pub changes_behavior: bool,
+    pub consequence: String,
+}
+
+impl RemedyDto {
+    /// The operator records the acknowledgment in the designer — no agent path.
+    pub fn operator_acknowledge(routine: &str) -> Self {
+        Self {
+            actor: RemedyActor::Operator,
+            tool: None,
+            routine: Some(routine.into()),
+            patch: None,
+            expected_revision: None,
+            changes_behavior: false,
+            consequence: "the operator records the acknowledgment in the routine designer; \
+                          it cannot be granted over MCP"
+                .into(),
+        }
+    }
+
+    /// Switch `routine` to attended via `routines_meta_set`. Bound to `revision`
+    /// when known (empty string => omitted, agent supplies the current revision).
+    pub fn set_attended(routine: &str, revision: &str) -> Self {
+        Self {
+            actor: RemedyActor::Agent,
+            tool: Some("routines_meta_set".into()),
+            routine: Some(routine.into()),
+            patch: Some(serde_json::json!({ "transmit_mode": "attended" })),
+            expected_revision: (!revision.is_empty()).then(|| revision.to_string()),
+            changes_behavior: true,
+            consequence: "scheduled runs park at each transmission until a person confirms".into(),
+        }
+    }
+}
+
+/// The typed authoring disposition attached to a routine save/edit/validate
+/// result. Computed at the port layer from the findings + the routine's mode;
+/// the validator crate never names MCP tools.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AuthoringDispositionDto {
+    pub state: DispositionState,
+    pub agent_terminal: bool,
+    pub remedies: Vec<RemedyDto>,
+}
+
+impl AuthoringDispositionDto {
+    /// Classify a routine authoring result from its findings alone. The consent
+    /// error codes already encode the mode (the `AUTO_*_UNACKED` codes fire only
+    /// for `automatic` routines), so no separate mode input is needed. Computed
+    /// at the port layer — the validator crate never names MCP tools.
+    pub fn classify(findings: &[FindingDto], routine: &str, revision: &str) -> Self {
+        let blocking: Vec<&FindingDto> = findings
+            .iter()
+            .filter(|f| f.severity == FindingSeverityDto::Error)
+            .collect();
+        if blocking.is_empty() {
+            // Warnings (e.g. ATTENDED_UNDER_SCHEDULE) are an ACCEPTABLE terminal
+            // state, never a remedy to apply — this is what stops the ping-pong.
+            return Self { state: DispositionState::Valid, agent_terminal: false, remedies: vec![] };
+        }
+        // The routine's OWN automatic-unattended transmit/write: only the operator
+        // can acknowledge unattended TX (never an agent op), so the agent stops.
+        // Attended is offered as a behavior-changing alternative, not "the fix".
+        if blocking
+            .iter()
+            .any(|f| f.code == "AUTO_TX_UNACKED" || f.code == "AUTO_WRITE_UNACKED")
+        {
+            return Self {
+                state: DispositionState::SavedNeedsOperator,
+                agent_terminal: true,
+                remedies: vec![
+                    RemedyDto::operator_acknowledge(routine),
+                    RemedyDto::set_attended(routine, revision),
+                ],
+            };
+        }
+        // A callee the runtime child-start gate would refuse: the honest agent
+        // fix is making THAT callee attended (its revision is unknown here — the
+        // agent supplies the current one).
+        if let Some(f) = blocking.iter().find(|f| f.code == "CALLEE_CONSENT_UNREACHABLE") {
+            let callee = callee_name_from_message(&f.message).unwrap_or_default();
+            return Self {
+                state: DispositionState::InvalidAgentRepairable,
+                agent_terminal: false,
+                remedies: vec![RemedyDto::set_attended(&callee, "")],
+            };
+        }
+        // Any other blocking finding with no known agent-only edit: an honest
+        // stop, no fabricated remedy.
+        Self { state: DispositionState::SavedNeedsOperator, agent_terminal: true, remedies: vec![] }
+    }
+}
+
+/// Extract the callee name from a `CALLEE_CONSENT_UNREACHABLE` message of the
+/// form `... calls "NAME", which ...`. Best-effort; `None` if not parseable.
+fn callee_name_from_message(msg: &str) -> Option<String> {
+    msg.split("calls \"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .map(String::from)
+}
+
+/// [`RoutinesPort::validate`]'s result: the findings plus the typed disposition.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ValidateResultDto {
+    pub findings: Vec<FindingDto>,
+    pub disposition: AuthoringDispositionDto,
+}
+
 /// One routine library entry ([`RoutinesPort::list`]). `trigger_kinds` is
 /// curated down to each trigger's tag (`"schedule"` / `"manual"`) — mcp-core
 /// stays free of the routines engine's full trigger/step/track type graph;
@@ -1571,6 +1719,8 @@ pub struct SaveResultDto {
     pub revision: String,
     pub findings: Vec<FindingDto>,
     pub blocked: bool,
+    /// Typed, machine-actionable outcome for the agent (tuxlink-kbh4t).
+    pub disposition: AuthoringDispositionDto,
 }
 
 /// [`RoutinesPort::get`]'s result: the definition (the exact shape
@@ -1623,6 +1773,8 @@ pub struct EditResultDto {
     pub step_findings: Vec<FindingDto>,
     pub routine_findings: Vec<FindingDto>,
     pub blocked: bool,
+    /// Typed, machine-actionable outcome for the agent (tuxlink-kbh4t).
+    pub disposition: AuthoringDispositionDto,
 }
 
 /// [`RoutinesPort::rename`]'s result.
@@ -1924,7 +2076,7 @@ pub trait RoutinesPort: Send + Sync {
     /// or running anything — the SAME validator [`RoutinesPort::save`] /
     /// [`RoutinesPort::run`] use (spec §10: one validator, no privileged
     /// path). Read-only.
-    async fn validate(&self, name: &str) -> Result<Vec<FindingDto>, PortError>;
+    async fn validate(&self, name: &str) -> Result<ValidateResultDto, PortError>;
     /// Save a routine definition (spec §14 shape) from EXACTLY ONE of
     /// `req.def` (object, preferred) or `req.def_json` (deprecated string).
     /// NEVER refused by validation findings — a half-written draft still
@@ -1994,4 +2146,95 @@ pub trait RoutinesPort: Send + Sync {
     /// text the action surfaced, never paraphrased. `Err`
     /// ([`PortError::NotFound`]) for an unknown run id. Read-only.
     async fn journal_get(&self, run_id: &str) -> Result<Vec<serde_json::Value>, PortError>;
+}
+
+#[cfg(test)]
+mod authoring_disposition_tests {
+    use super::*;
+
+    fn err(code: &str, msg: &str) -> FindingDto {
+        FindingDto {
+            code: code.into(),
+            severity: FindingSeverityDto::Error,
+            routine: "r".into(),
+            track: None,
+            step: None,
+            message: msg.into(),
+        }
+    }
+
+    #[test]
+    fn authoring_disposition_dto_serializes_stably() {
+        let d = AuthoringDispositionDto {
+            state: DispositionState::SavedNeedsOperator,
+            agent_terminal: true,
+            remedies: vec![RemedyDto::set_attended("r", "abc123")],
+        };
+        let j = serde_json::to_value(&d).unwrap();
+        assert_eq!(j["state"], "saved-needs-operator");
+        assert_eq!(j["agent_terminal"], true);
+        assert_eq!(j["remedies"][0]["tool"], "routines_meta_set");
+        assert_eq!(j["remedies"][0]["expected_revision"], "abc123");
+        assert_eq!(j["remedies"][0]["actor"], "agent");
+    }
+
+    #[test]
+    fn operator_remedy_names_no_tool() {
+        let j = serde_json::to_value(RemedyDto::operator_acknowledge("r")).unwrap();
+        assert!(j.get("tool").is_none(), "operator remedy must not name an agent tool: {j}");
+        assert_eq!(j["actor"], "operator");
+    }
+
+    #[test]
+    fn automatic_unacked_transmit_is_saved_needs_operator_with_attended_alternative() {
+        let d = AuthoringDispositionDto::classify(&[err("AUTO_TX_UNACKED", "…")], "r", "rev1");
+        assert_eq!(d.state, DispositionState::SavedNeedsOperator);
+        assert!(d.agent_terminal, "operator-gated states are terminal — the agent must stop, not loop");
+        assert!(d
+            .remedies
+            .iter()
+            .any(|r| matches!(r.actor, RemedyActor::Operator) && r.tool.is_none()));
+        let attended = d.remedies.iter().find(|r| matches!(r.actor, RemedyActor::Agent)).unwrap();
+        assert_eq!(attended.expected_revision.as_deref(), Some("rev1"), "revision-bound");
+        assert!(attended.changes_behavior);
+    }
+
+    #[test]
+    fn attended_under_schedule_warning_is_valid_terminal_not_a_loop() {
+        let warn = FindingDto {
+            code: "ATTENDED_UNDER_SCHEDULE".into(),
+            severity: FindingSeverityDto::Warning,
+            routine: "r".into(),
+            track: None,
+            step: None,
+            message: String::new(),
+        };
+        let d = AuthoringDispositionDto::classify(&[warn], "r", "rev1");
+        assert_eq!(d.state, DispositionState::Valid);
+        assert!(d.remedies.is_empty(), "no remedy for an acceptable warning (kills the ping-pong)");
+    }
+
+    #[test]
+    fn clean_routine_is_valid() {
+        let d = AuthoringDispositionDto::classify(&[], "r", "rev1");
+        assert_eq!(d.state, DispositionState::Valid);
+        assert!(!d.agent_terminal);
+    }
+
+    #[test]
+    fn callee_consent_unreachable_is_agent_repairable_targeting_the_callee() {
+        let d = AuthoringDispositionDto::classify(
+            &[err(
+                "CALLEE_CONSENT_UNREACHABLE",
+                "routine \"parent\" calls \"child\", which runs automatically…",
+            )],
+            "parent",
+            "rev1",
+        );
+        assert_eq!(d.state, DispositionState::InvalidAgentRepairable);
+        assert!(!d.agent_terminal);
+        let r = &d.remedies[0];
+        assert_eq!(r.routine.as_deref(), Some("child"), "remedy targets the offending callee");
+        assert!(matches!(r.actor, RemedyActor::Agent));
+    }
 }

@@ -178,7 +178,7 @@ pub mod test_support {
         AttachmentMetaDto, AudioDevicesDto, ControlInfoDto, TriggerKindDto,
         BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto,
         ComposeDraftDto, ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocBodyDto,
-        DocsHitDto, DryRunStartedDto, EgressPort, EgressPortError, EnableResultDto, FindingDto,
+        DocsHitDto, DryRunStartedDto, EgressPort, EgressPortError, EnableResultDto,
         FolderDto, Ft8AudioDeviceDto, Ft8HeardStationDto, Ft8Port, Ft8StatusDto,
         GribRequestDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
         ModemStatusDto, PacketConfigDto, PacketWriteDto, ParsedMessageDto, PathPredictionDto,
@@ -1078,8 +1078,11 @@ pub mod test_support {
                 }),
             })
         }
-        async fn validate(&self, _name: &str) -> Result<Vec<FindingDto>, PortError> {
-            Ok(Vec::new())
+        async fn validate(&self, name: &str) -> Result<crate::ports::ValidateResultDto, PortError> {
+            Ok(crate::ports::ValidateResultDto {
+                findings: Vec::new(),
+                disposition: crate::ports::AuthoringDispositionDto::classify(&[], name, ""),
+            })
         }
         async fn save(&self, _req: SaveRoutineRequestDto) -> Result<SaveResultDto, PortError> {
             Ok(SaveResultDto {
@@ -1087,9 +1090,11 @@ pub mod test_support {
                 revision: "rev-mock-2".into(),
                 findings: Vec::new(),
                 blocked: false,
+                disposition: crate::ports::AuthoringDispositionDto::classify(&[], SEED_ROUTINE, "rev-mock-2"),
             })
         }
         async fn edit(&self, req: RoutineEditRequestDto) -> Result<EditResultDto, PortError> {
+            let disposition = crate::ports::AuthoringDispositionDto::classify(&[], &req.routine, "rev-mock-3");
             Ok(EditResultDto {
                 routine: req.routine,
                 revision: "rev-mock-3".into(),
@@ -1099,6 +1104,7 @@ pub mod test_support {
                 step_findings: Vec::new(),
                 routine_findings: Vec::new(),
                 blocked: false,
+                disposition,
             })
         }
         async fn rename(

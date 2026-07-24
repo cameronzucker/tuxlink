@@ -20,7 +20,7 @@ use tuxlink_mcp_core::ports::{
     ComposePort,
     ConfigPort, ConfigViewDto, DevicePort, DocBodyDto, DocsHitDto, DryRunStartedDto, EgressPort,
     EgressPortError, EnableResultDto,
-    FindingDto, FolderDto, Ft8AudioDeviceDto, Ft8HeardStationDto, Ft8Port, Ft8StatusDto,
+    FolderDto, Ft8AudioDeviceDto, Ft8HeardStationDto, Ft8Port, Ft8StatusDto,
     GribRequestDto, LogLineDto, LogPort, MailboxPort,
     MessageMetaDto, ModemStatusDto, PacketConfigDto, PacketWriteDto, ParsedMessageDto,
     PathPredictionDto, PeerListDto, PlatformInfoDto, PortError, PositionStatusDto,
@@ -885,11 +885,17 @@ impl RoutinesPort for MockRoutines {
             }),
         })
     }
-    async fn validate(&self, name: &str) -> Result<Vec<FindingDto>, PortError> {
+    async fn validate(
+        &self,
+        name: &str,
+    ) -> Result<tuxlink_mcp_core::ports::ValidateResultDto, PortError> {
         if name != SEED_ROUTINE {
             return Err(PortError::NotFound);
         }
-        Ok(Vec::new())
+        Ok(tuxlink_mcp_core::ports::ValidateResultDto {
+            findings: Vec::new(),
+            disposition: tuxlink_mcp_core::ports::AuthoringDispositionDto::classify(&[], name, ""),
+        })
     }
     async fn save(&self, req: SaveRoutineRequestDto) -> Result<SaveResultDto, PortError> {
         // Mirror the monolith's exactly-one rule (adrev A7) so the tier-2
@@ -935,6 +941,11 @@ impl RoutinesPort for MockRoutines {
             revision: SEED_ROUTINE_REVISION.into(),
             findings: Vec::new(),
             blocked: false,
+            disposition: tuxlink_mcp_core::ports::AuthoringDispositionDto::classify(
+                &[],
+                SEED_ROUTINE,
+                SEED_ROUTINE_REVISION,
+            ),
         })
     }
     async fn edit(&self, req: RoutineEditRequestDto) -> Result<EditResultDto, PortError> {
@@ -972,6 +983,11 @@ impl RoutinesPort for MockRoutines {
             step_findings: Vec::new(),
             routine_findings: Vec::new(),
             blocked: false,
+            disposition: tuxlink_mcp_core::ports::AuthoringDispositionDto::classify(
+                &[],
+                SEED_ROUTINE,
+                "seed-rev-2",
+            ),
         })
     }
     async fn rename(
