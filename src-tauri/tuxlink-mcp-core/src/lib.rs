@@ -178,7 +178,7 @@ pub mod test_support {
         AttachmentMetaDto, AudioDevicesDto, ControlInfoDto, TriggerKindDto,
         BackendStatusDto, BluetoothDeviceDto, CatalogEntryDto, ChannelReliabilityDto,
         ComposeDraftDto, ComposePort, ConfigPort, ConfigViewDto, DevicePort, DocBodyDto,
-        DocsHitDto, DryRunStartedDto, EgressPort, EgressPortError, EnableResultDto, FindingDto,
+        DocsHitDto, DryRunStartedDto, EgressPort, EgressPortError, EnableResultDto,
         FolderDto, Ft8AudioDeviceDto, Ft8HeardStationDto, Ft8Port, Ft8StatusDto,
         GribRequestDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
         ModemStatusDto, PacketConfigDto, PacketWriteDto, ParsedMessageDto, PathPredictionDto,
