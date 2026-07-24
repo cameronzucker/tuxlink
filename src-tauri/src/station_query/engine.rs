@@ -212,6 +212,7 @@ impl<'a> StationQueryEngine<'a> {
                     .collect();
                 self.finish_recommend(
                     &filtered,
+                    &filters,
                     goal,
                     candidate_count.get() as usize,
                     &excluded,
@@ -222,12 +223,12 @@ impl<'a> StationQueryEngine<'a> {
             FindStationsRequest::Aggregate { filters, group_by } => {
                 let (gateways, snap_meta) = self.resolve_population(None, None, &filters, ctx)?;
                 let filtered = apply_filters(&gateways, &filters, ctx.now_ms);
-                self.finish_aggregate(&filtered, group_by.as_slice(), ctx.now_ms, snap_meta)
+                self.finish_aggregate(&filtered, &filters, group_by.as_slice(), ctx.now_ms, snap_meta)
             }
             FindStationsRequest::Export { filters, format } => {
                 let (gateways, snap_meta) = self.resolve_population(None, None, &filters, ctx)?;
                 let filtered = apply_filters(&gateways, &filters, ctx.now_ms);
-                self.finish_export(&filtered, format, ctx, snap_meta)
+                self.finish_export(&filtered, &filters, format, ctx, snap_meta)
             }
         }?;
         // Runtime postcondition: fail loud if the built response is over budget
@@ -281,7 +282,9 @@ impl<'a> StationQueryEngine<'a> {
         now_ms: u64,
         snap_meta: SnapshotMeta,
     ) -> Result<FindStationsResponse, StationQueryError> {
-        let stations = group_stations(matched, now_ms);
+        // Lookup is exact-callsign; the caller supplied no band/bandwidth filter,
+        // so every advertised connection is kept.
+        let stations = group_stations(matched, &StationFilters::default(), now_ms);
         let population = population_of(&stations);
         let result = if stations.is_empty() {
             StationResult::NoMatches
@@ -300,11 +303,11 @@ impl<'a> StationQueryEngine<'a> {
     fn finish_explore(
         &self,
         filtered: &[&GatewayDto],
-        _filters: &StationFilters,
+        filters: &StationFilters,
         now_ms: u64,
         snap_meta: SnapshotMeta,
     ) -> Result<FindStationsResponse, StationQueryError> {
-        let stations = group_stations(filtered, now_ms);
+        let stations = group_stations(filtered, filters, now_ms);
         let population = population_of(&stations);
         let result = if stations.is_empty() {
             StationResult::NoMatches
@@ -328,13 +331,16 @@ impl<'a> StationQueryEngine<'a> {
     fn finish_recommend(
         &self,
         filtered: &[&GatewayDto],
+        filters: &StationFilters,
         goal: RecommendationGoal,
         candidate_count: usize,
         excluded: &HashSet<String>,
         ctx: &StationContext,
         snap_meta: SnapshotMeta,
     ) -> Result<FindStationsResponse, StationQueryError> {
-        let stations = group_stations(filtered, ctx.now_ms);
+        // The band/bandwidth filter constrains the CONNECTIONS considered, so the
+        // selected dial is in-band (tuxlink-8rpw5).
+        let stations = group_stations(filtered, filters, ctx.now_ms);
         let population = population_of(&stations);
         let objective = match goal {
             RecommendationGoal::ConnectNow { objective, .. }
@@ -390,11 +396,14 @@ impl<'a> StationQueryEngine<'a> {
     fn finish_aggregate(
         &self,
         filtered: &[&GatewayDto],
+        filters: &StationFilters,
         group_by: &[StationFacet],
         now_ms: u64,
         snap_meta: SnapshotMeta,
     ) -> Result<FindStationsResponse, StationQueryError> {
-        let stations = group_stations(filtered, now_ms);
+        // Aggregate counts run over the in-filter connections only, so a band-
+        // filtered aggregate reflects the requested band (tuxlink-8rpw5).
+        let stations = group_stations(filtered, filters, now_ms);
         let population = population_of(&stations);
         let (groups, _) = BoundedVec::<AggregateGroup, 3>::from_capped(
             group_by
@@ -408,11 +417,13 @@ impl<'a> StationQueryEngine<'a> {
     fn finish_export(
         &self,
         filtered: &[&GatewayDto],
+        filters: &StationFilters,
         format: StationExportFormat,
         ctx: &StationContext,
         snap_meta: SnapshotMeta,
     ) -> Result<FindStationsResponse, StationQueryError> {
-        let stations = group_stations(filtered, ctx.now_ms);
+        // The exported artifact carries only the in-filter connections.
+        let stations = group_stations(filtered, filters, ctx.now_ms);
         let population = population_of(&stations);
         let sink = ctx
             .export_sink
@@ -461,7 +472,16 @@ struct Conn {
 /// Group filtered gateway rows into stations, preserving first-seen order (which,
 /// for the fresh-query path, is nearest-first because curation feeds the sorted
 /// population... but the engine never relies on incoming order for correctness).
-fn group_stations<'a>(gateways: &[&'a GatewayDto], now_ms: u64) -> Vec<Station<'a>> {
+fn group_stations<'a>(
+    gateways: &[&'a GatewayDto],
+    filters: &StationFilters,
+    now_ms: u64,
+) -> Vec<Station<'a>> {
+    // Derive the band/bandwidth filter once so only IN-FILTER connections are
+    // collected onto a station (band filter constrains connections, not just
+    // gateway eligibility — tuxlink-8rpw5). Empty filters keep everything.
+    let bands: Vec<String> = filters.bands.as_slice().iter().map(|b| b.label().to_string()).collect();
+    let bandwidths: Vec<u32> = filters.bandwidths.as_slice().iter().map(|b| b.hz()).collect();
     let mut order: Vec<String> = Vec::new();
     let mut by_call: BTreeMap<String, Station<'a>> = BTreeMap::new();
     for gw in gateways {
@@ -493,7 +513,7 @@ fn group_stations<'a>(gateways: &[&'a GatewayDto], now_ms: u64) -> Vec<Station<'
             entry.ft8_corroborated = Some(true);
         }
         entry.operating_now = entry.operating_now || row_operating;
-        entry.connections.extend(connections_of(gw));
+        entry.connections.extend(connections_of(gw, &bands, &bandwidths));
     }
     // Return in first-seen order.
     order
@@ -503,12 +523,20 @@ fn group_stations<'a>(gateways: &[&'a GatewayDto], now_ms: u64) -> Vec<Station<'
         .collect()
 }
 
-/// Extract a row's connection options: one per channel-detail row, or one per
-/// bare dial when the gateway has no channel details.
-fn connections_of(gw: &GatewayDto) -> Vec<Conn> {
+/// Extract a row's connection options that match the requested band/bandwidth:
+/// one per channel-detail row, or one per bare dial when the gateway has no
+/// channel details. Connections outside the requested `bands`/`bandwidths` are
+/// dropped here — a gateway is *eligible* if it has ANY in-band channel, but only
+/// its IN-BAND connections may be recommended/summarized, so "best 15m station"
+/// never returns a 40m dial (tuxlink-8rpw5). Empty filters keep every connection.
+fn connections_of(gw: &GatewayDto, bands: &[String], bandwidths: &[u32]) -> Vec<Conn> {
+    let keep = |freq: f64, bw: Option<u32>| {
+        crate::mcp_ports::connection_passes_band_and_bandwidth(freq, bw, bands, bandwidths)
+    };
     if gw.channels.is_empty() {
         gw.frequencies_khz
             .iter()
+            .filter(|&&f| keep(f, None))
             .map(|&f| Conn {
                 mode: gw.mode,
                 frequency_khz: f,
@@ -518,6 +546,7 @@ fn connections_of(gw: &GatewayDto) -> Vec<Conn> {
     } else {
         gw.channels
             .iter()
+            .filter(|c| keep(c.frequency_khz, c.bandwidth_hz))
             .map(|c| Conn {
                 mode: gw.mode,
                 frequency_khz: c.frequency_khz,
