@@ -905,6 +905,11 @@ pub fn edit_routine(
 
     let findings = validate_def(state, &new_def);
     let revision = state.store.save(&new_def)?;
+    // A no-op patch (the edited def is byte-identical to what was on disk) yields
+    // the SAME content-addressed revision. Report `applied` truthfully so an agent
+    // can tell its edit had no effect and stop re-sending it, rather than looping
+    // an identical patch until the turn-cap (tuxlink-m5oia).
+    let applied = revision != current_rev;
     state.emit(&RoutinesEvent::LibraryChanged {
         entity: LibraryEntity::Routine,
         name: new_def.routine.clone(),
@@ -920,7 +925,7 @@ pub fn edit_routine(
     Ok(EditResult {
         routine: new_def.routine,
         revision,
-        applied: true,
+        applied,
         step_id: touched,
         scrubbed: scrub
             .scrubbed
@@ -3556,6 +3561,59 @@ mod tests {
         )
         .unwrap_err();
         rejected_code(err, "INVALID_TRIGGERS");
+    }
+
+    #[test]
+    fn edit_reports_applied_false_on_a_no_op_and_true_on_a_real_change() {
+        // tuxlink-m5oia: a no-op patch (content unchanged) must report
+        // applied:false so an agent knows its edit had no effect and stops
+        // re-sending it. Before the fix `applied` was hardcoded true, so an agent
+        // looped an identical routines_step_update 28x until the turn-cap
+        // (base/S3 in the initial lift). The revision is content-addressed, so a
+        // no-op yields the same revision — that is the truthful signal.
+        let (_dir, state, _sink, _c) = test_state();
+        saved(&state, "r");
+
+        // Establish a known state; capture its revision.
+        let first = edit_routine(
+            &state,
+            "r",
+            None,
+            EditOp::TriggerSet {
+                triggers: json!([{"type": "schedule", "every": "2h", "align": "hour"}]),
+            },
+        )
+        .unwrap();
+        let rev_a = first.revision.clone();
+
+        // Re-applying the IDENTICAL trigger set changes nothing.
+        let noop = edit_routine(
+            &state,
+            "r",
+            None,
+            EditOp::TriggerSet {
+                triggers: json!([{"type": "schedule", "every": "2h", "align": "hour"}]),
+            },
+        )
+        .unwrap();
+        assert!(
+            !noop.applied,
+            "a no-op patch must report applied:false so the agent's progress signal is truthful"
+        );
+        assert_eq!(noop.revision, rev_a, "a no-op yields the same content-addressed revision");
+
+        // A genuine change (2h -> 4h) reports applied:true and a new revision.
+        let changed = edit_routine(
+            &state,
+            "r",
+            None,
+            EditOp::TriggerSet {
+                triggers: json!([{"type": "schedule", "every": "4h", "align": "hour"}]),
+            },
+        )
+        .unwrap();
+        assert!(changed.applied, "a real edit reports applied:true");
+        assert_ne!(changed.revision, rev_a, "a real edit yields a new revision");
     }
 
     #[test]
