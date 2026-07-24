@@ -328,6 +328,10 @@ impl<'a> StationQueryEngine<'a> {
         Ok(FindStationsResponse::new(snap_meta, population, result))
     }
 
+    // Distinct inputs for a single dispatch arm (filtered rows, the band filter,
+    // the goal, count, exclusions, app context, snapshot meta); bundling them into
+    // a struct would obscure more than it clarifies.
+    #[allow(clippy::too_many_arguments)]
     fn finish_recommend(
         &self,
         filtered: &[&GatewayDto],
