@@ -159,7 +159,7 @@ Model-attributable (not a Tuxlink build target): M3 (conflation), M4/skill
 over-analysis, M5b disclosure split, M6 disclosure inconsistency. These are what
 the *skill* (teaching) layer exists to address, not the product.
 
-## Convergence check (2026-07-24) — two independent fronts, and a correction
+## Convergence check (2026-07-24): two independent fronts, and a correction
 
 Before building anything, this analysis was put through a two-front adversarial
 convergence check per operator direction: Front 1, a Codex (gpt-5.5) blind
