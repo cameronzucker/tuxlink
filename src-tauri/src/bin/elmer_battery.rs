@@ -714,26 +714,72 @@ impl ToolInvoker for SharedInvoker {
 /// The battery's [`EventSink`]: appends assistant turns to `turns.log`
 /// (synchronous JSONL) and feeds the meters the watchdog reads. Deltas are
 /// deliberately not persisted — the finalizing Turn carries the full text.
-fn make_battery_sink(meters: Arc<Meters>, turns_log: PathBuf) -> Result<EventSink, String> {
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&turns_log)
-        .map_err(|e| format!("could not open {}: {e}", turns_log.display()))?;
-    let file = Mutex::new(file);
+/// Flush the accumulated streaming-delta run (one `(delta_kind, text)` buffer)
+/// as a single `deltas.jsonl` line. The caller must NOT hold `pending`'s lock.
+fn flush_pending_delta(pending: &Mutex<Option<(String, String)>>, deltas: &Mutex<std::fs::File>) {
+    let taken = pending.lock().expect("delta buffer lock poisoned").take();
+    if let Some((delta_kind, text)) = taken {
+        let mut f = deltas.lock().expect("deltas.jsonl lock poisoned");
+        let line = serde_json::json!({ "ts": now_rfc3339(), "delta_kind": delta_kind, "text": text });
+        if let Err(e) = writeln!(f, "{line}") {
+            eprintln!("elmer_battery: deltas.jsonl append failed: {e}");
+        }
+        let _ = f.flush();
+    }
+}
+
+fn make_battery_sink(
+    meters: Arc<Meters>,
+    turns_log: PathBuf,
+    deltas_log: PathBuf,
+) -> Result<EventSink, String> {
+    let open = |p: &PathBuf| {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(p)
+            .map_err(|e| format!("could not open {}: {e}", p.display()))
+    };
+    let turns = Mutex::new(open(&turns_log)?);
+    let deltas = Mutex::new(open(&deltas_log)?);
+    // Coalesce contiguous same-kind streaming deltas into one line per run. The
+    // finalizing `Turn` carries the assembled ASSISTANT text, but "reasoning"
+    // deltas have no finalizing turn — on a tool-only turn (e.g. base/S1's whole
+    // run) they were previously discarded (`_ => {}`). Capturing them is this
+    // fix's point: full run visibility, esp. for reasoning-emitting cloud models.
+    let pending: Mutex<Option<(String, String)>> = Mutex::new(None);
     Ok(Arc::new(move |event: ElmerEvent| {
         match &event {
+            ElmerEvent::Delta { delta_kind, chunk } => {
+                let mut p = pending.lock().expect("delta buffer lock poisoned");
+                match p.as_mut() {
+                    Some((k, acc)) if k == delta_kind => acc.push_str(chunk),
+                    _ => {
+                        // Kind changed (or first chunk): flush the prior run, start new.
+                        let prev = p.replace((delta_kind.clone(), chunk.clone()));
+                        drop(p);
+                        if let Some((k, text)) = prev {
+                            let mut f = deltas.lock().expect("deltas.jsonl lock poisoned");
+                            let line = serde_json::json!({ "ts": now_rfc3339(), "delta_kind": k, "text": text });
+                            let _ = writeln!(f, "{line}");
+                            let _ = f.flush();
+                        }
+                    }
+                }
+            }
             ElmerEvent::Turn { role, text } => {
-                let mut f = file.lock().expect("turns.log lock poisoned");
-                let line = serde_json::json!({
-                    "ts": now_rfc3339(),
-                    "role": role,
-                    "text": text,
-                });
+                flush_pending_delta(&pending, &deltas);
+                let mut f = turns.lock().expect("turns.log lock poisoned");
+                let line = serde_json::json!({ "ts": now_rfc3339(), "role": role, "text": text });
                 if let Err(e) = writeln!(f, "{line}") {
                     eprintln!("elmer_battery: turns.log append failed: {e}");
                 }
                 let _ = f.flush();
+            }
+            // Tool-call / terminal boundaries: flush any reasoning that preceded
+            // them (the tool-only-turn case where no finalizing Turn arrives).
+            ElmerEvent::Chip { .. } | ElmerEvent::Outcome { .. } => {
+                flush_pending_delta(&pending, &deltas);
             }
             ElmerEvent::Context {
                 prompt_tokens,
@@ -753,9 +799,6 @@ fn make_battery_sink(meters: Arc<Meters>, turns_log: PathBuf) -> Result<EventSin
                     .eval_tokens
                     .fetch_add(u64::from(*eval_tokens), Ordering::SeqCst);
             }
-            // Chips/deltas: the invoker-side tool_calls.jsonl is the call
-            // record; deltas are transient streaming noise.
-            _ => {}
         }
     }))
 }
@@ -1162,7 +1205,11 @@ fn real_main() -> Result<(), String> {
     // ── Bundle instrumentation files ────────────────────────────────────────
     let tool_log = Arc::new(ToolCallLog::open(&bundle.join("tool_calls.jsonl"))?);
     let meters = Arc::new(Meters::default());
-    let sink = make_battery_sink(Arc::clone(&meters), bundle.join("turns.log"))?;
+    let sink = make_battery_sink(
+        Arc::clone(&meters),
+        bundle.join("turns.log"),
+        bundle.join("deltas.jsonl"),
+    )?;
     let transcript = ElmerTranscriptSink::new(bundle.join("transcript"));
 
     // ── The async cell ──────────────────────────────────────────────────────
