@@ -20,7 +20,7 @@ use tuxlink_mcp_core::ports::{
     ComposePort,
     ConfigPort, ConfigViewDto, DevicePort, DocBodyDto, DocsHitDto, DryRunStartedDto, EgressPort,
     EgressPortError, EnableResultDto,
-    FindingDto, FolderDto, Ft8AudioDeviceDto, Ft8HeardStationDto, Ft8Port, Ft8StatusDto,
+    FolderDto, Ft8AudioDeviceDto, Ft8HeardStationDto, Ft8Port, Ft8StatusDto,
     GribRequestDto, LogLineDto, LogPort, MailboxPort,
     MessageMetaDto, ModemStatusDto, PacketConfigDto, PacketWriteDto, ParsedMessageDto,
     PathPredictionDto, PeerListDto, PlatformInfoDto, PortError, PositionStatusDto,
