@@ -365,6 +365,27 @@ impl Provider for OpenAiProvider {
         // Ask the server to append a final usage chunk to the stream (vLLM /
         // OpenAI / OpenRouter honor this; without it, streamed usage is omitted).
         body["stream_options"] = json!({ "include_usage": true });
+        // OpenRouter provider routing (OPT-IN via env). OpenRouter multiplexes a
+        // model's provider pool per request; some providers emit malformed
+        // XML-template streaming tool-call arguments for GLM-family models, which
+        // deserialize as a string and break every nested-arg tool call
+        // (experimentally derived, 2026-07-24 GLM-5.2 battery run). Setting
+        // `OPENROUTER_PROVIDER_ORDER` to a comma-separated provider slug list pins
+        // routing to providers verified to stream correct JSON tool calls (e.g.
+        // `streamlake`). Unset/empty = OpenRouter's default routing (unchanged).
+        // Only meaningful for an OpenRouter endpoint; other servers ignore an
+        // unknown `provider` field, and the env is set only for OpenRouter runs.
+        if let Ok(order) = std::env::var("OPENROUTER_PROVIDER_ORDER") {
+            let slugs: Vec<Value> = order
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| json!(s))
+                .collect();
+            if !slugs.is_empty() {
+                body["provider"] = json!({ "order": slugs, "allow_fallbacks": false });
+            }
+        }
 
         let mut resp = self.send_chat(&body).await?;
         // Codex #4 (tuxlink-xnenf): a STRICT OpenAI-compat endpoint (notably the
