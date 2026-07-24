@@ -159,8 +159,57 @@ Model-attributable (not a Tuxlink build target): M3 (conflation), M4/skill
 over-analysis, M5b disclosure split, M6 disclosure inconsistency. These are what
 the *skill* (teaching) layer exists to address, not the product.
 
-## Next decision (per operator)
+## Convergence check (2026-07-24) — two independent fronts, and a correction
 
-Consider which Tuxlink-attributable modalities to build now. M2 is already
-scoped. M1 is the highest-leverage new one. M4 and M5a are smaller. Nothing is
-built until this classification is agreed.
+Before building anything, this analysis was put through a two-front adversarial
+convergence check per operator direction: Front 1, a Codex (gpt-5.5) blind
+re-derivation of the modalities from the same raw evidence (`dev/scratch/lift-raw-evidence.txt`),
+with no sight of this doc; Front 2, an independent source-grounded critique of
+this doc's conclusions. Both are archived under `dev/adversarial/` (gitignored).
+
+**The check overturned M2, and I verified the correction against source.**
+
+- **M2 was misattributed.** base/S1 did not loop because `ARM_FALLTHROUGH_LEAK`
+  lacked a typed remedy. `ARM_FALLTHROUGH_LEAK` is a *warning*; base/S1 was already
+  `validates_green`; and `remedies: []` on a warning-only routine is a *deliberate,
+  tested anti-ping-pong invariant* (`tuxlink-mcp-core/src/ports.rs:1644`, test at
+  `:2214`). The real mechanism is a MODEL non-termination (tuxlink-m5oia): the model
+  re-sent a byte-identical no-op patch ~35 times, ignoring `applied: false` (the
+  m5oia guard at `src/routines/commands.rs:911`) and the `state: valid` disposition
+  telling it to stop. skill/S1 resolved the same warning. Front 1 independently
+  classified this MODEL (its finding #4); Front 2 flagged it as the strongest
+  disagreement. The originally proposed fix (typed remedy on the warning) would have
+  violated the tested invariant. **ADR 0025's amendment and tuxlink-90vcc are corrected
+  accordingly.**
+- **M1 was overstated / conflated.** `KIND_CHANGE_REJECTED` occurs once in the corpus;
+  the turn inflation is mostly `DUPLICATE_STEP_ID` from the model doing a full
+  `routines_save` then re-adding ids it already used. The skill arm hit zero of either
+  class. So M1 is largely MODEL state-tracking; the auto-id fix is still sound but is
+  not the headline.
+- **M6 softened.** The disclosure claim rests on base/P1's final message, which is
+  truncated in the evidence; the `AUTO_TX` *state* fact holds, the disclosure claim is
+  under-evidenced.
+- **M3 / M4 / M5 / M7 held** across all three.
+
+**New Tuxlink findings the fronts surfaced that this pass missed** (Codex, file:line-cited;
+to be independently verified before building):
+
+- **vara-fm vocabulary drift** between the MCP and routine `find_stations` surfaces
+  (`PARAM_VALUE_NOT_ALLOWED`).
+- **`params` patch replaces the whole object** (not merge) → `MISSING_REQUIRED_PARAM`
+  when skill/S2 patched only `bands`.
+- **`rig.tune_atu` advertised but runtime-unimplemented**, no validation flag.
+- **Runtime grid hardcoded at authoring** (skill/S4 read `data.read source:grid` then
+  composed the literal `DM33`; the action exposes no per-source output to reference).
+- **Branch fall-through affordance** (Codex #5): auto-terminate `then` arms by default,
+  or escalate transmit-bearing fall-through from warning to a blocking error. This is
+  the correct structural replacement for the withdrawn M2 fix.
+
+## Build targets (operator-approved, verify-then-build)
+
+Per operator decision after convergence: build (1) the branch-fallthrough affordance,
+(2) the cross-surface vocab/semantics drifts, and (3) `predict_path` Routines-action
+parity (M5a). Each Codex-surfaced source claim is independently verified before its
+build. The model-attributable modalities (m5oia non-termination, skill/S3
+false-infeasibility, disclosure inconsistency) are teaching-layer work, not product
+builds.
