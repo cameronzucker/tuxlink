@@ -101,3 +101,13 @@ Compare pass RATES across the 6 conditions to answer: does Nemotron adversarial
 review (reasoning off vs on) improve qwen's routines over no-review, and does the
 skill scaffold interact with it. Use the determinism re-runs for rates, not
 single observations. Record durably in `dev/battery/` and commit.
+
+## Live dashboard (tailnet)
+
+Read-only progress dashboard on R2, tailnet-reachable:
+`http://r2-poe.twin-bramble.ts.net:8899/` (auto-refresh 20s; matrix of 18 cells x
+6 conditions, driver state, deterministic status, and Sonnet verdicts).
+Relaunch: `ssh r2-poe 'cd ~/tuxlink-eig6e-build && nohup python3 battery-results/ladder2/dashboard.py </dev/null > battery-results/ladder2/dashboard.log 2>&1 & disown'`
+The Sonnet verdicts it shows come from `battery-results/ladder2/judgments.jsonl`,
+which the judging session pushes up after each judge batch (deterministic status is
+always live regardless).
