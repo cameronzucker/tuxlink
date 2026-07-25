@@ -33,7 +33,15 @@ def log(m):
     with open(LOG,"a") as f: f.write(f"[{int(time.time())}] {m}\n")
 
 def rsync_down():
-    subprocess.run(["rsync","-a",f"{R2}:{R2DIR}/",LADDER+"/"],timeout=180,
+    """Mirror R2 EXACTLY, including deletions.
+
+    Without --delete the mirror only ever grows, so a bundle archived or removed
+    on R2 (e.g. a contaminated condition pulled aside for a re-run) survives
+    locally and gets judged again from the stale copy. Observed 2026-07-25: the
+    daemon reported 57 unjudged immediately after a re-run launch and began
+    re-judging the ARCHIVED bundles rather than the fresh ones. The mirror is
+    purely derived from R2, so deleting from it is always safe."""
+    subprocess.run(["rsync","-a","--delete",f"{R2}:{R2DIR}/",LADDER+"/"],timeout=180,
                    stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
 
 def push_store():
@@ -122,7 +130,10 @@ def complete():
     serial one would leave the daemon polling forever after a parallel run."""
     try:
         rl=open(os.path.join(LADDER,"run.log")).read()
-        return ("LADDER2 COMPLETE" in rl) or ("LADDER2-PAR COMPLETE" in rl)
+        # Append-only across runs: a COMPLETE from a PREVIOUS run persists, so
+        # only look after the last START or a re-run exits the daemon instantly.
+        tail=re.split(r"LADDER2(?:-PAR)? START",rl)[-1]
+        return ("LADDER2 COMPLETE" in tail) or ("LADDER2-PAR COMPLETE" in tail)
     except: return False
 
 def acquire_lock():

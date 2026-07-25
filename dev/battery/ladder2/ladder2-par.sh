@@ -11,6 +11,15 @@
 #
 # env: OPENROUTER_API_KEY / ORKEY (Nemotron reviewer curl only)
 #      LADDER2_CONC  worker width, default 3
+#      LADDER2_TURN_TIMEOUT_SECS  per-turn deadline, default 600
+#      TUXLINK_MAX_RUN_SECS       whole-run deadline; exported to the binary,
+#                                 which falls back to its built-in 1800s default
+#
+# BOTH deadlines are WALL-CLOCK. Running wide slows each individual bundle even
+# though aggregate throughput rises, so at width>3 they must be raised or long
+# cells are truncated and recorded as `needs_operator`, which reads as a
+# capability failure rather than the throughput artifact it is. On 2026-07-25
+# this cost 50 of 220 bundles at width 8 against the stock 1800s/600s.
 set -uo pipefail
 
 ROOT="$HOME/tuxlink-eig6e-build"
@@ -32,6 +41,7 @@ SKILLS="base skill"
 REVCONDS="off on"
 MAXATT=3
 CONC="${LADDER2_CONC:-3}"
+TURNTO="${LADDER2_TURN_TIMEOUT_SECS:-600}"
 
 mkdir -p "$OUT"
 # Small appends (<PIPE_BUF) with >> are atomic on Linux, so concurrent workers
@@ -74,6 +84,7 @@ run_cell(){
   t0=$(date +%s)
   xvfb-run -n "$disp" "$BIN" --corpus "$CORPUS" --model "$QMODEL" --endpoint "$QEP" \
       --prompt "$cell" --arm "$skill" --turn-cap "$TURNCAP" --temperature "$TEMP" \
+      --turn-timeout-secs "$TURNTO" \
       --out "$out" "${extra[@]}" >> "$out/harness.log" 2>&1
   t1=$(date +%s)
   "$SCORE" --root "$out" --corpus "$CORPUS" >/dev/null 2>&1
@@ -116,7 +127,7 @@ do_cell(){
   log "CHAIN DONE $skill/$cell"
 }
 
-log "LADDER2-PAR START conc=$CONC cells=[$CELLS] skills=[$SKILLS] revconds=[none $REVCONDS]"
+log "LADDER2-PAR START conc=$CONC turn_timeout=${TURNTO}s max_run=${TUXLINK_MAX_RUN_SECS:-1800(default)}s cells=[$CELLS] skills=[$SKILLS] revconds=[none $REVCONDS]"
 idx=0
 running=0
 for skill in $SKILLS; do

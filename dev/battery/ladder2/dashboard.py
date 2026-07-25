@@ -81,7 +81,10 @@ def driver_state():
     argv made a live parallel run read as STOPPED."""
     try:
         rl=open(os.path.join(ROOT,"run.log")).read()
-        if "LADDER2 COMPLETE" in rl or "LADDER2-PAR COMPLETE" in rl: return "COMPLETE"
+        # run.log is append-only across runs, so a COMPLETE from a PREVIOUS run
+        # is still in the file. Only the segment after the last START counts.
+        tail=re.split(r"LADDER2(?:-PAR)? START",rl)[-1]
+        if "LADDER2 COMPLETE" in tail or "LADDER2-PAR COMPLETE" in tail: return "COMPLETE"
     except: rl=""
     try:
         out=subprocess.run(["ps","-eo","args"],capture_output=True,text=True,timeout=5).stdout
