@@ -60,8 +60,19 @@ def verdicts():
             except: pass
     return v
 def attempts(skill,cell,cond):
+    """The attempt-N run directories, and ONLY those.
+
+    A condition dir also holds `ledger.json` (a file) and, for rev_* conditions,
+    `meta-N/` dirs carrying the reviewer's critique inputs. Neither is a run.
+    Enumerating them unfiltered rendered a phantom badge for each: no score.json
+    means read_att falls through to outcome="run", which the legend states as
+    "ran & scored, awaiting judge". So every condition showed one spurious blue
+    badge and every rev_ condition showed four, implying a judging backlog that
+    did not exist."""
     d=os.path.join(ROOT,skill,cell,ph(cond))
-    return sorted([a for a in os.listdir(d)]) if os.path.isdir(d) else []
+    if not os.path.isdir(d): return []
+    return sorted(a for a in os.listdir(d)
+                  if a.startswith("attempt-") and os.path.isdir(os.path.join(d,a)))
 def read_att(skill,cell,cond,a,V):
     b=os.path.join(ROOT,skill,cell,ph(cond),a)
     outcome=""; det=""
