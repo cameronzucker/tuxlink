@@ -82,12 +82,45 @@ cost-ceiling defect in Option B entirely, because `g31en` already made the
 credits baseline non-fatal for non-OpenRouter endpoints. The `$2` per-cell
 ceiling is inert for local builds today.
 
-**Expected gain:** the headroom is measured, not assumed (zero queueing, 1.4-2.3%
-KV, batch size 1, and the engine caught fully idle mid-run). Filling duty-cycle
-gaps alone should pay for itself; batch width is on top of that. A 3-4 way run
-plausibly lands ~4-5h instead of ~14h. Prefill contention is the one unknown that
-could flatten the curve early, so this needs an empirical ramp rather than a
-prediction.
+**Predicted gain (WRONG, kept for the record):** given zero queueing, 1.4-2.3% KV,
+batch size 1, and the engine caught idle mid-run, a 3-4 way run was expected to
+land ~4-5h instead of ~14h, with prefill contention flagged as the one unknown
+that could flatten the curve early.
+
+### MEASURED at width 3 (2026-07-25, live run)
+
+That unknown is the whole answer. 180 s counter delta at `LADDER2_CONC=3`:
+
+| | serial baseline | conc=3 | gain |
+|---|---|---|---|
+| prefill | 786 tok/s | 913 tok/s | **1.16x** |
+| decode | 7.0 tok/s | 14.4 tok/s | **2.05x** |
+
+Decode doubled exactly as continuous batching predicts, because the scheduler
+holds `num_requests_running = 2`. But decode is ~0.4% of the token volume at
+240:1, so it barely moves the wall clock. **Prefill gained only 16%, which means
+prefill compute on the Spark is effectively saturated even at one in-flight
+request.** Two concurrent prefills each take roughly twice as long and aggregate
+throughput hardly moves. The idle instant sampled earlier was a real duty-cycle
+gap, but a small one in aggregate.
+
+Net expected wall clock: roughly **12h instead of 14h**. Local parallelism is
+worth about 15% on this workload, not 3-4x.
+
+The scheduler also caps concurrency independently of memory:
+`num_requests_waiting = 1` with `waiting_by_reason = capacity` while KV sits at
+2.3%. That is a vLLM serving-config limit on twin-bramble (`max_num_seqs` or the
+batched-token budget), not something tuxlink controls. Raising it would not help
+much anyway, since prefill compute is the actual wall.
+
+Queue time rose from 0.01 s to 0.25 s cumulative mean, and TTFT was essentially
+unchanged (14.32 -> 14.60 s cumulative). So width 3 is not inflating the 1800 s
+wall-clock budget meaningfully, and is safe to leave running. There is simply
+little to gain.
+
+**Conclusion: keep width 3 (it is free and slightly positive), but local
+parallelism is not the path to faster iteration on a prefill-dominated
+workload.**
 
 **Canaries to watch while ramping:** `request_queue_time_seconds` (currently
 ~0.01 s) and `time_to_first_token` p90 (currently <=40 s). If queue time climbs
@@ -174,14 +207,28 @@ processes (`:99` through `:109`) alive from runs days old. At 36-way concurrency
 that leak grows linearly with width. Also budget ~150 MB RSS per concurrent
 `elmer_battery`, plus one Xvfb each.
 
-## Recommendation
+## Recommendation (REVISED after measuring Option A)
 
-1. Fix Blocker 2 (wall-clock limit) regardless of which option is chosen.
-2. Try Option A first: 3-6 wide, local, free, no ceiling interaction. Measure
-   the canaries and learn the real scaling curve of a prefill-dominated workload
-   on this box.
-3. Reach for Option B only if Option A's curve flattens early, and fix Blocker 1
-   in the same change. At ~$26/run it is affordable, and it is what turns the
-   ladder from an overnight event into a same-day iteration.
-4. Do not change any of this while a run is in flight. `ladder2.sh` is read
-   incrementally by bash, and editing it mid-run can corrupt execution.
+The original recommendation was "try Option A first, reach for Option B only if
+its curve flattens early." The curve flattened immediately: 1.16x on the
+dimension that matters. Revised:
+
+1. **Option B is the answer for faster iteration, and the operator's original
+   instinct was right.** The reason is now concrete rather than speculative: the
+   workload is 240:1 prefill-dominated, and prefill is compute-saturated on a
+   single Spark. Concurrency on one box cannot fix that. On OpenRouter each
+   concurrent request lands on separate provider hardware, so prefill genuinely
+   parallelizes. That is where the 12-24x lives, and it is not reachable locally
+   at any width.
+2. **Fix Blocker 1 (account-wide credits metering) in the same change.** It is
+   dormant today only because builds run on the Spark; moving qwen to OpenRouter
+   re-arms it at the same moment concurrency makes it read N times too high.
+3. **Fix Blocker 2 (wall-clock `max_response_duration`) before widening on
+   OpenRouter**, where shared tenancy makes latency inflation far more likely
+   than it was locally. Both blockers need a Rust rebuild, so do them together
+   and treat the result as a clean re-run rather than a mixed dataset.
+4. Keep width 3 locally in the meantime. It is free, measured safe (queue time
+   0.25 s against an 1800 s budget), and worth ~15%.
+5. Do not edit a driver while a run is in flight. bash reads a script
+   incrementally, so an in-place edit can corrupt execution. Deploy a new file
+   and restart instead, which is what `ladder2-par.sh` did.
