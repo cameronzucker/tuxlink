@@ -64,7 +64,12 @@ def page():
             cell="".join(badge(*read_att(sk,c,cd,a,V)) for a in atts)
             tds+=f'<td style="text-align:center;white-space:nowrap">{cell}</td>'
         rows+=f'<tr><th style="text-align:left;padding-right:8px">{c}</th>{tds}</tr>'
-    hdr="".join(f'<th>{sk}<br>{cd}</th>' for sk,cd in COLS)
+    CLABEL={"none":"no&nbsp;review<br><span style='color:#8b949e;font-weight:400'>(raw build)</span>",
+            "rev_off":"review<br><span style='color:#8b949e;font-weight:400'>reasoning OFF</span>",
+            "rev_on":"review<br><span style='color:#8b949e;font-weight:400'>reasoning ON</span>"}
+    ALABEL={"base":"base<br><span style='color:#8b949e;font-weight:400'>no scaffold</span>",
+            "skill":"skill<br><span style='color:#8b949e;font-weight:400'>Build-Carefully</span>"}
+    hdr="".join(f'<th>{ALABEL[sk]}<br>&nbsp;<br>{CLABEL[cd]}</th>' for sk,cd in COLS)
     sc="#1a7f37" if state=="RUNNING" else ("#0969da" if state=="COMPLETE" else "#cf222e")
     now=datetime.datetime.now(datetime.timezone.utc).strftime("%H:%M:%SZ")
     return f'''<!doctype html><html><head><meta charset=utf-8><meta http-equiv=refresh content=20>
@@ -74,7 +79,20 @@ a{{color:#58a6ff}}sub{{font-size:.7em}}</style></head><body>
 <h2>Ladder 2 &nbsp;<span style="color:{sc}">{state}</span></h2>
 <p>cells done: <b>{done}/{total}</b> conditions &nbsp;|&nbsp; scored bundles (incl. determinism re-runs): <b>{scored}</b>
 &nbsp;|&nbsp; judged: <b>{sum(tally.values())}</b> (<span style="color:#1a7f37">P {tally.get("PASS",0)}</span> / <span style="color:#9a6700">~ {tally.get("PARTIAL",0)}</span> / <span style="color:#cf222e">F {tally.get("FAIL",0)}</span>) &nbsp;|&nbsp; updated {now} (auto-refresh 20s)</p>
-<p style="color:#8b949e">badge = judge verdict (P/~/F/·unjudged); subscript = deterministic (sg=saved+green, s=saved, x=not-saved). hover for outcome. columns: builder arm x review condition.</p>
+<div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:10px 14px;margin:8px 0;max-width:900px">
+<b>How to read a cell.</b> Each badge is one run. Multiple badges = determinism re-runs of the same condition.<br>
+<b>Big letter = the Sonnet judge's verdict</b> (does the routine actually do what the prompt asked, judged against its predicates, not just "did it save"):
+&nbsp;<span style="color:#1a7f37;font-weight:700">P</span> = PASS (meets the requirements) &nbsp;
+<span style="color:#9a6700;font-weight:700">~</span> = PARTIAL (some requirements met, some dropped) &nbsp;
+<span style="color:#cf222e;font-weight:700">F</span> = FAIL (drops or breaks a requirement) &nbsp;
+<span style="color:#999;font-weight:700">·</span> = not yet judged.<br>
+<b>Small subscript = the deterministic harness check</b> (mechanical, no judgment):
+&nbsp;<b>sg</b> = a routine was saved AND passed validation (no errors) &nbsp;
+<b>s</b> = saved but validation had an error &nbsp;
+<b>x</b> = nothing was saved &nbsp; <b>?</b> = still running / no data.<br>
+<b>Hover any badge</b> for the raw run outcome (completed / cancelled / needs_operator / invalid_action).<br>
+<span style="color:#8b949e"><b>Columns</b> are builder-arm x review-condition. Within an arm, left-to-right is the experiment: raw build &rarr; after a Nemotron review+revise (reasoning off) &rarr; same with reasoning on. Compare the three to see whether the review helped, hurt, or did nothing.</span>
+</div>
 <table><tr><th></th>{hdr}</tr>{rows}</table>
 <h3>run.log</h3><pre style="background:#161b22;padding:8px;border-radius:6px;overflow:auto;max-height:280px">{logtail()}</pre>
 </body></html>'''
