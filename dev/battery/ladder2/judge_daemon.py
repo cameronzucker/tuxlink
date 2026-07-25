@@ -117,7 +117,12 @@ def judge(one):
     return v
 
 def complete():
-    try: return "LADDER2 COMPLETE" in open(os.path.join(LADDER,"run.log")).read()
+    """Either driver's completion marker. ladder2-par.sh writes LADDER2-PAR
+    COMPLETE, which does NOT contain the serial marker, so matching only the
+    serial one would leave the daemon polling forever after a parallel run."""
+    try:
+        rl=open(os.path.join(LADDER,"run.log")).read()
+        return ("LADDER2 COMPLETE" in rl) or ("LADDER2-PAR COMPLETE" in rl)
     except: return False
 
 def acquire_lock():

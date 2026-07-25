@@ -2,7 +2,7 @@
 """Ladder-2 progress dashboard. Read-only; scans the run tree per request.
 Serves on the tailnet: http://r2-poe.twin-bramble.ts.net:8899/
 """
-import html, json, os, glob, subprocess, datetime
+import html, json, os, glob, re, subprocess, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # LADDER2_ROOT lets this be render-tested against an rsync mirror off-box.
 ROOT=os.path.expanduser(os.environ.get("LADDER2_ROOT","~/tuxlink-eig6e-build/battery-results/ladder2"))
@@ -74,13 +74,24 @@ def read_att(skill,cell,cond,a,V):
     verd=V.get(f"{skill}/{cell}/{cond}/{a}","")
     return outcome,det,verd
 def driver_state():
+    """RUNNING / COMPLETE / STOPPED, for EITHER driver.
+
+    The serial ladder2.sh and the parallel ladder2-par.sh produce the same tree,
+    so the dashboard must recognise both; matching only the serial script's exact
+    argv made a live parallel run read as STOPPED."""
     try:
         rl=open(os.path.join(ROOT,"run.log")).read()
-        if "LADDER2 COMPLETE" in rl: return "COMPLETE"
+        if "LADDER2 COMPLETE" in rl or "LADDER2-PAR COMPLETE" in rl: return "COMPLETE"
     except: rl=""
     try:
         out=subprocess.run(["ps","-eo","args"],capture_output=True,text=True,timeout=5).stdout
-        return "RUNNING" if "bash battery-results/ladder2/ladder2.sh" in out else "STOPPED"
+        if not re.search(r"ladder2(-par)?\.sh", out): return "STOPPED"
+        # Live worker count: how many cells are actually executing right now.
+        # Anchored to line start on purpose -- `ps -eo args` shows TWO lines per
+        # cell (the `/bin/sh /usr/bin/xvfb-run ...` wrapper repeats the full
+        # binary path and argv), so an unanchored match reports double the width.
+        n=len(re.findall(r"^\S*/target/debug/elmer_battery --corpus", out, re.M))
+        return "RUNNING" if n<=1 else f"RUNNING &times;{n}"
     except: return "?"
 def logtail(n=14):
     try: return "".join(open(os.path.join(ROOT,"run.log")).readlines()[-n:])
@@ -118,7 +129,7 @@ def page():
     ALABEL={"base":"base<br><span style='color:#8b949e;font-weight:400'>no scaffold</span>",
             "skill":"skill<br><span style='color:#8b949e;font-weight:400'>Build-Carefully</span>"}
     hdr="".join(f'<th>{ALABEL[sk]}<br>&nbsp;<br>{CLABEL[cd]}</th>' for sk,cd in COLS)
-    sc="#1a7f37" if state=="RUNNING" else ("#0969da" if state=="COMPLETE" else "#cf222e")
+    sc="#1a7f37" if state.startswith("RUNNING") else ("#0969da" if state=="COMPLETE" else "#cf222e")
     now=datetime.datetime.now(datetime.timezone.utc).strftime("%H:%M:%SZ")
     return f'''<!doctype html><html><head><meta charset=utf-8>
 <noscript><meta http-equiv=refresh content=20></noscript>
