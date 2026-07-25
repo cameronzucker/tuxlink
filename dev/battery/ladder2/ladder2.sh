@@ -84,18 +84,19 @@ for cell in $CELLS; do
   for cond in $REVCONDS; do
     rdir="$OUT/$skill/$cell/rev_$cond"
     for a in 1 2 3; do
-      adir="$rdir/attempt-$a"
+      adir="$rdir/attempt-$a"      # the revise bundle (run_cell rm -rf's this)
+      mdir="$rdir/meta-$a"         # review inputs live HERE, a sibling run_cell never wipes
       if [ -f "$adir/score.json" ]; then continue; fi
       # attempt>1 only if attempt-1 was a determinism fail
       if [ "$a" -gt 1 ] && { [ ! -f "$rdir/attempt-1/score.json" ] || [ "$(det_fail "$rdir/attempt-1")" != "1" ]; }; then break; fi
-      mkdir -p "$adir"
+      mkdir -p "$mdir"
       # review (fresh critique per attempt); reasoning capture -> critique.meta
-      cp_prompt="$adir/user_prompt.txt"; cell_prompt "$cell" > "$cp_prompt"
+      cp_prompt="$mdir/user_prompt.txt"; cell_prompt "$cell" > "$cp_prompt"
       OPENROUTER_API_KEY="$ORKEY" python3 "$REVIEW" "$cp_prompt" "${def:-/nonexistent}" "$cond" "$CATALOG" \
-          > "$adir/critique.txt" 2> "$adir/critique.meta"
-      # revise prompt = original + critique
-      { cat "$cp_prompt"; echo; echo "---"; echo "A reviewer critiqued your routine. Address every point, then re-save:"; echo; cat "$adir/critique.txt"; } > "$adir/revise_prompt.txt"
-      run_cell "$adir" "$skill" "$cell" "${def:-}" "$adir/revise_prompt.txt" && log "revise $skill/$cell/rev_$cond #$a"
+          > "$mdir/critique.txt" 2> "$mdir/critique.meta"
+      # revise prompt = original + critique (in the meta dir, so run_cell's rm -rf can't delete it)
+      { cat "$cp_prompt"; echo; echo "---"; echo "A reviewer critiqued your routine. Address every point, then re-save:"; echo; cat "$mdir/critique.txt"; } > "$mdir/revise_prompt.txt"
+      run_cell "$adir" "$skill" "$cell" "${def:-}" "$mdir/revise_prompt.txt" && log "revise $skill/$cell/rev_$cond #$a"
       man "{\"phase\":\"revise\",\"skill\":\"$skill\",\"cell\":\"$cell\",\"cond\":\"$cond\",\"attempt\":$a,\"det_fail\":$(det_fail "$adir")}"
     done
   done
