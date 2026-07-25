@@ -1,9 +1,25 @@
-# Ladder parallelization analysis (2026-07-25)
+# Ladder parallelization and cost analysis (2026-07-25)
 
-Author: condor-basalt-hemlock. Measured against the live Ladder-2 run, read-only,
-without perturbing it. Captures two options for cutting the ~14h serial wall
-clock, the blockers each one hits, and what to fix first. Not yet filed as bd
-issues (operator's call on timing).
+Author: condor-basalt-hemlock. Measured against the live Ladder-2 run. Two
+subjects:
+
+1. **Throughput.** Why the ~14h serial wall clock was a driver property rather
+   than a hardware one, what was measured at each width, and the serving-config
+   change that took prefill from 786 to 1,852 tok/s for free.
+2. **Cost.** A measured price model for the current hybrid and for fully-hosted
+   runs, the builder-vs-reviewer economics, and what N-way parallel construction
+   with convergence would actually cost. See
+   [Cost model (measured 2026-07-25)](#cost-model-measured-2026-07-25).
+
+Headline results: local admission cap `--max-num-seqs 2` was the binding
+constraint and lifting it to 8 is worth **2.36x**; a full ladder run costs
+**~$0.90** today (reviewer only, qwen local) or **$14 to $26** fully hosted; and
+the builder outcosts the reviewer **25x to 61x on identical work** because it is
+an agentic loop rather than a single shot.
+
+Measurements are read-only against the live run except where explicitly noted
+(the `--max-num-seqs` change required a vLLM restart, done with the driver
+stopped so no cell was disturbed).
 
 ## The bottleneck is the driver, not the model endpoint
 
@@ -154,7 +170,7 @@ there was simply headroom being withheld by configuration.
 
 Sizing context from the startup log: `GPU KV cache size: 672,336 tokens` and
 `Maximum concurrency for 262,144 tokens per request: 9.79x`. Admission was pinned
-at 2 against a memory ceiling of ~9.79 — roughly 5x tighter than the hardware
+at 2 against a memory ceiling of ~9.79, roughly 5x tighter than the hardware
 required. (The 9.79 exceeds the naive 672,336/262,144 = 2.6 because this model
 uses hybrid attention; the startup log shows a GDN linear-attention prefill
 kernel, so only some layers carry full KV.)
@@ -222,10 +238,13 @@ Both models pin cleanly with the `provider.order` + `quantizations` +
 Account has no rate limit (`requests: -1`, not free tier), so the ceiling is
 provider capacity rather than OpenRouter.
 
-**Cost: ~$26 per complete 108-condition ladder** at DeepInfra fp4, derived from
-the measured token counts above. Neither provider exposes a prompt-cache
-discount, so every resent turn bills at full list price. That is the entire cost
-of the 240:1 ratio.
+**Cost: $14 to $26 per complete 108-condition ladder** at DeepInfra fp4. The
+spread is mean-vs-median: bundle means (410k build / 476k revise prompt tokens)
+are pulled up by outliers such as A1 at 2.36M, while medians are 212k / 233k.
+$26 is the mean-weighted figure and $13.87 the median-weighted one. Neither
+provider exposes a prompt-cache discount, so every resent turn bills at full list
+price. That is the entire cost of the 240:1 ratio. Full derivation and the
+measured reviewer costs are in the cost-model section below.
 
 **Speedup:** ~1h wall clock at 12-24 wide, versus ~14h serial. Past roughly 36
 the critical path stops shrinking, because it becomes the single slowest chain
@@ -235,6 +254,112 @@ the critical path stops shrinking, because it becomes the single slowest chain
 NVFP4. PR #1240 established local <-> API qwen functional parity, but that was a
 different endpoint; a spot-check is warranted before trusting a cross-run
 comparison.
+
+## Cost model (measured 2026-07-25)
+
+### Method, and why the token estimator is not trusted here
+
+Two ways to price a run: multiply measured tokens by list price, or read the
+OpenRouter `/api/v1/credits` account delta. **The credits delta is the meter; the
+token estimate is an approximation that has now been observed wrong in both
+directions.**
+
+- Estimating Nemotron review calls at ~4 chars/token gave $0.00337 per call.
+- The credits delta over the same window gave **$0.00658 per call**, roughly 2x
+  higher. Four chars/token is too generous for JSON and routine definitions,
+  which tokenize closer to 3 or worse.
+- The opposite error is already on record in this project: the in-harness token
+  estimate **overshot** the real credits delta 4x on Anthropic models, because
+  provider-side prompt caching bills cached input at a fraction of list, and it
+  cost-cancelled a healthy cell at $0.52 actual spend (Stage-P2, bd l264r).
+
+So: estimate to plan, meter to decide. The credits-derived numbers below are the
+ones to quote.
+
+Caveat on precision: the $0.00658 figure derives from a 5-call window, so treat
+the reviewer total as **$0.50 to $1.00**, not a tight number.
+
+### What a run costs today (qwen local, Nemotron on OpenRouter)
+
+| item | value |
+|---|---|
+| measured cost per Nemotron review call | $0.0066 (credits-derived) |
+| review calls per full ladder | ~134 (72 rev conditions x 1.86 attempts observed) |
+| **Nemotron cost per full ladder run** | **~$0.90** |
+| qwen builds and revises | $0 (local Spark) |
+
+For contrast, moving qwen to OpenRouter as well (Option B) puts a full run at
+$14 to $26. The reviewer is therefore about 3 to 6 percent of a fully-hosted
+run. All of the money is in the builder.
+
+### Why the reviewer is cheap: it is the loop, not the coverage
+
+The reviewer's low cost is NOT mainly because it runs on fewer arms. Reviews fire
+on 2 of 3 conditions (rev_off and rev_on, not the raw build), worth only ~1.5x.
+Measured on the **same unit of work** (one rev condition, same arm, same cell):
+
+| | tokens |
+|---|---|
+| qwen revise bundle | 476,209 (mean); 232,965 (median) |
+| Nemotron review call | ~7,800 chars-derived / ~19,000 credits-derived |
+
+**The builder costs 25x to 61x the reviewer on identical work.** The mechanism is
+turn count:
+
+```
+qwen revise:  17.9 provider turns x 26,574 tokens/turn = 476k
+nemotron:      1 turn
+```
+
+An agentic loop resends its whole conversation every turn, so turn 18 pays again
+for turns 1 through 17. Cumulative prompt tokens grow roughly **quadratically**
+in turn count while output stays flat. That is what produces the 240:1
+prompt-to-eval ratio, and it is why the absence of a prompt-cache discount hits
+this workload harder than almost any other shape: caching is precisely a discount
+on the resent prefix.
+
+**Generalizable rule: in an agent system, cost is dominated by loop length, not by
+model choice or component count.** Adding a single-shot critic is nearly free.
+Letting the builder take five more turns is not.
+
+### Scaling to parallel construction with convergence
+
+Modelling an N-way parallel build requiring convergence, using median bundle
+sizes, 36 build conditions and 72 revise conditions at the observed attempt rates
+(1.77 and 1.86), priced at DeepInfra fp4 ($0.29/M in, $2.40/M out):
+
+| scenario | tokens | OpenRouter all-in |
+|---|---|---|
+| today (1 build/cell) | 45M | $13.87 |
+| 3-way build, 1 convergence pass | 72M | $22.28 |
+| 3-way build, 2 convergence ROUNDS | 112M | $34.90 |
+| 5-way build, 2 rounds | 166M | $51.73 |
+
+**On the current hybrid every row costs $0 in cash**, because qwen is local. The
+cost of parallel construction here is Spark time, not money. Nemotron stays at
+~$0.90 in every row, because single-shot critics do not multiply.
+
+**Design lever: rounds are more expensive than ways.** Going 1-way to 3-way costs
+1.6x. Adding a second convergence *round* costs another 1.6x, because each round
+is a fresh agentic loop at ~230k tokens while an extra parallel builder is just
+one more loop running beside the others. Converging via a **single-shot
+comparator** (Nemotron economics, ~19k tokens) rather than by sending builders
+around again is roughly 12x cheaper per unit of convergence pressure.
+Convergence-by-judging scales; convergence-by-rebuilding is what produces the $50.
+
+### Wall-clock and the second-Spark question
+
+The token model cross-checks against measured throughput: 45M tokens at the
+post-fix 1,852 tok/s prefill is ~6.8h, which matches the observed ~6h run.
+Extending it, 5-way x 2 rounds at 166M tokens is ~25h on one Spark.
+
+A second Spark is justified here, but by the **scaling curve rather than the
+price**: 4x the admission cap bought only 2.03x prefill, so the box is
+compute-bound and 3x to 5x more build work cannot be absorbed by more
+concurrency. A second GB10 adds real compute. Note its interconnect
+(ConnectX-7, 200 Gb/s, ~25 GB/s) is adequate for sharding inference and rollouts
+but slow for data-parallel gradient sync, so it buys roughly 2x compute and 2x
+memory rather than 2x training speed.
 
 ## Blocker 1 (hard, Option B only): the cost ceiling meters account-wide spend
 
