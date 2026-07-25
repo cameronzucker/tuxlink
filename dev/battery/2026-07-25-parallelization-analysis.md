@@ -133,7 +133,46 @@ that we do not yet know which.
 
 Net expected wall clock at the current cap: roughly **12h instead of 14h**.
 
-### The untested lever
+### RESOLVED: the cap was the constraint, and lifting it is worth 2.36x
+
+Raised `--max-num-seqs` from 2 to 8 and re-measured over 180 s at
+`LADDER2_CONC=8`:
+
+| | serial (seqs=2, conc=1) | conc=3 (seqs=2) | **conc=8, seqs=8** |
+|---|---|---|---|
+| prefill | 786 tok/s | 913 tok/s | **1,852 tok/s** |
+| decode | 7.0 tok/s | 14.4 tok/s | 7.8 tok/s |
+
+**Prefill: 2.36x serial, 2.03x the width-3 run.** Since the workload is 240:1
+prefill-dominated, prefill throughput is what sets the wall clock, so this is a
+real ~2.4x on the ladder. It was free: one flag, no code change, no money.
+
+The scheduler now admits what it was refusing before: `num_requests_running` went
+5 then 7 (versus a hard 2), `num_requests_waiting` fell 3 -> 1, KV rose to only
+9.3%, and **`num_preemptions_total` stayed at 0**. So the canary never tripped;
+there was simply headroom being withheld by configuration.
+
+Sizing context from the startup log: `GPU KV cache size: 672,336 tokens` and
+`Maximum concurrency for 262,144 tokens per request: 9.79x`. Admission was pinned
+at 2 against a memory ceiling of ~9.79 — roughly 5x tighter than the hardware
+required. (The 9.79 exceeds the naive 672,336/262,144 = 2.6 because this model
+uses hybrid attention; the startup log shows a GDN linear-attention prefill
+kernel, so only some layers carry full KV.)
+
+Decode fell versus width 3 (14.4 -> 7.8 tok/s). That is expected rather than a
+regression: with 8 cells in flight, a larger share of engine steps are spent on
+prefill, and prefill competes with decode for the same compute. At 240:1 the
+trade is strongly favourable.
+
+Scaling is sub-linear, which bounds further tuning: 4x the admission (2 -> 8)
+bought 2.03x the prefill. Compute contention is now doing real work, so a further
+raise to 12-16 would likely yield well under proportional gains. The memory
+ceiling would allow it (real per-turn contexts are ~45-65k, not 262k, so the
+672k-token pool supports roughly 13 concurrent at realistic lengths), but each
+change costs a ~13 min model reload. Not obviously worth it; revisit only if the
+prefill curve is wanted for its own sake.
+
+### The lever, as originally identified
 
 vLLM's own guidance is that `max_num_seqs x max_model_len` must fit the KV
 budget. At the configured 262144 that worst case is ~524k tokens for 2
@@ -255,12 +294,13 @@ The original recommendation was "try Option A first, reach for Option B only if
 its curve flattens early." The curve flattened immediately: 1.16x on the
 dimension that matters. Revised:
 
-1. **Test the `--max-num-seqs` lever before concluding anything about Option B.**
-   The 1.16x was measured against a hand-set cap of 2, so local scaling above 2
-   is simply unmeasured. Raising it to ~8 is a one-flag change and settles the
-   question. If prefill throughput scales, local stays viable and free; if it
-   flattens, that is real evidence for Option B rather than an inference from a
-   metric that could not support it.
+1. **DONE, and it settled the question: local is worth ~2.4x, for free.** The
+   1.16x had been measured against a hand-set admission cap of 2. Raising
+   `--max-num-seqs` to 8 took prefill from 786 to 1,852 tok/s with zero
+   preemptions. Option B is therefore NOT needed to make the ladder tolerable;
+   it remains the answer only if same-hour iteration (~1h runs) becomes the
+   requirement, since a single box still cannot beat elastic provider capacity.
+   The measured local ceiling and its sub-linear scaling are recorded above.
 2. **Fix Blocker 1 (account-wide credits metering) in the same change.** It is
    dormant today only because builds run on the Spark; moving qwen to OpenRouter
    re-arms it at the same moment concurrency makes it read N times too high.
