@@ -4,6 +4,25 @@ Author: tanager-owl-cardinal. Source run: `qwen-instrumented-1` (qwen-3.5-122b-n
 local Spark vLLM, 18 cells x {base, skill} = 36 observations), binary origin/main
 `0ae53b5e` plus this session's harness patches. Corpus `tests/battery/corpus.json`.
 
+## Corrections from the GPT-5.6 cross-check (read this first)
+
+A GPT-5.6-Sol-high independent pass on the same raw data (adjudicated in
+[2026-07-24-qwen-failuremodes-gpt56-disagreement.md](2026-07-24-qwen-failuremodes-gpt56-disagreement.md))
+corrected or extended this doc in five places, all verified against source:
+- **Mode G is wrong as written.** Stringified-object tolerance ALREADY exists
+  (`arg_shape.rs`, tuxlink-sq72z; `routines_save.def` taught it per #1205). base/S3's
+  reject means the inner string was malformed, not that a tolerance is missing.
+- **Mode A gains a sharper seam.** The skill scaffold (`provider.rs` item 7) already
+  says "at most one repair per finding, never repeat an identical **rejected** call" —
+  but a no-op returns as **success** (`applied:false`), so the guard never fires. In the
+  skill arm the model also failed to execute explicit teaching; base/E2 (no scaffold) is
+  pure payload contract.
+- **New mode (missed here):** catalog says embedded log refs do not interpolate
+  (`local.rs:698`) but the executor does (`executor.rs`). A Tuxlink doc/runtime contradiction.
+- **P1/base is not a clean PASS.** Its `find_stations` drops `bands` and `limit`.
+- **A2/base is worse than "send dropped":** compose exists but is unreachable on the
+  success path (topology-dead), not merely omitted.
+
 ## What this is, and what it is NOT
 
 This is a **mechanism** analysis: for each failure, *what the model actually did* and
