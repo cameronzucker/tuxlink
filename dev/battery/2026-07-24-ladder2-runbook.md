@@ -111,3 +111,19 @@ Relaunch: `ssh r2-poe 'cd ~/tuxlink-eig6e-build && nohup python3 battery-results
 The Sonnet verdicts it shows come from `battery-results/ladder2/judgments.jsonl`,
 which the judging session pushes up after each judge batch (deterministic status is
 always live regardless).
+
+## Autonomous Sonnet judge daemon (grading with no agent-loop involvement)
+
+`judge_daemon.py` makes Sonnet-5 the grader autonomously: it polls R2 for
+scored-but-unjudged bundles, grades each against its predicates via headless
+`claude -p --model sonnet` (plan-based), appends the verdict to
+`ladder2-judgments.jsonl`, and pushes that file to R2 so the dashboard shows it.
+No main-loop dispatch; survives the interactive session ending; consumes plan
+quota (the cost of plan-based grading).
+Working dir must contain `corpus.json`, the `ladder2/` rsync target, and
+`ladder2-judgments.jsonl` (the store). Relaunch:
+`cd <workdir> && nohup python3 judge_daemon.py > judge_daemon.nohup 2>&1 & disown`
+It exits on its own once the run shows `LADDER2 COMPLETE` and nothing is unjudged.
+(Alternative, even more co-located: configure `claude` auth on R2 and call the
+judge inline in the driver after each score. The Pi daemon avoids that config and
+achieves the same autonomy today.)
