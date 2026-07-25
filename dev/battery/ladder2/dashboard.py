@@ -2,13 +2,56 @@
 """Ladder-2 progress dashboard. Read-only; scans the run tree per request.
 Serves on the tailnet: http://r2-poe.twin-bramble.ts.net:8899/
 """
-import json, os, glob, subprocess, datetime
+import html, json, os, glob, subprocess, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-ROOT=os.path.expanduser("~/tuxlink-eig6e-build/battery-results/ladder2")
-PORT=8899
+# LADDER2_ROOT lets this be render-tested against an rsync mirror off-box.
+ROOT=os.path.expanduser(os.environ.get("LADDER2_ROOT","~/tuxlink-eig6e-build/battery-results/ladder2"))
+PORT=int(os.environ.get("LADDER2_PORT","8899"))
+# The corpus is what each rung actually ASKS. Looked up in a few places so this
+# works both on R2 (alongside the build tree) and from a local mirror workdir.
+CORPUS_CANDIDATES=[
+    os.environ.get("LADDER2_CORPUS",""),
+    os.path.join(ROOT,os.pardir,os.pardir,"tests","battery","corpus.json"),
+    os.path.join(ROOT,"corpus.json"),
+    os.path.join(os.path.dirname(os.path.abspath(__file__)),"corpus.json"),
+]
 CELLS=["P1","P2","P3","S1","S2","S3","S4","A1","A2","C1","C2","C3","E1","E2","E3","EU1","EU2","EU3"]
 COLS=[("base","none"),("base","rev_off"),("base","rev_on"),("skill","none"),("skill","rev_off"),("skill","rev_on")]
 def ph(cond): return "build" if cond=="none" else cond
+_corpus_cache={"path":None,"mtime":None,"cells":{}}
+def corpus():
+    """{cell_id: {title, prompt, predicates}}. Cached on mtime; never fatal --
+    a missing/!unreadable corpus just means no hover cards, not a dead page."""
+    for p in CORPUS_CANDIDATES:
+        if not p or not os.path.exists(p): continue
+        try: m=os.path.getmtime(p)
+        except OSError: continue
+        if _corpus_cache["path"]==p and _corpus_cache["mtime"]==m:
+            return _corpus_cache["cells"]
+        try:
+            raw=json.load(open(p))
+            items=raw.get("prompts") if isinstance(raw,dict) else raw
+            cells={c["id"]:c for c in (items or []) if isinstance(c,dict) and "id" in c}
+        except Exception:
+            continue
+        _corpus_cache.update({"path":p,"mtime":m,"cells":cells})
+        return cells
+    return {}
+def rung_header(cell):
+    """Row label; hovering it reveals what that rung asks + how it is graded."""
+    c=corpus().get(cell)
+    if not c:
+        return f'<th class="rung">{html.escape(cell)}</th>'
+    title=html.escape(c.get("title") or "")
+    prompt=html.escape(c.get("prompt") or "(no prompt)")
+    preds=c.get("predicates") or []
+    plist="".join(f"<li>{html.escape(str(x))}</li>" for x in preds)
+    return (f'<th class="rung">{html.escape(cell)}<span class="hint">&#9432;</span>'
+            f'<div class="card"><div class="ct">{html.escape(cell)}'
+            f'{" &mdash; "+title if title else ""}</div>'
+            f'<div class="cl">PROMPT</div><pre class="cp">{prompt}</pre>'
+            f'<div class="cl">PREDICATES ({len(preds)})</div><ol class="cq">{plist}</ol>'
+            f'</div></th>')
 def verdicts():
     v={}; p=os.path.join(ROOT,"judgments.jsonl")
     if os.path.exists(p):
@@ -68,7 +111,7 @@ def page():
             if not atts: tds+='<td style="text-align:center;color:#21262d" title="not run yet">&middot;</td>'; continue
             cell="".join(badge(*read_att(sk,c,cd,a,V)) for a in atts)
             tds+=f'<td style="text-align:center;white-space:nowrap">{cell}</td>'
-        rows+=f'<tr><th style="text-align:left;padding-right:8px">{c}</th>{tds}</tr>'
+        rows+=f'<tr>{rung_header(c)}{tds}</tr>'
     CLABEL={"none":"no&nbsp;review<br><span style='color:#8b949e;font-weight:400'>(raw build)</span>",
             "rev_off":"review<br><span style='color:#8b949e;font-weight:400'>reasoning OFF</span>",
             "rev_on":"review<br><span style='color:#8b949e;font-weight:400'>reasoning ON</span>"}
@@ -77,10 +120,27 @@ def page():
     hdr="".join(f'<th>{ALABEL[sk]}<br>&nbsp;<br>{CLABEL[cd]}</th>' for sk,cd in COLS)
     sc="#1a7f37" if state=="RUNNING" else ("#0969da" if state=="COMPLETE" else "#cf222e")
     now=datetime.datetime.now(datetime.timezone.utc).strftime("%H:%M:%SZ")
-    return f'''<!doctype html><html><head><meta charset=utf-8><meta http-equiv=refresh content=20>
+    return f'''<!doctype html><html><head><meta charset=utf-8>
+<noscript><meta http-equiv=refresh content=20></noscript>
 <title>Ladder2 {state}</title><style>body{{font:13px system-ui,sans-serif;margin:18px;background:#0d1117;color:#c9d1d9}}
 table{{border-collapse:collapse}}td,th{{border:1px solid #30363d;padding:3px 5px}}th{{background:#161b22}}
-a{{color:#58a6ff}}sub{{font-size:.7em}}</style></head><body>
+a{{color:#58a6ff}}sub{{font-size:.7em}}
+/* Rung label: hover reveals the prompt that rung actually asks + its predicates. */
+th.rung{{text-align:left;padding-right:8px;position:relative;cursor:help}}
+th.rung .hint{{color:#6e7681;margin-left:4px;font-weight:400}}
+th.rung:hover .hint{{color:#58a6ff}}
+th.rung .card{{display:none;position:absolute;left:100%;top:0;z-index:50;width:520px;
+ max-height:60vh;overflow:auto;background:#161b22;border:1px solid #58a6ff;border-radius:6px;
+ padding:10px 12px;box-shadow:0 8px 24px #010409cc;white-space:normal;font-weight:400;text-align:left}}
+th.rung:hover .card{{display:block}}
+th.rung .ct{{color:#58a6ff;font-weight:700;margin-bottom:6px}}
+th.rung .cl{{color:#8b949e;font-size:.78em;letter-spacing:.08em;margin:8px 0 3px}}
+th.rung .cp{{margin:0;padding:8px;background:#0d1117;border:1px solid #30363d;border-radius:4px;
+ font:12px ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word;color:#c9d1d9}}
+th.rung .cq{{margin:0;padding-left:20px}}
+th.rung .cq li{{margin:3px 0;color:#c9d1d9}}
+/* Last rows would push the card off-screen; flip it upward. */
+tr:nth-last-child(-n+5) th.rung .card{{top:auto;bottom:0}}</style></head><body>
 <h2>Ladder 2 &nbsp;<span style="color:{sc}">{state}</span></h2>
 <p>cells done: <b>{done}/{total}</b> conditions &nbsp;|&nbsp; scored bundles (incl. determinism re-runs): <b>{scored}</b>
 &nbsp;|&nbsp; judged: <b>{sum(tally.values())}</b> (<span style="color:#1a7f37">P {tally.get("PASS",0)}</span> / <span style="color:#9a6700">~ {tally.get("PARTIAL",0)}</span> / <span style="color:#cf222e">F {tally.get("FAIL",0)}</span>) &nbsp;|&nbsp; <b style="color:#388bfd">awaiting judge: {awaiting}</b> &nbsp;|&nbsp; updated {now} (auto-refresh 20s)</p>
@@ -101,6 +161,14 @@ A faint grey <span style="color:#6e7681">&middot;</span> in an otherwise empty c
 </div>
 <table><tr><th></th>{hdr}</tr>{rows}</table>
 <h3>run.log</h3><pre style="background:#161b22;padding:8px;border-radius:6px;overflow:auto;max-height:280px">{logtail()}</pre>
+<script>
+/* Auto-refresh, but never yank a prompt card out from under you mid-read.
+   Replaces the old <meta refresh>, which reloaded unconditionally every 20s. */
+var over=false;
+document.addEventListener('mouseover',function(e){{if(e.target.closest&&e.target.closest('th.rung'))over=true;}});
+document.addEventListener('mouseout', function(e){{if(e.target.closest&&e.target.closest('th.rung'))over=false;}});
+setInterval(function(){{if(!over)location.reload();}},20000);
+</script>
 </body></html>'''
 class H(BaseHTTPRequestHandler):
     def do_GET(self):
