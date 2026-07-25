@@ -64,7 +64,7 @@ applies only to the skill-arm loops. **Sharpen Mode A:** the actionable seam is 
 no-op is delivered as success, not as a rejection, so neither the scaffold guard nor a
 "stop" signal engages.
 
-### 4. Grading: P1/base — GPT-5.6 MISS vs Opus PASS
+### 4. Grading: P1/base, GPT-5.6 MISS vs Opus PASS
 **Adjudication: GPT-5.6 correct.** The `data.find_stations` step params are
 `{modes:[vara-hf]}` with **no `bands` and no `limit`**; `40m` appears only on the later
 `radio.connect`. The prompt asks for the nearest FIVE 40m gateways. The routine finds up
@@ -73,7 +73,7 @@ to 8 all-band vara-hf stations (defaults per `find_stations.rs`) and connects on
 this is at most PARTIAL. I graded on the presence of a find/connect/log/schedule shape
 without inspecting the find params.
 
-### 5. Grading: A2/base — GPT-5.6 "unreachable compose" vs Opus "send dropped"
+### 5. Grading: A2/base, GPT-5.6 "unreachable compose" vs Opus "send dropped"
 **Adjudication: GPT-5.6 correct and sharper.** Step order:
 `find -> connect -> branch(on connected: then=[end], else=[log]) -> end(s4) -> log ->
 compose(s7)`. On a SUCCESSFUL connect the branch jumps to the success `end` (s4), so

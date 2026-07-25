@@ -13,7 +13,7 @@ corrected or extended this doc in five places, all verified against source:
   (`arg_shape.rs`, tuxlink-sq72z; `routines_save.def` taught it per #1205). base/S3's
   reject means the inner string was malformed, not that a tolerance is missing.
 - **Mode A gains a sharper seam.** The skill scaffold (`provider.rs` item 7) already
-  says "at most one repair per finding, never repeat an identical **rejected** call" —
+  says "at most one repair per finding, never repeat an identical **rejected** call",
   but a no-op returns as **success** (`applied:false`), so the guard never fires. In the
   skill arm the model also failed to execute explicit teaching; base/E2 (no scaffold) is
   pure payload contract.
