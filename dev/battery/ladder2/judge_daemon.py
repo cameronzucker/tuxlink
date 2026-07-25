@@ -4,12 +4,14 @@ scored-but-unjudged ladder2 bundles, grades each against its predicates, writes 
 verdict to judgments.jsonl, and pushes it to R2 so the dashboard updates. No main
 agent-loop involvement. Detached; survives the interactive session ending.
 """
-import json, os, subprocess, time, glob
+import fcntl, json, os, re, subprocess, time, glob
 HERE=os.path.dirname(os.path.abspath(__file__))
+LOCK=os.path.join(HERE,"judge_daemon.lock")   # single-instance guard
 LADDER=os.path.join(HERE,"ladder2")
 STORE=os.path.join(HERE,"ladder2-judgments.jsonl")
 CORPUS=os.path.join(HERE,"corpus.json")
 LOG=os.path.join(HERE,"judge_daemon.log")
+RAWDIR=os.path.join(HERE,"judge_failures")   # raw stdout/stderr of every failed judge
 R2="r2-poe"; R2DIR="~/tuxlink-eig6e-build/battery-results/ladder2"
 RUBRIC=("You are a rigorous Sonnet-5 predicate judge for a Tuxlink Routine-authoring battery. "
  "You are given ONE built routine as JSON: {id, cell, skill, cond, prompt (user ask), predicates (rubric), "
@@ -54,21 +56,86 @@ def pkg(bundle,cells):
         "saved_def":(ji.get("artifacts") or {}).get("def"),
         "final_text":(o.get("detail") or "")[:1200]}
 
+FENCE=re.compile(r"```[a-zA-Z0-9_-]*\n?|```")
+OVERALL={"PASS","PARTIAL","FAIL"}
+
+def extract_verdict(out):
+    """Pull the verdict object out of a model reply.
+
+    Tolerates: markdown fences, prose before/after, and multiple JSON objects in
+    one reply. Scans every balanced object from each '{' via raw_decode and picks
+    the first one that actually looks like a verdict, instead of assuming the
+    text between the first '{' and the last '}' is a single value -- that
+    assumption is what produced 'Extra data: line 1 column 19 (char 18)'.
+    """
+    s=FENCE.sub("",out).strip()
+    dec=json.JSONDecoder()
+    i=0; objs=[]
+    while True:
+        i=s.find("{",i)
+        if i<0: break
+        try: obj,end=dec.raw_decode(s,i)
+        except ValueError:
+            i+=1; continue
+        if isinstance(obj,dict): objs.append(obj)
+        i=end
+    # Prefer the COMPLETE verdict shape. A reply may open with a minimal
+    # {"overall":"PASS"} before the real, fuller verdict; taking the first
+    # 'overall' we see would silently record the wrong result.
+    for want in (lambda o: o.get("overall") in OVERALL and "per_predicate" in o,
+                 lambda o: o.get("overall") in OVERALL,
+                 lambda o: "per_predicate" in o):
+        for o in objs:
+            if want(o): return o
+    raise ValueError("no verdict object in reply")
+
+def dump_raw(bid,r,err):
+    """Persist the raw reply of a failed judge so the flake rate stays measurable.
+    Without this the retry loop repairs failures silently and leaves no evidence."""
+    try:
+        os.makedirs(RAWDIR,exist_ok=True)
+        p=os.path.join(RAWDIR,"%s.%d.txt"%(bid.replace("/","_"),int(time.time())))
+        with open(p,"w") as f:
+            f.write("bid=%s\nerror=%s\nreturncode=%s\n\n=== STDOUT ===\n%s\n\n=== STDERR ===\n%s\n"
+                    %(bid,err,getattr(r,"returncode",None),
+                      getattr(r,"stdout",""),getattr(r,"stderr","")))
+        return p
+    except Exception as e: return "raw-dump-failed:%s"%e
+
 def judge(one):
     prompt=RUBRIC+"\n\nROUTINE TO JUDGE:\n"+json.dumps(one)
+    # stdin=DEVNULL: without it `claude -p` waits 3s for stdin on every call.
     r=subprocess.run(["claude","-p",prompt,"--model","sonnet"],
-                     capture_output=True,text=True,timeout=300)
-    out=r.stdout.strip()
-    s=out.find("{"); e=out.rfind("}")
-    if s<0 or e<0: raise ValueError("no json: "+out[:200])
-    return json.loads(out[s:e+1])
+                     stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=300)
+    try:
+        v=extract_verdict(r.stdout or "")
+    except Exception as e:
+        raise ValueError("%s [raw: %s]"%(e,dump_raw(one["id"],r,e)))
+    if v.get("overall") not in OVERALL:
+        raise ValueError("bad overall %r [raw: %s]"%(v.get("overall"),dump_raw(one["id"],r,"bad overall")))
+    v["id"]=one["id"]   # never trust the model to echo the id back correctly
+    return v
 
 def complete():
     try: return "LADDER2 COMPLETE" in open(os.path.join(LADDER,"run.log")).read()
     except: return False
 
+def acquire_lock():
+    """Refuse to run a second instance. Two daemons share one append-only STORE
+    and both scp it to R2, so a duplicate double-judges bundles and races the
+    push. flock is released automatically if the process dies, so a hard kill or
+    a reboot never leaves a stale lock behind."""
+    f=open(LOCK,"w")
+    try: fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    except OSError:
+        log("another judge daemon holds the lock; exiting")
+        raise SystemExit(0)
+    f.write(str(os.getpid())); f.flush()
+    return f
+
 def main():
-    log("judge daemon start")
+    _lock=acquire_lock()   # held for the process lifetime; do not close
+    log(f"judge daemon start (pid {os.getpid()})")
     idle=0
     while True:
         rsync_down()
