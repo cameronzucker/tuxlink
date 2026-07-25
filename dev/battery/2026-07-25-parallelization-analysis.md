@@ -98,20 +98,62 @@ That unknown is the whole answer. 180 s counter delta at `LADDER2_CONC=3`:
 
 Decode doubled exactly as continuous batching predicts, because the scheduler
 holds `num_requests_running = 2`. But decode is ~0.4% of the token volume at
-240:1, so it barely moves the wall clock. **Prefill gained only 16%, which means
-prefill compute on the Spark is effectively saturated even at one in-flight
-request.** Two concurrent prefills each take roughly twice as long and aggregate
-throughput hardly moves. The idle instant sampled earlier was a real duty-cycle
-gap, but a small one in aggregate.
+240:1, so it barely moves the wall clock. Prefill gained only 16%.
 
-Net expected wall clock: roughly **12h instead of 14h**. Local parallelism is
-worth about 15% on this workload, not 3-4x.
+### Why the 16% does NOT prove saturation (corrected)
 
-The scheduler also caps concurrency independently of memory:
-`num_requests_waiting = 1` with `waiting_by_reason = capacity` while KV sits at
-2.3%. That is a vLLM serving-config limit on twin-bramble (`max_num_seqs` or the
-batched-token budget), not something tuxlink controls. Raising it would not help
-much anyway, since prefill compute is the actual wall.
+An earlier revision of this doc concluded prefill compute was saturated, citing
+`nvidia-smi` reporting 96% GPU utilization. **That conclusion was wrong and is
+retracted.** Operator correction: this box reads ~96% whenever it is serving any
+model at all. `utilization.gpu` is the fraction of time at least one kernel is
+resident, not the fraction of compute capacity consumed, so a memory-stalled or
+under-occupied kernel pins it high. It cannot distinguish saturation from idle
+capacity and is not evidence either way.
+
+The real constraint is a hand-set flag. The server on `inference`
+(tailnet alias; true hostname `gx10-65aa`) runs:
+
+```
+vllm serve nvidia/Qwen3.5-122B-A10B-NVFP4
+  --max-num-seqs 2          <-- vLLM's default is 256
+  --max-model-len 262144
+  --gpu-memory-utilization 0.90
+  --tensor-parallel-size 1
+```
+
+`--max-num-seqs 2` is what produces `waiting_by_reason = capacity` while KV sits
+at 2.3% and preemptions are 0. The scheduler refuses a third sequence because it
+was configured to, not because it lacks memory or compute.
+
+**So the 1.16x was measured under a cap of 2, and the scaling curve above 2 is
+untested.** With only two slots, each cell alternates prefill and decode, so two
+prefills overlap only part of the time; limited overlap opportunity is at least
+as good an explanation for the 16% as compute saturation. The honest position is
+that we do not yet know which.
+
+Net expected wall clock at the current cap: roughly **12h instead of 14h**.
+
+### The untested lever
+
+vLLM's own guidance is that `max_num_seqs x max_model_len` must fit the KV
+budget. At the configured 262144 that worst case is ~524k tokens for 2
+sequences. But this workload's real per-turn contexts are ~45-65k, not 256k, so
+8 sequences at ~50k each (~400k tokens) plausibly fits the same pool. KV at 2.3%
+with zero preemptions says there is substantial room.
+
+Next test: raise `--max-num-seqs` to ~8, leave `--max-model-len` alone, re-run
+the 180 s throughput delta, and watch `num_preemptions_total` (currently 0) as
+the canary. If preemptions climb, back off.
+
+Two vLLM instances behind a reverse proxy is NOT the way to get there on this
+box: 119 GB total with 113 GB already in use, and the 122B NVFP4 weights alone
+are ~61 GB, so a second copy does not fit. Raising the flag on the single
+instance achieves the same concurrency without duplicating weights.
+
+**Caveat before touching it:** changing the flag requires restarting vLLM, which
+kills in-flight ladder requests (the driver is idempotent, so units are redone)
+AND affects every other consumer of that shared endpoint. Not an agent-side
+decision.
 
 Queue time rose from 0.01 s to 0.25 s cumulative mean, and TTFT was essentially
 unchanged (14.32 -> 14.60 s cumulative). So width 3 is not inflating the 1800 s
@@ -213,13 +255,12 @@ The original recommendation was "try Option A first, reach for Option B only if
 its curve flattens early." The curve flattened immediately: 1.16x on the
 dimension that matters. Revised:
 
-1. **Option B is the answer for faster iteration, and the operator's original
-   instinct was right.** The reason is now concrete rather than speculative: the
-   workload is 240:1 prefill-dominated, and prefill is compute-saturated on a
-   single Spark. Concurrency on one box cannot fix that. On OpenRouter each
-   concurrent request lands on separate provider hardware, so prefill genuinely
-   parallelizes. That is where the 12-24x lives, and it is not reachable locally
-   at any width.
+1. **Test the `--max-num-seqs` lever before concluding anything about Option B.**
+   The 1.16x was measured against a hand-set cap of 2, so local scaling above 2
+   is simply unmeasured. Raising it to ~8 is a one-flag change and settles the
+   question. If prefill throughput scales, local stays viable and free; if it
+   flattens, that is real evidence for Option B rather than an inference from a
+   metric that could not support it.
 2. **Fix Blocker 1 (account-wide credits metering) in the same change.** It is
    dormant today only because builds run on the Spark; moving qwen to OpenRouter
    re-arms it at the same moment concurrency makes it read N times too high.
