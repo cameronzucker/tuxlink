@@ -101,12 +101,49 @@ def logtail(n=14):
     except: return "(no run.log)"
 VCOLOR={"PASS":"#1a7f37","PARTIAL":"#9a6700","FAIL":"#cf222e","":"#388bfd"}
 OCOLOR={"completed":"#1a7f37","needs_operator":"#9a6700","cancelled":"#cf222e","invalid_action":"#cf222e","run":"#0969da","":"#ccc"}
-def badge(outcome,det,verd):
+RERUN_BORDER="#a371f7"   # purple: this bundle is in the re-run scope
+PLAIN_BORDER="#30363d"
+OPERATOR_BG="#e3742f"    # orange background when the run needed an operator
+_rerun_cache={"mtime":None,"set":set()}
+def rerun_targets():
+    """{(arm, cell, cond)} pulled aside for a re-run, from _rerun_targets.txt.
+
+    Read from the run tree rather than hardcoded, so the purple scope outline is
+    always whatever was actually re-run. Absent file means no re-run in play and
+    nothing gets outlined."""
+    p=os.path.join(ROOT,"_rerun_targets.txt")
+    if not os.path.exists(p):
+        _rerun_cache.update({"mtime":None,"set":set()}); return _rerun_cache["set"]
+    try: m=os.path.getmtime(p)
+    except OSError: return _rerun_cache["set"]
+    if _rerun_cache["mtime"]!=m:
+        s=set()
+        for l in open(p):
+            q=l.split()
+            if len(q)==3: s.add(tuple(q))
+        _rerun_cache.update({"mtime":m,"set":s})
+    return _rerun_cache["set"]
+def badge(outcome,det,verd,rerun=False):
+    """One run. Colour carries four independent facts:
+
+    letter colour  = judge verdict
+    background     = judge verdict, OVERRIDDEN to orange when the run needed an
+                     operator (a truncation is not a verdict about the routine)
+    subscript      = raw harness outcome, which is what still distinguishes
+                     cancelled / invalid_action now that the border is spoken for
+    border         = purple when this bundle is in the re-run scope
+    """
     vc=VCOLOR.get(verd,"#388bfd"); oc=OCOLOR.get(outcome,"#888")
+    bg=(OPERATOR_BG if outcome=="needs_operator" else vc)+"33"
+    bd=RERUN_BORDER if rerun else PLAIN_BORDER
+    bw="2px" if rerun else "1px"
     vtxt={"PASS":"P","PARTIAL":"~","FAIL":"F","":"?"}[verd]
-    return f'<span title="{outcome} | det={det} | judge={verd or "unjudged"}" style="display:inline-block;min-width:2.4em;margin:1px;padding:1px 4px;border-radius:4px;border:1px solid {oc};background:{vc}22;color:{vc};font-weight:600">{vtxt}<sub style="color:{oc};font-weight:400">{det or "?"}</sub></span>'
+    tip=f'{outcome} | det={det} | judge={verd or "unjudged"}'+(" | RE-RUN" if rerun else "")
+    return (f'<span title="{tip}" style="display:inline-block;min-width:2.4em;margin:1px;'
+            f'padding:1px 4px;border-radius:4px;border:{bw} solid {bd};background:{bg};'
+            f'color:{vc};font-weight:600">{vtxt}<sub style="color:{oc};font-weight:400">{det or "?"}</sub></span>')
 def page():
-    V=verdicts(); state=driver_state()
+    V=verdicts(); state=driver_state(); RR=rerun_targets()
     scored_ids=set()
     for sc in glob.glob(os.path.join(ROOT,"*/*/*/*/score.json")):
         p=os.path.dirname(sc).split(os.sep); cond="none" if p[-2]=="build" else p[-2]
@@ -123,7 +160,8 @@ def page():
         for (sk,cd) in COLS:
             atts=attempts(sk,c,cd)
             if not atts: tds+='<td style="text-align:center;color:#21262d" title="not run yet">&middot;</td>'; continue
-            cell="".join(badge(*read_att(sk,c,cd,a,V)) for a in atts)
+            rr=(sk,c,cd) in RR
+            cell="".join(badge(*read_att(sk,c,cd,a,V),rerun=rr) for a in atts)
             tds+=f'<td style="text-align:center;white-space:nowrap">{cell}</td>'
         rows+=f'<tr>{rung_header(c)}{tds}</tr>'
     CLABEL={"none":"no&nbsp;review<br><span style='color:#8b949e;font-weight:400'>(raw build)</span>",
@@ -171,6 +209,8 @@ A faint grey <span style="color:#6e7681">&middot;</span> in an otherwise empty c
 <b>s</b> = saved but validation had an error &nbsp;
 <b>x</b> = nothing was saved &nbsp; <b>?</b> = still running / no data.<br>
 <b>Hover any badge</b> for the raw run outcome (completed / cancelled / needs_operator / invalid_action).<br>
+<b>Background</b> = the judge verdict, except <span style="background:#e3742f33;padding:0 4px;border-radius:3px">orange</span> which means the run <b>needed an operator</b> (it was truncated, so it is not a verdict about the routine).<br>
+<b><span style="color:#a371f7">Purple outline</span> = this bundle is in the re-run scope</b> — the conditions pulled aside and re-run under raised deadlines. Everything without a purple outline is from the original run.<br>
 <span style="color:#8b949e"><b>Columns</b> are builder-arm x review-condition. Within an arm, left-to-right is the experiment: raw build &rarr; after a Nemotron review+revise (reasoning off) &rarr; same with reasoning on. Compare the three to see whether the review helped, hurt, or did nothing.</span>
 </div>
 <table><tr><th></th>{hdr}</tr>{rows}</table>
