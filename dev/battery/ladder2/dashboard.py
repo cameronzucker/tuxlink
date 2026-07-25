@@ -135,23 +135,29 @@ def rerun_targets():
         _rerun_cache.update({"mtime":m,"set":s})
     return _rerun_cache["set"]
 def badge(outcome,det,verd,rerun=False):
-    """One run. Colour carries four independent facts:
+    """One run. Five independent facts, none of them displacing another:
 
-    letter colour  = judge verdict
-    background     = judge verdict, OVERRIDDEN to orange when the run needed an
-                     operator (a truncation is not a verdict about the routine)
-    subscript      = raw harness outcome, which is what still distinguishes
-                     cancelled / invalid_action now that the border is spoken for
-    border         = purple when this bundle is in the re-run scope
+    letter colour   judge verdict
+    background      judge verdict, OVERRIDDEN to orange when the run needed an
+                    operator (a truncation is not a verdict about the routine)
+    border          raw harness outcome (completed / needs_operator / cancelled
+                    / invalid_action / still running)
+    subscript       the deterministic harness check (sg / s / x)
+    OUTLINE ring    purple when this bundle is in the re-run scope
+
+    The re-run marker rides on `outline` rather than `border` specifically so the
+    border can keep carrying run state. `outline` sits outside the box and does
+    not participate in layout, so the ring costs no width; the margin is widened
+    on ringed badges only, to keep it from touching its neighbour.
     """
     vc=VCOLOR.get(verd,"#388bfd"); oc=OCOLOR.get(outcome,"#888")
     bg=(OPERATOR_BG if outcome=="needs_operator" else vc)+"33"
-    bd=RERUN_BORDER if rerun else PLAIN_BORDER
-    bw="2px" if rerun else "1px"
+    ring=(f'outline:2px solid {RERUN_BORDER};outline-offset:1px;' if rerun else "")
+    mar="4px 5px" if rerun else "1px"
     vtxt={"PASS":"P","PARTIAL":"~","FAIL":"F","":"?"}[verd]
     tip=f'{outcome} | det={det} | judge={verd or "unjudged"}'+(" | RE-RUN" if rerun else "")
-    return (f'<span title="{tip}" style="display:inline-block;min-width:2.4em;margin:1px;'
-            f'padding:1px 4px;border-radius:4px;border:{bw} solid {bd};background:{bg};'
+    return (f'<span title="{tip}" style="display:inline-block;min-width:2.4em;margin:{mar};'
+            f'padding:1px 4px;border-radius:4px;border:1px solid {oc};background:{bg};{ring}'
             f'color:{vc};font-weight:600">{vtxt}<sub style="color:{oc};font-weight:400">{det or "?"}</sub></span>')
 def page():
     V=verdicts(); state=driver_state(); RR=rerun_targets()
@@ -221,7 +227,8 @@ A faint grey <span style="color:#6e7681">&middot;</span> in an otherwise empty c
 <b>x</b> = nothing was saved &nbsp; <b>?</b> = still running / no data.<br>
 <b>Hover any badge</b> for the raw run outcome (completed / cancelled / needs_operator / invalid_action).<br>
 <b>Background</b> = the judge verdict, except <span style="background:#e3742f33;padding:0 4px;border-radius:3px">orange</span> which means the run <b>needed an operator</b> (it was truncated, so it is not a verdict about the routine).<br>
-<b><span style="color:#a371f7">Purple outline</span> = this bundle is in the re-run scope</b> — the conditions pulled aside and re-run under raised deadlines. Everything without a purple outline is from the original run.<br>
+<b>Badge border</b> = the raw harness outcome (green completed, amber needed-operator, red cancelled / invalid_action, blue still running).<br>
+<b><span style="color:#a371f7">Purple ring</span> = this bundle is in the re-run scope</b> &mdash; the conditions pulled aside and re-run under raised deadlines. The ring sits OUTSIDE the border, so a badge shows its run state and its re-run membership at the same time. Everything without a ring is from the original run.<br>
 <span style="color:#8b949e"><b>Columns</b> are builder-arm x review-condition. Within an arm, left-to-right is the experiment: raw build &rarr; after a Nemotron review+revise (reasoning off) &rarr; same with reasoning on. Compare the three to see whether the review helped, hurt, or did nothing.</span>
 </div>
 <table><tr><th></th>{hdr}</tr>{rows}</table>
