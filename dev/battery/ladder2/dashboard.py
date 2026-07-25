@@ -42,25 +42,30 @@ def driver_state():
 def logtail(n=14):
     try: return "".join(open(os.path.join(ROOT,"run.log")).readlines()[-n:])
     except: return "(no run.log)"
-VCOLOR={"PASS":"#1a7f37","PARTIAL":"#9a6700","FAIL":"#cf222e","":"#999"}
+VCOLOR={"PASS":"#1a7f37","PARTIAL":"#9a6700","FAIL":"#cf222e","":"#388bfd"}
 OCOLOR={"completed":"#1a7f37","needs_operator":"#9a6700","cancelled":"#cf222e","invalid_action":"#cf222e","run":"#0969da","":"#ccc"}
 def badge(outcome,det,verd):
-    vc=VCOLOR.get(verd,"#999"); oc=OCOLOR.get(outcome,"#888")
-    vtxt={"PASS":"P","PARTIAL":"~","FAIL":"F","":"·"}[verd]
+    vc=VCOLOR.get(verd,"#388bfd"); oc=OCOLOR.get(outcome,"#888")
+    vtxt={"PASS":"P","PARTIAL":"~","FAIL":"F","":"?"}[verd]
     return f'<span title="{outcome} | det={det} | judge={verd or "unjudged"}" style="display:inline-block;min-width:2.4em;margin:1px;padding:1px 4px;border-radius:4px;border:1px solid {oc};background:{vc}22;color:{vc};font-weight:600">{vtxt}<sub style="color:{oc};font-weight:400">{det or "?"}</sub></span>'
 def page():
     V=verdicts(); state=driver_state()
-    scored=len(glob.glob(os.path.join(ROOT,"*/*/*/*/score.json")))
+    scored_ids=set()
+    for sc in glob.glob(os.path.join(ROOT,"*/*/*/*/score.json")):
+        p=os.path.dirname(sc).split(os.sep); cond="none" if p[-2]=="build" else p[-2]
+        scored_ids.add(f"{p[-4]}/{p[-3]}/{cond}/{p[-1]}")
+    scored=len(scored_ids)
+    awaiting=len([i for i in scored_ids if i not in V])
     total=len(CELLS)*len(COLS)
     done=sum(1 for c in CELLS for (sk,cd) in COLS if any(os.path.exists(os.path.join(ROOT,sk,c,ph(cd),a,"score.json")) for a in attempts(sk,c,cd)))
     from collections import Counter
-    tally=Counter(v for v in V.values())
+    tally=Counter(V[i] for i in scored_ids if i in V)
     rows=""
     for c in CELLS:
         tds=""
         for (sk,cd) in COLS:
             atts=attempts(sk,c,cd)
-            if not atts: tds+='<td style="text-align:center;color:#ccc">·</td>'; continue
+            if not atts: tds+='<td style="text-align:center;color:#21262d" title="not run yet">&middot;</td>'; continue
             cell="".join(badge(*read_att(sk,c,cd,a,V)) for a in atts)
             tds+=f'<td style="text-align:center;white-space:nowrap">{cell}</td>'
         rows+=f'<tr><th style="text-align:left;padding-right:8px">{c}</th>{tds}</tr>'
@@ -78,14 +83,15 @@ table{{border-collapse:collapse}}td,th{{border:1px solid #30363d;padding:3px 5px
 a{{color:#58a6ff}}sub{{font-size:.7em}}</style></head><body>
 <h2>Ladder 2 &nbsp;<span style="color:{sc}">{state}</span></h2>
 <p>cells done: <b>{done}/{total}</b> conditions &nbsp;|&nbsp; scored bundles (incl. determinism re-runs): <b>{scored}</b>
-&nbsp;|&nbsp; judged: <b>{sum(tally.values())}</b> (<span style="color:#1a7f37">P {tally.get("PASS",0)}</span> / <span style="color:#9a6700">~ {tally.get("PARTIAL",0)}</span> / <span style="color:#cf222e">F {tally.get("FAIL",0)}</span>) &nbsp;|&nbsp; updated {now} (auto-refresh 20s)</p>
+&nbsp;|&nbsp; judged: <b>{sum(tally.values())}</b> (<span style="color:#1a7f37">P {tally.get("PASS",0)}</span> / <span style="color:#9a6700">~ {tally.get("PARTIAL",0)}</span> / <span style="color:#cf222e">F {tally.get("FAIL",0)}</span>) &nbsp;|&nbsp; <b style="color:#388bfd">awaiting judge: {awaiting}</b> &nbsp;|&nbsp; updated {now} (auto-refresh 20s)</p>
 <div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:10px 14px;margin:8px 0;max-width:900px">
 <b>How to read a cell.</b> Each badge is one run. Multiple badges = determinism re-runs of the same condition.<br>
 <b>Big letter = the Sonnet judge's verdict</b> (does the routine actually do what the prompt asked, judged against its predicates, not just "did it save"):
 &nbsp;<span style="color:#1a7f37;font-weight:700">P</span> = PASS (meets the requirements) &nbsp;
 <span style="color:#9a6700;font-weight:700">~</span> = PARTIAL (some requirements met, some dropped) &nbsp;
 <span style="color:#cf222e;font-weight:700">F</span> = FAIL (drops or breaks a requirement) &nbsp;
-<span style="color:#999;font-weight:700">·</span> = not yet judged.<br>
+<span style="color:#388bfd;font-weight:700">?</span> = ran &amp; scored, <b>awaiting judge</b>.<br>
+A faint grey <span style="color:#6e7681">&middot;</span> in an otherwise empty cell = <b>not run yet</b> (the run hasn't reached it). Most empty cells are this, not a judging backlog.<br>
 <b>Small subscript = the deterministic harness check</b> (mechanical, no judgment):
 &nbsp;<b>sg</b> = a routine was saved AND passed validation (no errors) &nbsp;
 <b>s</b> = saved but validation had an error &nbsp;
