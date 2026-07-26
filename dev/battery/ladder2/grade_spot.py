@@ -27,11 +27,23 @@ done = set()
 if os.path.exists(out_path):
     done = {json.loads(l)["id"] for l in open(out_path)}
 
-for cell in sorted(os.listdir(spot)):
-    d = os.path.join(spot, cell)
-    if not os.path.isdir(d) or not os.path.exists(os.path.join(d, "score.json")):
-        continue
-    bid = "spot37max/%s/none/attempt-1" % cell
+def bundles(root):
+    """Yield (cell, attempt_label, dir). Handles BOTH layouts: the flat
+    <cell>/ used by the first pass, and <cell>/attempt-N/ used by the
+    reliability pass."""
+    for cell in sorted(os.listdir(root)):
+        d = os.path.join(root, cell)
+        if not os.path.isdir(d):
+            continue
+        if os.path.exists(os.path.join(d, "score.json")):
+            yield cell, "attempt-1", d
+        for a in sorted(os.listdir(d)):
+            ad = os.path.join(d, a)
+            if a.startswith("attempt-") and os.path.isdir(ad) and os.path.exists(os.path.join(ad, "score.json")):
+                yield cell, a, ad
+
+for cell, att, d in bundles(spot):
+    bid = "spot37max/%s/none/%s" % (cell, att)
     if bid in done:
         print("skip (already judged):", bid); continue
     sc = json.load(open(os.path.join(d, "score.json")))

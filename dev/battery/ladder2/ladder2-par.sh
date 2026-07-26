@@ -39,6 +39,13 @@ TEMP=0.2
 CELLS="P1 P2 P3 S1 S2 S3 S4 A1 A2 C1 C2 C3 E1 E2 E3 EU1 EU2 EU3"
 SKILLS="base skill"
 REVCONDS="off on"
+# The skill arm may carry an extra review condition. `skill` uses the Codex-authored
+# review-skill.md as the reviewer's system prompt (reasoning OFF, since rev_off beat
+# rev_on 39% vs 28% pass in the clean skill arm). Set to "off on skill" to add it;
+# the driver skips conditions that already have a score.json, so adding it to a
+# populated tree runs ONLY the new column.
+REVCONDS_SKILL="${LADDER2_REVCONDS_SKILL:-off on}"
+SKILLFILE="$OUT/review-skill.md"
 MAXATT=3
 CONC="${LADDER2_CONC:-3}"
 TURNTO="${LADDER2_TURN_TIMEOUT_SECS:-600}"
@@ -109,7 +116,9 @@ do_cell(){
     done
   fi
   local def; def="$(built_def "$bdir/attempt-1")"
-  for cond in $REVCONDS; do
+  local conds="$REVCONDS"
+  [ "$skill" = "skill" ] && conds="$REVCONDS_SKILL"
+  for cond in $conds; do
     local rdir="$OUT/$skill/$cell/rev_$cond"
     for a in 1 2 3; do
       local adir="$rdir/attempt-$a" mdir="$rdir/meta-$a"
@@ -117,7 +126,16 @@ do_cell(){
       if [ "$a" -gt 1 ] && { [ ! -f "$rdir/attempt-1/score.json" ] || [ "$(det_fail "$rdir/attempt-1")" != "1" ]; }; then break; fi
       mkdir -p "$mdir"
       local cp_prompt="$mdir/user_prompt.txt"; cell_prompt "$cell" > "$cp_prompt"
+      # The builder's own account + the post-build routine inventory. Both were
+      # invisible to the reviewer before 2026-07-26, so it scored 0 on final_text
+      # dishonesty (17 bundles) and orphaned duplicates (22 bundles).
+      python3 -c 'import json,sys
+try: sys.stdout.write((json.load(open(sys.argv[1])).get("detail") or "").strip())
+except Exception: pass' "$bdir/attempt-1/outcome.json" > "$mdir/final_text.txt" 2>/dev/null
+      ls -1 "$bdir/attempt-1/routines" 2>/dev/null > "$mdir/inventory.txt"
+      REVIEW_SKILL_FILE="$([ "$cond" = "skill" ] && echo "$SKILLFILE")" \
       OPENROUTER_API_KEY="$ORKEY" python3 "$REVIEW" "$cp_prompt" "${def:-/nonexistent}" "$cond" "$CATALOG" \
+          "$mdir/final_text.txt" "$mdir/inventory.txt" \
           > "$mdir/critique.txt" 2> "$mdir/critique.meta"
       { cat "$cp_prompt"; echo; echo "---"; echo "A reviewer critiqued your routine. Address every point, then re-save:"; echo; cat "$mdir/critique.txt"; } > "$mdir/revise_prompt.txt"
       run_cell "$adir" "$skill" "$cell" "$disp" "${def:-}" "$mdir/revise_prompt.txt" && log "revise $skill/$cell/rev_$cond #$a"
@@ -127,7 +145,7 @@ do_cell(){
   log "CHAIN DONE $skill/$cell"
 }
 
-log "LADDER2-PAR START conc=$CONC turn_timeout=${TURNTO}s max_run=${TUXLINK_MAX_RUN_SECS:-1800(default)}s cells=[$CELLS] skills=[$SKILLS] revconds=[none $REVCONDS]"
+log "LADDER2-PAR START conc=$CONC turn_timeout=${TURNTO}s max_run=${TUXLINK_MAX_RUN_SECS:-1800(default)}s cells=[$CELLS] skills=[$SKILLS] revconds=[none $REVCONDS / skill-arm: $REVCONDS_SKILL]"
 idx=0
 running=0
 for skill in $SKILLS; do

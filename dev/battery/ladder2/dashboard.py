@@ -16,7 +16,10 @@ CORPUS_CANDIDATES=[
     os.path.join(os.path.dirname(os.path.abspath(__file__)),"corpus.json"),
 ]
 CELLS=["P1","P2","P3","S1","S2","S3","S4","A1","A2","C1","C2","C3","E1","E2","E3","EU1","EU2","EU3"]
-COLS=[("base","none"),("base","rev_off"),("base","rev_on"),("skill","none"),("skill","rev_off"),("skill","rev_on")]
+# The skill arm carries an extra review condition (Codex review-skill.md as the
+# reviewer's system prompt). Listed here or its bundles render nowhere.
+COLS=[("base","none"),("base","rev_off"),("base","rev_on"),
+      ("skill","none"),("skill","rev_off"),("skill","rev_on"),("skill","rev_skill")]
 def ph(cond): return "build" if cond=="none" else cond
 _corpus_cache={"path":None,"mtime":None,"cells":{}}
 def corpus():
@@ -183,7 +186,8 @@ def page():
         rows+=f'<tr>{rung_header(c)}{tds}</tr>'
     CLABEL={"none":"no&nbsp;review<br><span style='color:#8b949e;font-weight:400'>(raw build)</span>",
             "rev_off":"review<br><span style='color:#8b949e;font-weight:400'>reasoning OFF</span>",
-            "rev_on":"review<br><span style='color:#8b949e;font-weight:400'>reasoning ON</span>"}
+            "rev_on":"review<br><span style='color:#8b949e;font-weight:400'>reasoning ON</span>",
+            "rev_skill":"review<br><span style='color:#a371f7;font-weight:400'>SKILL prompt</span>"}
     ALABEL={"base":"base<br><span style='color:#8b949e;font-weight:400'>no scaffold</span>",
             "skill":"skill<br><span style='color:#8b949e;font-weight:400'>Build-Carefully</span>"}
     hdr="".join(f'<th>{ALABEL[sk]}<br>&nbsp;<br>{CLABEL[cd]}</th>' for sk,cd in COLS)

@@ -98,6 +98,38 @@ Never accept a vaguely related action as the requested capability. Examples:
 
 An honest limitation is preferable to a fabricated substitute.
 
+### Self-report honesty
+
+When the builder's own account of its work (`final_text`) is supplied, treat it as
+a reviewable artifact, not as context. Compare every factual claim in it against
+the saved definition.
+
+A statement in `final_text` that the definition does not support is a must-fix
+defect of the same severity as a missing requirement. It is worse than silence,
+because it removes the operator's reason to check. Report the claim verbatim, the
+definition fact that contradicts it, and the step ID where they diverge.
+
+Common shapes, all observed in production runs:
+
+- claiming a field or step was removed, added, or corrected while the definition
+  still shows the original;
+- describing a schedule, band order, or recipient the definition does not carry;
+- attributing an omission to a runtime or capability constraint that is not real,
+  when the catalog in fact supports the action;
+- narrating a revision that did not occur.
+
+Judge the definition first and the account second. Where they disagree, the
+definition is what will run, and the disagreement is itself the finding.
+
+### Orphaned duplicates
+
+When a routine inventory is supplied, check it. A revise is expected to REPLACE
+the routine it was given, not add beside it. Two routines where the request
+implies one, or a routine unrelated to the request, is a must-fix: both will fire
+independently. Name both routine names.
+
+Absent an inventory, do not speculate about orphans.
+
 ### 3. Check routine identity and edit preservation
 
 If the request edits an existing routine:
