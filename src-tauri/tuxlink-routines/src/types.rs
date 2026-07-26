@@ -226,9 +226,128 @@ fn default_on_interrupted() -> OnInterrupted {
     OnInterrupted::Stay
 }
 
+/// Does this object look like a STEP rather than a track? Steps carry an
+/// `action` or a `control` discriminant; tracks carry `name` + `steps`.
+fn looks_like_step(o: &serde_json::Map<String, serde_json::Value>) -> bool {
+    (o.contains_key("action") || o.contains_key("control")) && !o.contains_key("steps")
+}
+
+/// Does this object look like a TRACK rather than a step?
+fn looks_like_track(o: &serde_json::Map<String, serde_json::Value>) -> bool {
+    o.contains_key("steps") && !o.contains_key("action") && !o.contains_key("control")
+}
+
+/// Localise a parse failure to a JSON path, with domain-aware advice.
+///
+/// Runs ONLY after serde has already rejected the payload, so it costs nothing
+/// on the happy path and never changes what is accepted. Returns `None` when it
+/// cannot do better than serde, in which case serde's message stands.
+///
+/// The messages name the PATH, because the field name alone is not actionable:
+/// `tracks[]` and `tracks[].steps[]` are both arrays of objects, so putting a
+/// step in a track slot is a natural mistake whose serde error ("missing field
+/// `name`") points at a level the author never touched.
+pub(crate) fn structural_diagnosis(v: &serde_json::Value) -> Option<String> {
+    let root = match v.as_object() {
+        Some(o) => o,
+        None => return Some("the definition must be a JSON object".to_string()),
+    };
+
+    if !root.contains_key("routine") {
+        // The exact misdirection observed in the field: the author supplied
+        // `name`, serde asked for `name` (from a nested Track), and the author
+        // "fixed" the wrong level. Say which key this schema wants.
+        return Some(if root.contains_key("name") {
+            "top level: missing field `routine` — the routine's NAME belongs in \
+             `routine`, but you supplied it as `name`. Rename the top-level `name` \
+             key to `routine`"
+                .to_string()
+        } else {
+            "top level: missing field `routine` (the routine's NAME string)".to_string()
+        });
+    }
+
+    match root.get("tracks") {
+        None => return Some("top level: missing field `tracks` (a list of tracks)".to_string()),
+        Some(serde_json::Value::Array(tracks)) => {
+            for (i, t) in tracks.iter().enumerate() {
+                let o = match t.as_object() {
+                    Some(o) => o,
+                    None => return Some(format!("tracks[{i}] must be an object")),
+                };
+                if looks_like_step(o) {
+                    return Some(format!(
+                        "tracks[{i}] is a STEP, not a track — steps belong in \
+                         tracks[N].steps, not directly in tracks[]. Move this object \
+                         into the `steps` list of the track it belongs to"
+                    ));
+                }
+                if !o.contains_key("name") {
+                    return Some(format!("tracks[{i}]: missing field `name`"));
+                }
+                match o.get("steps") {
+                    None => return Some(format!("tracks[{i}]: missing field `steps`")),
+                    Some(serde_json::Value::Array(steps)) => {
+                        for (j, s) in steps.iter().enumerate() {
+                            let so = match s.as_object() {
+                                Some(so) => so,
+                                None => {
+                                    return Some(format!("tracks[{i}].steps[{j}] must be an object"))
+                                }
+                            };
+                            if looks_like_track(so) {
+                                return Some(format!(
+                                    "tracks[{i}].steps[{j}] is a TRACK, not a step — it has \
+                                     its own `steps` list. Tracks belong at the top level's \
+                                     `tracks`, not nested inside a track's steps"
+                                ));
+                            }
+                            if !so.contains_key("action") && !so.contains_key("control") {
+                                return Some(format!(
+                                    "tracks[{i}].steps[{j}]: a step needs either `action` \
+                                     (an action step) or `control` (branch / end / delay / \
+                                     retry / call)"
+                                ));
+                            }
+                            if !so.contains_key("id") {
+                                return Some(format!("tracks[{i}].steps[{j}]: missing field `id`"));
+                            }
+                        }
+                    }
+                    Some(_) => return Some(format!("tracks[{i}]: `steps` must be a list")),
+                }
+            }
+        }
+        Some(_) => return Some("top level: `tracks` must be a list of tracks".to_string()),
+    }
+
+    if let Some(t) = root.get("triggers") {
+        if !t.is_array() {
+            return Some(
+                "top level: `triggers` must be a LIST of trigger objects, e.g. \
+                 [{\"type\": \"manual\"}]"
+                    .to_string(),
+            );
+        }
+    }
+    None
+}
+
 impl RoutineDef {
     pub fn parse(json: &str) -> Result<Self, RoutineParseError> {
-        let def: RoutineDef = serde_json::from_str(json)?;
+        let def: RoutineDef = match serde_json::from_str(json) {
+            Ok(d) => d,
+            Err(e) => {
+                // serde named the field but not the path. Try to localise
+                // before surfacing a message the author cannot act on.
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(json) {
+                    if let Some(msg) = structural_diagnosis(&v) {
+                        return Err(RoutineParseError::Structural(msg));
+                    }
+                }
+                return Err(RoutineParseError::Json(e));
+            }
+        };
         if def.schema_version != SUPPORTED_SCHEMA_VERSION {
             return Err(RoutineParseError::UnsupportedSchemaVersion(
                 def.schema_version,
@@ -364,6 +483,99 @@ mod tests {
             err,
             RoutineParseError::UnsupportedSchemaVersion(99)
         ));
+    }
+
+    // --- structural_diagnosis: localise the fault (tuxlink-mrp4u) ----------
+
+    /// The exact shape from base/S3/build/attempt-1: a STEP object sitting in
+    /// the `tracks` array. serde reports "missing field `name`" (it is trying
+    /// to read the step as a Track) with a byte offset, naming a level the
+    /// author never touched. 24 saves, 23 of them byte-identical, zero output.
+    #[test]
+    fn a_step_object_in_the_tracks_array_is_named_by_path() {
+        let json = r#"{
+          "routine": "nws-weather-check", "schema_version": 1,
+          "transmit_mode": "attended", "triggers": [{"type":"manual"}],
+          "tracks": [
+            {"name":"track-1","steps":[{"action":"local.log","id":"s1","params":{}}]},
+            {"action":"data.find_stations","id":"s2","params":{}}
+          ]
+        }"#;
+        let err = RoutineDef::parse(json).unwrap_err();
+        let m = err.to_string();
+        assert!(m.contains("tracks[1]"), "must name the path: {m}");
+        assert!(m.contains("STEP"), "must say what the object actually is: {m}");
+        assert!(
+            !m.contains("missing field `name`"),
+            "must NOT surface serde's field-only message: {m}"
+        );
+    }
+
+    /// The regression the old message CAUSED: the author read "missing field
+    /// `name`" and renamed its correct top-level `routine` key to `name`. The
+    /// diagnosis must name that specific swap, not just the missing field.
+    #[test]
+    fn a_top_level_name_instead_of_routine_is_called_out_by_name() {
+        let json = r#"{
+          "name": "nws-weather-check", "schema_version": 1,
+          "transmit_mode": "attended", "triggers": [{"type":"manual"}],
+          "tracks": [{"name":"t1","steps":[{"action":"local.log","id":"s1","params":{}}]}]
+        }"#;
+        let err = RoutineDef::parse(json).unwrap_err();
+        let m = err.to_string();
+        assert!(m.contains("top level"), "must name the level: {m}");
+        assert!(m.contains("`routine`"), "must name the key this schema wants: {m}");
+        assert!(
+            m.contains("`name`"),
+            "must name the key the author actually supplied: {m}"
+        );
+    }
+
+    #[test]
+    fn a_track_nested_in_a_steps_list_is_named_by_path() {
+        let json = r#"{
+          "routine": "r", "schema_version": 1, "transmit_mode": "attended",
+          "triggers": [{"type":"manual"}],
+          "tracks": [{"name":"t1","steps":[{"name":"inner","steps":[]}]}]
+        }"#;
+        let m = RoutineDef::parse(json).unwrap_err().to_string();
+        assert!(m.contains("tracks[0].steps[0]"), "{m}");
+        assert!(m.contains("TRACK"), "{m}");
+    }
+
+    #[test]
+    fn a_step_with_neither_action_nor_control_is_named_by_path() {
+        let json = r#"{
+          "routine": "r", "schema_version": 1, "transmit_mode": "attended",
+          "triggers": [{"type":"manual"}],
+          "tracks": [{"name":"t1","steps":[{"id":"s1","params":{}}]}]
+        }"#;
+        let m = RoutineDef::parse(json).unwrap_err().to_string();
+        assert!(m.contains("tracks[0].steps[0]"), "{m}");
+        assert!(m.contains("action") && m.contains("control"), "{m}");
+    }
+
+    #[test]
+    fn a_valid_definition_still_parses_and_the_precheck_never_runs() {
+        // The pre-check only runs after serde has already rejected a payload,
+        // so it can never change what is accepted.
+        let def = RoutineDef::parse(SPEC_EXAMPLE).expect("spec example must parse");
+        assert_eq!(def.routine, "morning-ics-cycle");
+        assert!(structural_diagnosis(&serde_json::from_str(SPEC_EXAMPLE).unwrap()).is_none());
+    }
+
+    #[test]
+    fn an_unlocalisable_failure_still_falls_back_to_serdes_message() {
+        // Bad enum variant deep in a trigger: the pre-check has no better
+        // answer, so serde's message must survive rather than be swallowed.
+        let json = r#"{
+          "routine": "r", "schema_version": 1, "transmit_mode": "attended",
+          "triggers": [{"type":"cron","expr":"* * * * *"}],
+          "tracks": [{"name":"t1","steps":[{"action":"local.log","id":"s1","params":{}}]}]
+        }"#;
+        let err = RoutineDef::parse(json).unwrap_err();
+        assert!(matches!(err, RoutineParseError::Json(_)), "{err}");
+        assert!(err.to_string().contains("cron"), "{err}");
     }
 
     #[test]

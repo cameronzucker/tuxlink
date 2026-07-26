@@ -5,6 +5,18 @@
 pub enum RoutineParseError {
     #[error("routine JSON is malformed: {0}")]
     Json(#[from] serde_json::Error),
+    /// A parse failure we could localise to a JSON path before falling back to
+    /// serde's field-only message. Same user-visible prefix as [`Self::Json`]
+    /// so consumers matching on it are unaffected.
+    ///
+    /// serde reports the missing FIELD but not WHERE: a step object placed in
+    /// `tracks[]` deserialises as a `Track`, so the error reads
+    /// "missing field `name`" with a byte offset that is meaningless for the
+    /// single-line JSON an agent sends. Observed 2026-07-26: a builder read
+    /// that, renamed its correct top-level `routine` key to `name`, and
+    /// resent the identical payload 23 times.
+    #[error("routine JSON is malformed: {0}")]
+    Structural(String),
     #[error("unsupported schema_version {0} (this build supports 1)")]
     UnsupportedSchemaVersion(u32),
 }
