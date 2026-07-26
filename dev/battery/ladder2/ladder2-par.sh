@@ -51,10 +51,23 @@ CONC="${LADDER2_CONC:-3}"
 TURNTO="${LADDER2_TURN_TIMEOUT_SECS:-600}"
 
 mkdir -p "$OUT"
+# Per-run, unlike the append-only run.log/manifest: a stale list from a previous
+# run would make this run look failed (or mask which units failed).
+rm -f "$OUT/_failed_units.txt"
 # Small appends (<PIPE_BUF) with >> are atomic on Linux, so concurrent workers
 # can share these logs without interleaving a line.
 log(){ echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >> "$LOG"; }
 man(){ echo "$1" >> "$MAN"; }
+
+# A unit that produced no score.json FAILED. Record it loudly and durably:
+# do_cell / the serial loop log per-unit success but nothing on failure, and the
+# parallel driver logs "CHAIN DONE" whether or not its units succeeded — so a
+# silently-empty run reads as a completed one. 2026-07-26: eight cells collided
+# on Xvfb displays, produced nothing, and the log showed only CHAIN DONE for
+# each; the loss was invisible for twenty minutes. A file, not a variable,
+# because parallel units run in subshells.
+FAILURES="$OUT/_failed_units.txt"
+fail_unit(){ log "UNIT FAILED $1"; echo "$1" >> "$FAILURES"; }
 lat(){ echo "$1" >> "$LAT"; }
 
 cell_prompt(){ python3 -c '
@@ -63,8 +76,30 @@ raw=json.load(open(sys.argv[1]))
 cells={c["id"]:c for c in (raw if isinstance(raw,list) else (raw.get("cells") or raw.get("prompts") or []))}
 sys.stdout.write(cells[sys.argv[2]]["prompt"])' "$CORPUS" "$1"; }
 
-built_def(){ ls "$1"/routines/*.json 2>/dev/null | head -1; }
+# The routines/ dir also holds the ENABLED sidecar (enabled.json), which is NOT a
+# routine definition. `head -1` is alphabetical, so the sidecar wins whenever the
+# routine name sorts after "e" — the revise phase is then preseeded with a non-def
+# and elmer_battery exits with "has no string `routine` field", losing the bundle
+# while the chain still logs success. Pick the first file that actually carries a
+# string `routine` field. (2026-07-26: base/P1 lost its whole revise arm this way;
+# the reviewer also got the non-def and produced a 140-byte critique vs ~7000.)
+built_def(){ python3 -c '
+import glob, json, os, sys
+for f in sorted(glob.glob(os.path.join(sys.argv[1], "routines", "*.json"))):
+    try:
+        d = json.load(open(f))
+    except Exception:
+        continue
+    if isinstance(d, dict) and isinstance(d.get("routine"), str):
+        print(f); break
+' "$1" 2>/dev/null; }
 
+# EXCEPT when the scorer already ruled the cell n/a: elmer_score sets
+# deterministic.verdict="n/a" for a corpus entry carrying no_routine_expected
+# (EU3, pure troubleshooting), where saving no routine is the CORRECT outcome, so
+# routine_saved/validates_green are both false by design. Reading only those two
+# flags made EU3 fail every attempt and burn the full re-run budget on every run
+# — 12 build bundles against 4 for a healthy cell.
 det_fail(){ python3 -c '
 import json,sys,os
 b=sys.argv[1]
@@ -72,8 +107,11 @@ try:
     s=json.load(open(os.path.join(b,"score.json")))
     o=json.load(open(os.path.join(b,"outcome.json")))
     d=s.get("deterministic") or {}
-    fail=(o.get("outcome")!="completed") or (not d.get("routine_saved")) or (not d.get("validates_green"))
-    print(1 if fail else 0)
+    if d.get("verdict") == "n/a":
+        print(0)
+    else:
+        fail=(o.get("outcome")!="completed") or (not d.get("routine_saved")) or (not d.get("validates_green"))
+        print(1 if fail else 0)
 except Exception:
     print(1)' "$1"; }
 
@@ -99,7 +137,8 @@ run_cell(){
   # timeout inflation (the 1800s max_response_duration is WALL-CLOCK) are
   # measurable rather than inferred.
   lat "{\"unit\":\"$out\",\"skill\":\"$skill\",\"cell\":\"$cell\",\"conc\":$CONC,\"secs\":$((t1-t0)),\"outcome\":\"$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["outcome"])' "$out/outcome.json" 2>/dev/null || echo unknown)\"}"
-  [ -f "$out/score.json" ]
+  if [ -f "$out/score.json" ]; then return 0; fi
+  fail_unit "$out"; return 1
 }
 
 # One full (skill, cell) chain: shared build (+determinism re-runs), then each
@@ -142,7 +181,13 @@ except Exception: pass' "$bdir/attempt-1/outcome.json" > "$mdir/final_text.txt" 
       man "{\"phase\":\"revise\",\"skill\":\"$skill\",\"cell\":\"$cell\",\"cond\":\"$cond\",\"attempt\":$a,\"det_fail\":$(det_fail "$adir")}"
     done
   done
-  log "CHAIN DONE $skill/$cell"
+  # Say which happened. "CHAIN DONE" beside eight empty cells is how the
+  # 2026-07-26 Xvfb collision stayed invisible for twenty minutes.
+  if grep -q "^$OUT/$skill/$cell/" "$FAILURES" 2>/dev/null; then
+    log "CHAIN INCOMPLETE $skill/$cell — $(grep -c "^$OUT/$skill/$cell/" "$FAILURES") unit(s) failed"
+  else
+    log "CHAIN DONE $skill/$cell"
+  fi
 }
 
 log "LADDER2-PAR START conc=$CONC turn_timeout=${TURNTO}s max_run=${TUXLINK_MAX_RUN_SECS:-1800(default)}s cells=[$CELLS] skills=[$SKILLS] revconds=[none $REVCONDS / skill-arm: $REVCONDS_SKILL]"
@@ -160,3 +205,11 @@ done
 done
 wait
 log "LADDER2-PAR COMPLETE"
+
+# Exit non-zero if ANY unit failed, so a caller (or a human skimming the exit
+# status) cannot mistake a partially-empty run for a complete one.
+if [ -s "$FAILURES" ]; then
+  log "RUN INCOMPLETE — $(wc -l < "$FAILURES") unit(s) failed; see $FAILURES"
+  exit 1
+fi
+

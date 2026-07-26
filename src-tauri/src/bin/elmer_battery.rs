@@ -971,6 +971,18 @@ fn env_keyring(key: String) -> ElmerKeyring {
 fn outcome_fields(outcome: &RunOutcome) -> (&'static str, String) {
     match outcome {
         RunOutcome::Completed(text) => ("completed", text.clone()),
+        // A wall-clock deadline is CENSORED data, not a verdict about the model.
+        // Folding it into `needs_operator` made it unreadable in both directions:
+        // scored as a capability failure, while its near-zero tool-call count
+        // simultaneously read as an ideal low-churn run. 2026-07-25: 50 of 220
+        // bundles were misread this way and drove a whole round of failure
+        // analysis before it was caught. The predicate lives beside the two
+        // constructors in tuxlink-agent-runner so this cannot drift.
+        RunOutcome::NeedsOperator(reason)
+            if tuxlink_agent_runner::is_deadline_reason(reason) =>
+        {
+            ("truncated", reason.clone())
+        }
         RunOutcome::NeedsOperator(reason) => ("needs_operator", reason.clone()),
         RunOutcome::InvalidAction(detail) => ("invalid_action", detail.clone()),
         RunOutcome::Cancelled => ("cancelled", String::new()),

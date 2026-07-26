@@ -21,6 +21,29 @@ use crate::types::{
 };
 use crate::validate;
 
+/// Reason prefixes for the two COR-1 wall-clock deadlines. Both surface as
+/// [`RunOutcome::NeedsOperator`], which is correct for a live operator — the run
+/// really did stop and needs a human. But an OFFLINE consumer (the battery
+/// harness, a scorer, a judge) must tell a deadline apart from a genuine
+/// operator gate or a capability failure: a truncated run is CENSORED data, not
+/// a verdict.
+///
+/// Exposed as constants with [`is_deadline_reason`] so consumers test the
+/// reason through one shared predicate instead of hand-copying the literal into
+/// a distant file, where it would rot silently the first time this wording
+/// changes. 2026-07-25: 50 of 220 battery bundles were misread as capability
+/// failures because a deadline was indistinguishable from a verdict.
+pub const RUN_BUDGET_REASON: &str = "Elmer's response exceeded";
+/// See [`RUN_BUDGET_REASON`].
+pub const TURN_TIMEOUT_REASON: &str = "model turn exceeded";
+
+/// Did this [`RunOutcome::NeedsOperator`] reason come from a wall-clock deadline
+/// rather than a genuine operator gate? Offline consumers should treat `true` as
+/// censored data: neither pass nor fail, excluded from rate denominators.
+pub fn is_deadline_reason(reason: &str) -> bool {
+    reason.starts_with(RUN_BUDGET_REASON) || reason.starts_with(TURN_TIMEOUT_REASON)
+}
+
 /// The operator-facing terminal message when a TAINT denial's one narration turn
 /// is spent on more tool calls instead of an answer (pf6re). Truthful: a tainted
 /// session only unlocks via a quarantine re-arm, which discards the conversation.
@@ -149,7 +172,7 @@ pub async fn run_with_conversation_with_transcript(
         // timeout. Replaces the former fixed tool-turn count cap.
         if start.elapsed() >= limits.max_response_duration {
             return RunOutcome::NeedsOperator(format!(
-                "Elmer's response exceeded the {}s budget",
+                "{RUN_BUDGET_REASON} the {}s budget",
                 limits.max_response_duration.as_secs()
             ));
         }
@@ -178,7 +201,7 @@ pub async fn run_with_conversation_with_transcript(
             ) => match timed {
                 Err(_elapsed) => {
                     return RunOutcome::NeedsOperator(format!(
-                        "model turn exceeded the {}s per-turn timeout",
+                        "{TURN_TIMEOUT_REASON} the {}s per-turn timeout",
                         limits.per_turn_timeout.as_secs()
                     ));
                 }
