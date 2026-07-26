@@ -4179,7 +4179,19 @@ fn finding_remedy(code: &'static str) -> &'static str {
         AUTO_WRITE_UNACKED,
     };
     use tuxlink_routines::validate::refs::UNKNOWN_ACTION;
+    use tuxlink_routines::validate::structure::{ARM_FALLTHROUGH_LEAK, NO_TERMINAL_PATH};
     match code {
+        // tuxlink-lnctz: the validator names WHICH step falls off; this names
+        // the call that places the End there. Ladder-2 base/S4/rev_off spent 14
+        // adds / 13 removes / 11 updates never finding it, because the only
+        // anchored instruction it had pointed mid-track. One placed add ends it.
+        NO_TERMINAL_PATH | ARM_FALLTHROUGH_LEAK => {
+            " Add the End with routines_step_add, setting after_step_id to the step named \
+             above — placement is an argument, so this needs no remove/re-add cycle. An \
+             existing End is repositioned with routines_step_move rather than removed and \
+             recreated. Both of these findings are WARNINGS: neither blocks save or enable, \
+             and the disposition's blocked_by field names what actually does."
+        }
         UNKNOWN_ACTION => {
             " Call routines_actions_list for each action's params, consent flags, and the \
              trigger JSON shapes."
@@ -5507,6 +5519,26 @@ mod tests {
                 untouched.message, "two routines collide",
                 "codes without a remedy pass through verbatim"
             );
+        }
+
+        /// tuxlink-lnctz: the two codes that livelocked Ladder-2 must name the
+        /// placing call. The validator names WHICH step; this names the HOW,
+        /// and says neither finding blocks — the loop ran because the model
+        /// read a persisting warning as a failed edit and reverted it.
+        #[test]
+        fn the_terminal_and_leak_codes_name_the_placing_call_and_disclaim_blocking() {
+            for code in [
+                tuxlink_routines::validate::structure::NO_TERMINAL_PATH,
+                tuxlink_routines::validate::structure::ARM_FALLTHROUGH_LEAK,
+            ] {
+                let m = map_finding(Finding::warning(code, "r".to_string(), "x".to_string())).message;
+                assert!(m.contains("after_step_id"), "{code} must name the placement arg: {m}");
+                assert!(
+                    m.contains("routines_step_move"),
+                    "{code} must point at the move verb instead of remove/re-add: {m}"
+                );
+                assert!(m.contains("WARNINGS"), "{code} must disclaim blocking: {m}");
+            }
         }
 
         /// A save REJECTION (the agent's own bad payload) gains the catalog

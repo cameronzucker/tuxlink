@@ -1628,6 +1628,33 @@ pub struct AuthoringDispositionDto {
     pub state: DispositionState,
     pub agent_terminal: bool,
     pub remedies: Vec<RemedyDto>,
+    /// The finding codes that actually produced a non-`Valid` state, deduped
+    /// in first-seen order. Empty exactly when `state` is `Valid`.
+    ///
+    /// tuxlink-lnctz: severity is already per-finding, but a model reading a
+    /// seven-finding array plus a bare `blocked` flag has to cross-reference
+    /// them to learn WHICH one blocks — and in Ladder-2 `base/S4/rev_off` it
+    /// did not. That routine was held non-`Valid` for all 39 mutating calls
+    /// by one `UNRESOLVED_REF` on an unconfigurable preset, while the model
+    /// rewrote control flow it had no reason to touch. Naming the blocker
+    /// costs nothing and fabricates no remedy.
+    pub blocked_by: Vec<String>,
+    /// Warning codes present that do NOT block, deduped in first-seen order.
+    ///
+    /// Withholding a remedy from a warning was meant to signal "acceptable,
+    /// stop" (see [`Self::classify`]). Ladder-2 shows silence does not read
+    /// that way: models fill it with a repair loop invented from the message
+    /// prose. Listing the warnings as acceptable states it positively, which
+    /// silence never did, without offering an edit to apply.
+    pub acceptable_warnings: Vec<String>,
+}
+
+/// Dedupe finding codes preserving first-seen order — a routine commonly
+/// carries the same code on several steps (four `NO_RIG_CONFIGURED` in the
+/// S4 trace) and repeating it adds noise, not information.
+fn dedup_codes(codes: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    codes.into_iter().filter(|c| seen.insert(c.clone())).collect()
 }
 
 impl AuthoringDispositionDto {
@@ -1640,10 +1667,27 @@ impl AuthoringDispositionDto {
             .iter()
             .filter(|f| f.severity == FindingSeverityDto::Error)
             .collect();
+        let acceptable_warnings = dedup_codes(
+            findings
+                .iter()
+                .filter(|f| f.severity == FindingSeverityDto::Warning)
+                .map(|f| f.code.clone()),
+        );
+        let blocked_by = dedup_codes(blocking.iter().map(|f| f.code.clone()));
         if blocking.is_empty() {
             // Warnings (e.g. ATTENDED_UNDER_SCHEDULE) are an ACCEPTABLE terminal
-            // state, never a remedy to apply — this is what stops the ping-pong.
-            return Self { state: DispositionState::Valid, agent_terminal: false, remedies: vec![] };
+            // state, never a remedy to apply. Withholding the remedy was meant
+            // to stop the ping-pong on its own; tuxlink-lnctz shows it does not
+            // (Ladder-2 ran a 34-turn warning-driven loop with no remedy ever
+            // offered), so `acceptable_warnings` now says so positively instead
+            // of leaving the model to infer it from an empty array.
+            return Self {
+                state: DispositionState::Valid,
+                agent_terminal: false,
+                remedies: vec![],
+                blocked_by,
+                acceptable_warnings,
+            };
         }
         // The routine's OWN automatic-unattended transmit/write: only the operator
         // can acknowledge unattended TX (never an agent op), so the agent stops.
@@ -1659,6 +1703,8 @@ impl AuthoringDispositionDto {
                     RemedyDto::operator_acknowledge(routine),
                     RemedyDto::set_attended(routine, revision),
                 ],
+                blocked_by,
+                acceptable_warnings,
             };
         }
         // A callee the runtime child-start gate would refuse: the honest agent
@@ -1670,11 +1716,20 @@ impl AuthoringDispositionDto {
                 state: DispositionState::InvalidAgentRepairable,
                 agent_terminal: false,
                 remedies: vec![RemedyDto::set_attended(&callee, "")],
+                blocked_by,
+                acceptable_warnings,
             };
         }
         // Any other blocking finding with no known agent-only edit: an honest
-        // stop, no fabricated remedy.
-        Self { state: DispositionState::SavedNeedsOperator, agent_terminal: true, remedies: vec![] }
+        // stop, no fabricated remedy. `blocked_by` still names what is holding
+        // it, which is the difference between an honest stop and an opaque one.
+        Self {
+            state: DispositionState::SavedNeedsOperator,
+            agent_terminal: true,
+            remedies: vec![],
+            blocked_by,
+            acceptable_warnings,
+        }
     }
 }
 
@@ -2163,12 +2218,25 @@ mod authoring_disposition_tests {
         }
     }
 
+    fn warn(code: &str, msg: &str) -> FindingDto {
+        FindingDto {
+            code: code.into(),
+            severity: FindingSeverityDto::Warning,
+            routine: "r".into(),
+            track: None,
+            step: None,
+            message: msg.into(),
+        }
+    }
+
     #[test]
     fn authoring_disposition_dto_serializes_stably() {
         let d = AuthoringDispositionDto {
             state: DispositionState::SavedNeedsOperator,
             agent_terminal: true,
             remedies: vec![RemedyDto::set_attended("r", "abc123")],
+            blocked_by: vec!["UNRESOLVED_REF".into()],
+            acceptable_warnings: vec!["NO_TERMINAL_PATH".into()],
         };
         let j = serde_json::to_value(&d).unwrap();
         assert_eq!(j["state"], "saved-needs-operator");
@@ -2176,6 +2244,57 @@ mod authoring_disposition_tests {
         assert_eq!(j["remedies"][0]["tool"], "routines_meta_set");
         assert_eq!(j["remedies"][0]["expected_revision"], "abc123");
         assert_eq!(j["remedies"][0]["actor"], "agent");
+        assert_eq!(j["blocked_by"][0], "UNRESOLVED_REF");
+        assert_eq!(j["acceptable_warnings"][0], "NO_TERMINAL_PATH");
+    }
+
+    // --- tuxlink-lnctz: blocked_by / acceptable_warnings -------------------
+
+    #[test]
+    fn blocked_by_names_only_the_error_findings_and_dedupes() {
+        // The Ladder-2 base/S4/rev_off finding set: one blocking
+        // UNRESOLVED_REF among six warnings, several repeated. The model
+        // rewrote control flow for 39 calls without ever addressing the one
+        // finding that actually held the routine.
+        let d = AuthoringDispositionDto::classify(
+            &[
+                warn("NO_RIG_CONFIGURED", "s2"),
+                warn("NO_RIG_CONFIGURED", "s3"),
+                warn("NO_TERMINAL_PATH", "…"),
+                err("UNRESOLVED_REF", "step \"s2\" references @preset:40m-digital"),
+                warn("ARM_FALLTHROUGH_LEAK", "…"),
+            ],
+            "r",
+            "rev1",
+        );
+        assert_eq!(d.blocked_by, vec!["UNRESOLVED_REF".to_string()]);
+        assert_eq!(
+            d.acceptable_warnings,
+            vec![
+                "NO_RIG_CONFIGURED".to_string(),
+                "NO_TERMINAL_PATH".to_string(),
+                "ARM_FALLTHROUGH_LEAK".to_string(),
+            ],
+            "deduped, first-seen order, warnings only"
+        );
+        assert_eq!(d.state, DispositionState::SavedNeedsOperator);
+        assert!(d.remedies.is_empty(), "still no fabricated remedy");
+    }
+
+    #[test]
+    fn a_valid_routine_reports_no_blocker_and_names_its_acceptable_warnings() {
+        let d = AuthoringDispositionDto::classify(&[warn("ATTENDED_UNDER_SCHEDULE", "…")], "r", "rev1");
+        assert_eq!(d.state, DispositionState::Valid);
+        assert!(d.blocked_by.is_empty(), "Valid means nothing blocks");
+        assert_eq!(d.acceptable_warnings, vec!["ATTENDED_UNDER_SCHEDULE".to_string()]);
+        assert!(d.remedies.is_empty(), "acceptable warnings still get no remedy");
+    }
+
+    #[test]
+    fn a_clean_routine_reports_both_lists_empty() {
+        let d = AuthoringDispositionDto::classify(&[], "r", "rev1");
+        assert!(d.blocked_by.is_empty());
+        assert!(d.acceptable_warnings.is_empty());
     }
 
     #[test]
