@@ -1,4 +1,4 @@
-# Session handoff — condor-basalt-hemlock (2026-07-25 into 2026-07-26)
+# Session handoff, condor-basalt-hemlock (2026-07-25 into 2026-07-26)
 
 Long session. Picked up an autonomous Ladder-2 run mid-flight with no handoff,
 ran it to completion, found and repaired a self-inflicted contamination, analysed
@@ -14,7 +14,7 @@ that are STILL EXECUTING as this is written.
 | Sonnet judge daemon | Pi, pid 1598465 | grading continuously |
 
 The rev_skill orchestrator fires automatically when the follow-up completes and
-the judge drains. **Do not start Spark work until both are done** — that box is
+the judge drains. **Do not start Spark work until both are done**, that box is
 compute-bound and a second workload just splits throughput.
 
 Watch: `http://r2-poe.twin-bramble.ts.net:8899/` (purple rings = re-run scope).
@@ -22,13 +22,13 @@ Watch: `http://r2-poe.twin-bramble.ts.net:8899/` (purple rings = re-run scope).
 ## Durable artifacts
 
 - [`dev/battery/2026-07-25-ladder2-results-and-failure-analysis.md`](../battery/2026-07-25-ladder2-results-and-failure-analysis.md)
-  — results, validity caveats, failure taxonomy. **Read its validity section
+  : results, validity caveats, failure taxonomy. **Read its validity section
   before quoting any number.**
 - [`dev/battery/ladder2-run-2026-07-25/`](../battery/ladder2-run-2026-07-25/)
-  — 1.4 MB of committed raw results (judgments, outcomes, tool-call errors,
+  : 1.4 MB of committed raw results (judgments, outcomes, tool-call errors,
   saved defs) with a README. The source tree is gitignored and lives only on R2.
 - [`dev/battery/2026-07-25-parallelization-analysis.md`](../battery/2026-07-25-parallelization-analysis.md)
-  — throughput + the measured cost model.
+  : throughput plus the measured cost model.
 
 ## What was done
 
@@ -68,30 +68,30 @@ byte-identical, so `rev_off`/`rev_on` stay comparable across runs.
 
 Recorded because each was a wrong confident claim caught by evidence:
 
-1. "prefill is compute-saturated" — retracted; `nvidia-smi` utilization is not
+1. "prefill is compute-saturated": retracted, `nvidia-smi` utilization is not
    evidence, the cap was a hand-set flag.
-2. "26 cases of qwen ignoring feedback" — the real number is 3; my regex matched
+2. "26 cases of qwen ignoring feedback": the real number is 3, my regex matched
    "schedule" in unrelated judge text.
-3. "there is no incremental way to set a trigger" — **wrong**.
+3. "there is no incremental way to set a trigger": **wrong**.
    `routines_trigger_set` exists, is exposed, and is 30/30 reliable. I inferred
    its absence from `routines_meta_set`'s error message and never checked the
    tool registry. Nothing needs fixing on that path.
-4. "36% revise harm" — only orphan/duplicate survives rate-normalisation (13.2x
+4. "36% revise harm": only orphan/duplicate survives rate-normalisation (13.2x
    the build rate); branch polarity and unreachable steps are build-origin.
 
 ## Open work
 
-- **tuxlink-lnctz (P2, NEW)** — step-editing churn: 38 of 41 calls cycling
+- **tuxlink-lnctz (P2, NEW)**: step-editing churn: 38 of 41 calls cycling
   add/repoint/remove on one `control:end` step. This is the real mechanism behind
   the schedule failures. The issue lists what to characterise BEFORE proposing a
   fix; do not skip that, this exact question already produced one wrong diagnosis.
-- **Untagged-enum error message** — highest-value codebase fix. With deadlines
+- **Untagged-enum error message**: highest-value codebase fix. With deadlines
   raised, E1 loops 35-36 identical `routines_save` retries against a diagnostic
   naming neither step nor field, burning whole 40-turn bundles.
-- **tuxlink-l264r** — the per-cell cost ceiling meters ACCOUNT-WIDE credits;
+- **tuxlink-l264r**: the per-cell cost ceiling meters ACCOUNT-WIDE credits;
   unusable for any parallel OpenRouter run.
-- **tuxlink-0dj6d** — Ladder-3 reviewer-skill column; partly executing now.
-- **`rev_on` swap decision** — deliberately deferred. The evidence it is
+- **tuxlink-0dj6d**: Ladder-3 reviewer-skill column; partly executing now.
+- **`rev_on` swap decision**: deliberately deferred. The evidence it is
   dominated rests on the 45 single-observation conditions the follow-up is
   firming up. Decide with real rates.
 
@@ -106,6 +106,6 @@ Recorded because each was a wrong confident claim caught by evidence:
 - Spark vLLM container `vllm-q122` has `restart=no` and will NOT come back after
   a power loss. It survived one outage this session only because I restarted it.
   A 502 on the tailnet name means the model is still loading, not a broken proxy.
-- OpenRouter: **$151 of $200 used.** ~$41 of today's spend is NOT the ladder —
+- OpenRouter: **$151 of $200 used.** ~$41 of today's spend is NOT the ladder;
   the ladder's entire OpenRouter footprint is $0.53 (Nemotron only; the builder
   is local). Something else shares that key. Worth identifying.
