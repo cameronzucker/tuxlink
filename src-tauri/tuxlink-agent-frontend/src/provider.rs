@@ -1183,13 +1183,20 @@ mod prompt_carveout_tests {
             "routines_step_update",
             "not a quoted string",
             "never re-send the whole definition",
-            // adrev round 3: the template's sample step must be REPLACED (a
-            // literal append-only bootstrap would leave it in the routine),
-            // and triggers are set only when asked (an unconditional "set
-            // the schedule" step biased small models toward unrequested
-            // periodic triggers on a transmit-capable system).
-            "SAMPLE local.log",
-            "ONLY when the operator asked",
+            // adrev round 3 pinned "SAMPLE local.log" + "ONLY when the
+            // operator asked". Both revised by the lnctz study
+            // (tuxlink-6i8jz): the template's first step had drifted (it is
+            // a find-and-connect flow, not a local.log), and the
+            // only-when-asked trigger rule was the direct cause of the
+            // recurrence-dropped failure class — models shipped manual
+            // triggers for "daily" prompts while reciting the correct
+            // schedule JSON, because "daily" is not the word "schedule".
+            // The prompt now maps ANY stated recurrence to a schedule
+            // trigger and teaches step_remove (steps cannot change kind).
+            "SAMPLE find-and-connect flow",
+            "routines_step_remove",
+            "states any recurrence",
+            "BEFORE the radio.connect",
         ] {
             assert!(
                 ELMER_SYSTEM_PROMPT.contains(needle),
