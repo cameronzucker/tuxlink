@@ -172,10 +172,25 @@ do_cell(){
 try: sys.stdout.write((json.load(open(sys.argv[1])).get("detail") or "").strip())
 except Exception: pass' "$bdir/attempt-1/outcome.json" > "$mdir/final_text.txt" 2>/dev/null
       ls -1 "$bdir/attempt-1/routines" 2>/dev/null > "$mdir/inventory.txt"
-      REVIEW_SKILL_FILE="$([ "$cond" = "skill" ] && echo "$SKILLFILE")" \
-      OPENROUTER_API_KEY="$ORKEY" python3 "$REVIEW" "$cp_prompt" "${def:-/nonexistent}" "$cond" "$CATALOG" \
-          "$mdir/final_text.txt" "$mdir/inventory.txt" \
-          > "$mdir/critique.txt" 2> "$mdir/critique.meta"
+      if [ ! -s "$mdir/inventory.txt" ] && [ -z "${def:-}" ]; then
+        # Give-up laundering guard (tuxlink-hwo1b, lnctz base/C1): with no
+        # saved routine there is nothing to critique, and the reviewer —
+        # handed only the builder's final_text — parrots the give-up prose
+        # back verbatim (meta-N/critique.txt was byte-identical to
+        # final_text.txt), re-injecting the excuse as authoritative reviewer
+        # input. Substitute a fixed authoring redirect instead; every
+        # skill-arm C1 revise that received an author-and-save critique
+        # recovered.
+        printf '%s\n' \
+          "No routine was saved. The deliverable is a SAVED routine: call routines_actions_list, translate the request into steps, save with routines_save, and check with routines_validate. If a capability the request needs has no routine action in the catalog, save the closest achievable routine and name the missing action in your final summary." \
+          > "$mdir/critique.txt"
+        : > "$mdir/critique.meta"
+      else
+        REVIEW_SKILL_FILE="$([ "$cond" = "skill" ] && echo "$SKILLFILE")" \
+        OPENROUTER_API_KEY="$ORKEY" python3 "$REVIEW" "$cp_prompt" "${def:-/nonexistent}" "$cond" "$CATALOG" \
+            "$mdir/final_text.txt" "$mdir/inventory.txt" \
+            > "$mdir/critique.txt" 2> "$mdir/critique.meta"
+      fi
       { cat "$cp_prompt"; echo; echo "---"; echo "A reviewer critiqued your routine. Address every point, then re-save:"; echo; cat "$mdir/critique.txt"; } > "$mdir/revise_prompt.txt"
       run_cell "$adir" "$skill" "$cell" "$disp" "${def:-}" "$mdir/revise_prompt.txt" && log "revise $skill/$cell/rev_$cond #$a"
       man "{\"phase\":\"revise\",\"skill\":\"$skill\",\"cell\":\"$cell\",\"cond\":\"$cond\",\"attempt\":$a,\"det_fail\":$(det_fail "$adir")}"

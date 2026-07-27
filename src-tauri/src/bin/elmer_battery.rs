@@ -98,10 +98,20 @@ const RESULT_PREVIEW_CHARS: usize = 4000;
 /// against `tuxlink-mcp-core/src/router.rs` (there is no `routines_step_delete`
 /// — the real verb is `routines_step_remove`). The full routines authoring-verb
 /// family is allowed (move/track/meta included: denying a legitimate authoring
-/// edit would corrupt the battery's dialect signal); run/enable/disable,
-/// export, and every radio/egress/compose/write tool are excluded. A model
-/// reaching for an excluded tool is itself battery data — the denial is
-/// recorded, never silently dropped.
+/// edit would corrupt the battery's dialect signal); export and every
+/// egress/compose-send/config-write tool are excluded. A model reaching for an
+/// excluded tool is itself battery data — the denial is recorded, never
+/// silently dropped.
+///
+/// Read-only station status and propagation tools are ALLOWED as of the lnctz
+/// study (tuxlink-hwo1b, 2026-07-27): 33 of 108 bundles (31%) burned 5-7-call
+/// denial cascades hunting for station grounding (server_info -> vara_status ->
+/// config_get_* -> rig_status ...) while the rubric penalises designs that do
+/// not fit the station — E2/E3 demand K-index and propagation judgment and the
+/// battery denied solar_conditions and predict_path, the exact tools for that
+/// judgment. Denying reads biased the measurement; a design session that can
+/// see the station is also what real Elmer use looks like. All additions are
+/// read-only: none transmits, none writes config.
 const ALLOWED_TOOLS: &[&str] = &[
     "position_status",
     "find_stations",
@@ -137,11 +147,47 @@ const ALLOWED_TOOLS: &[&str] = &[
     // allowed dry run half-useful. Both are read-only.
     "routines_journal_get",
     "routines_run_status",
+    // Read-only station status / config / propagation grounding (lnctz,
+    // tuxlink-hwo1b): every name below was reached for by a model under test
+    // and denied; all are read-only in router.rs. Egress and config-write
+    // stay excluded (message_send, grib_send_request, catalog_send_inquiry,
+    // vara_b2f_exchange, config_set_*).
+    "server_info",
+    "rig_status",
+    "vara_status",
+    "vara_engine_available",
+    "modem_get_status",
+    "config_read",
+    "config_get_rig",
+    "config_get_vara",
+    "config_get_ardop",
+    "solar_conditions",
+    "predict_path",
+    "wwv_offair_available",
+    "p2p_peer_password_status",
+    "get_wizard_completed",
 ];
 
 /// Teaching refusal returned for a call outside the allowlist. Names the
 /// boundary honestly (harness policy, not a station fault) so the model can
 /// route back to authoring instead of retrying.
+///
+/// Rewritten after the lnctz C1 study (tuxlink-hwo1b): the prior wording
+/// ("This session is for DESIGNING routines only ... Do not run, enable,
+/// export, transmit") caused a GOAL-mapping failure, not a capability-mapping
+/// one. Models correctly learned "I cannot call these tools" and then
+/// concluded the request itself was unfulfillable now: they explained what
+/// the user could do "once you're in the appropriate mode" (modelling the
+/// restriction as temporary), offered "create a routine?" as a menu option
+/// instead of doing it, or punted to the operator for confirmation. All nine
+/// C1 give-ups trace to that text — directly, or laundered back in through a
+/// recycled critique. The rewrite states the equivalence (authoring IS
+/// fulfilling the request), names the concrete next call, distinguishes
+/// session-time capability from routine-run-time capability (the C1
+/// conflation: "this session cannot transmit" != "the routine cannot contain
+/// transmit steps"), kills the temporary-mode theory, and invites the honest
+/// naming of a missing catalog action (honest_stop was false in all nine C1
+/// bundles; nothing in the environment ever invited it).
 ///
 /// Returned as [`ToolOutcome::InvalidArgs`], NOT [`ToolOutcome::Denied`]
 /// (tuxlink-zvy6q): the allowlist is a REDIRECT ("author instead"), not a
@@ -153,11 +199,18 @@ const ALLOWED_TOOLS: &[&str] = &[
 /// (tuxlink-77620). `InvalidArgs` is fed back non-terminally via the loop's
 /// `push_outcome` path and does NOT consume the COR-3 malformed-retry budget,
 /// so the model sees the teaching and continues authoring.
-const DENY_TEACHING: &str = "This tool is outside the battery harness's authoring surface. \
-     This session is for DESIGNING routines only: use the routines_* authoring \
-     verbs plus position_status / find_stations / docs_search / docs_read / \
-     catalog_list. Do not run, enable, export, transmit, or change station \
-     config — author and validate the routine instead.";
+const DENY_TEACHING: &str = "This tool is not available in this session, and no \
+     other mode is coming. The session's ONLY deliverable is a SAVED routine: \
+     translate the user's request into a routine now. Call routines_actions_list \
+     to see every action a routine can run, build with routines_save / \
+     routines_step_add, and check with routines_validate. Authoring the routine \
+     IS fulfilling the request — a routine's steps may connect, transmit, and \
+     write config when the routine later runs under the operator's consent, even \
+     though you cannot do those things directly here. Do not ask the user to \
+     pick options, do not defer the work to a later session, and do not stop to \
+     explain what you cannot do. If a capability the request needs has no \
+     routine action in the catalog, save the closest achievable routine and \
+     name the missing action explicitly in your final summary.";
 
 /// The outcome an off-allowlist call gets. `InvalidArgs`, deliberately, so
 /// the runner feeds [`DENY_TEACHING`] back non-terminally (tuxlink-zvy6q);
@@ -1923,9 +1976,35 @@ mod tests {
             "mailbox_list",
             "message_read",
             "session_log_snapshot",
-            "server_info",
         ] {
             assert!(!tool_allowed(tool), "{tool} must be denied");
+        }
+    }
+
+    /// tuxlink-hwo1b: read-only station grounding joined the allowlist after
+    /// the lnctz study — 31% of bundles burned denial cascades hunting for
+    /// station state the rubric then graded them for not using. All of these
+    /// are read-only in router.rs; egress and config writes stay denied (see
+    /// `allowlist_denies_run_and_all_egress`).
+    #[test]
+    fn allowlist_admits_readonly_station_grounding() {
+        for tool in [
+            "server_info",
+            "rig_status",
+            "vara_status",
+            "vara_engine_available",
+            "modem_get_status",
+            "config_read",
+            "config_get_rig",
+            "config_get_vara",
+            "config_get_ardop",
+            "solar_conditions",
+            "predict_path",
+            "wwv_offair_available",
+            "p2p_peer_password_status",
+            "get_wizard_completed",
+        ] {
+            assert!(tool_allowed(tool), "{tool} must be allowed (read-only grounding)");
         }
     }
 
@@ -1939,7 +2018,11 @@ mod tests {
     fn allowlist_denial_is_nonterminal_invalidargs() {
         match allowlist_denial_outcome() {
             ToolOutcome::InvalidArgs(msg) => {
-                assert!(msg.contains("authoring surface"), "carries the teaching");
+                assert!(msg.contains("SAVED routine"), "carries the teaching");
+                assert!(
+                    msg.contains("routines_actions_list"),
+                    "names the concrete next call (lnctz: the pivot every successful bundle made first)"
+                );
             }
             other => panic!("allowlist denial must be non-terminal InvalidArgs, got {other:?}"),
         }
