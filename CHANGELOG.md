@@ -31,6 +31,50 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.101.0](https://github.com/cameronzucker/tuxlink/compare/v0.100.0...v0.101.0) (2026-07-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* **battery:** battery runs on this harness are a new comparability baseline; allowlist-era runs (lnctz, surface1) are not comparable and were ruled invalid (operator, 2026-07-27: a non-production tool environment is junk science — the asterisk gets lost).
+
+### Features
+
+* **battery:** --preseed-def + --prompt-override-file for the Ladder-2 revise phase ([d9f68ab](https://github.com/cameronzucker/tuxlink/commit/d9f68abb3b49d0027df84e7ab503152a6461c383))
+* **battery:** autonomous Sonnet-5 judge daemon (plan-based, no agent-loop dispatch) ([b46d6e8](https://github.com/cameronzucker/tuxlink/commit/b46d6e8326b71228fb429a3e251b9115a6fa58d8))
+* **battery:** badge shows run state AND re-run scope at once, via an outline ring ([f79e498](https://github.com/cameronzucker/tuxlink/commit/f79e498208d41154532f38eb90e6e2f374115d4a))
+* **battery:** every rung runs 3x unconditionally — flakiness-test successes too ([9fbb3cf](https://github.com/cameronzucker/tuxlink/commit/9fbb3cfca36e818ae47f86d756db01cbe92f26c3))
+* **battery:** follow-up pass for judge-failed-but-green conditions, plus the 3.7-max spot harness ([d8ca04e](https://github.com/cameronzucker/tuxlink/commit/d8ca04eee972a299655508526d2dca08b1a94fe0))
+* **battery:** give the reviewer the two artifacts it was structurally blind to, and chain the rev_skill column ([5055e65](https://github.com/cameronzucker/tuxlink/commit/5055e65f16133c624c80948fb93820a3c9321ec7))
+* **battery:** GPT-5.6-authored adversarial review skill (findings-grounded) ([97d2313](https://github.com/cameronzucker/tuxlink/commit/97d2313c16dd1ffa0374fb8adf7f2dabfdba3632))
+* **battery:** hover a rung label to see its prompt and grading predicates ([82629b3](https://github.com/cameronzucker/tuxlink/commit/82629b3c8d643133079dce7476b3acea28b3e388))
+* **battery:** ladder dashboard shows bundle target, pace, and run ETA ([dd10791](https://github.com/cameronzucker/tuxlink/commit/dd10791ff0ae4dcdcdeb9115b030d3916d1dc840))
+* **battery:** Ladder-2 driver + Nemotron reviewer + runbook (tuxlink-kz4rg) ([7b6cc60](https://github.com/cameronzucker/tuxlink/commit/7b6cc60674509540a7c3687e2066769b67e599b8))
+* **battery:** ladder2 dashboard distinguishes "not run yet" from "awaiting judge" ([07b9e3f](https://github.com/cameronzucker/tuxlink/commit/07b9e3f4d70a36751762f07847386a2daafc6bb3))
+* **battery:** ladder2 tailnet progress dashboard (read-only) ([b455b03](https://github.com/cameronzucker/tuxlink/commit/b455b03ce7bb1038484a7e467f9795dcbc5adbb5))
+* **battery:** parallel ladder driver at configurable width, with dashboard + judge kept in sync ([9b74018](https://github.com/cameronzucker/tuxlink/commit/9b740186fd167c4f6329831df6f52176547dfebc))
+* **battery:** purple outline marks re-run scope; orange background marks truncation ([33040dd](https://github.com/cameronzucker/tuxlink/commit/33040ddb10589fb650f8f628ada53f626865a8c1))
+* **battery:** verbose dashboard legend + plain-English column headers ([017abda](https://github.com/cameronzucker/tuxlink/commit/017abdad8f67626756bf23b0f88aaf32d5b7692f))
+
+
+### Bug Fixes
+
+* **battery:** dashboard verdicts join on content fingerprint, not path alone ([262003a](https://github.com/cameronzucker/tuxlink/commit/262003ae40fd8cb793bf25d0c6096467e96e4804))
+* **battery:** default response budget 600s -&gt; 3600s — 1800s censored the enriched surface ([446dbce](https://github.com/cameronzucker/tuxlink/commit/446dbce89a7606b643e26bd2879145b3d469e614))
+* **battery:** key judge verdicts on bundle CONTENT, not path ([cd2eb00](https://github.com/cameronzucker/tuxlink/commit/cd2eb005d71b473a3afb8086e54b1d421e3c1741))
+* **battery:** ladder2 revise inputs to a sibling meta dir (run_cell rm -rf wiped them) ([ea616ee](https://github.com/cameronzucker/tuxlink/commit/ea616eed821dc630ee1879dd59462b0671535eac))
+* **battery:** make the ladder re-runnable — deadline flags, and three re-run defects ([a7cf373](https://github.com/cameronzucker/tuxlink/commit/a7cf37343e6e251e21291671ff6ef9fdc9ca5bfe))
+* **battery:** make the ladder2 Sonnet judge parse-robust, single-instance, and self-diagnosing ([a64ba80](https://github.com/cameronzucker/tuxlink/commit/a64ba803fb48d22262059fb9ac5162cf7cee7492))
+* **battery:** parity harness — remove tool allowlist and DENY_TEACHING; full production surface, observation-only wrapper ([c8e1419](https://github.com/cameronzucker/tuxlink/commit/c8e141900b381aa86e66c6f6bdf658f5b2b85c82))
+* **battery:** stop rendering ledger.json and meta-* dirs as phantom runs ([dd9cfb0](https://github.com/cameronzucker/tuxlink/commit/dd9cfb099bde7ac98c5c92992743ef184ed9d939))
+* **battery:** stop the harness silently losing and misreading bundles ([fdf77ad](https://github.com/cameronzucker/tuxlink/commit/fdf77adc3b11712c83f0d85ed3bd4ecd9e33726e))
+* **battery:** stop the harness teaching failure — deny-text goal mapping, critique laundering, judge blindness, read-only grounding ([d1ae8ce](https://github.com/cameronzucker/tuxlink/commit/d1ae8ce3868c3e81531fcc3700d7dd807f5291e4))
+* **battery:** use ToolCall::new in parity contract test — struct grew provider_meta ([1046f01](https://github.com/cameronzucker/tuxlink/commit/1046f01c2454b74419ec541757cdde6129707746))
+* **elmer:** honor TUXLINK_MAX_RUN_SECS as the COR-1 response budget — it was read by nothing ([6df25e4](https://github.com/cameronzucker/tuxlink/commit/6df25e4e71e9d2385c8dc4d64056fbe11e54415b))
+* **routines:** break the NO_TERMINAL_PATH / ARM_FALLTHROUGH_LEAK validator livelock ([ed61caf](https://github.com/cameronzucker/tuxlink/commit/ed61caff6245222baa87e1e390ecedbcb050fe26))
+* **routines:** localise routines_save parse failures to a JSON path ([745d10b](https://github.com/cameronzucker/tuxlink/commit/745d10baf4c6ad9275ba12d54330c5f8cf40de55))
+* **routines:** make correct authoring the path of least resistance — anchoring traps, five advisories, catalog narrowing ([1e11ed2](https://github.com/cameronzucker/tuxlink/commit/1e11ed24e7aab6c2d2569e31070d1b82ba1afed9))
+
 ## [0.100.0](https://github.com/cameronzucker/tuxlink/compare/v0.99.0...v0.100.0) (2026-07-24)
 
 
