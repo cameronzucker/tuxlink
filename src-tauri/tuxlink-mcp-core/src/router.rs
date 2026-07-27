@@ -1346,15 +1346,61 @@ impl TuxlinkMcp {
                        isolation and a mistake costs one small call, never the whole document. \
                        Call this BEFORE writing a routine — action names are a closed set; \
                        invented names (e.g. \"modem.vara.connect\") fail validation with \
-                       UNKNOWN_ACTION. Read-only."
+                       UNKNOWN_ACTION. Optional narrowing: pass action (one action's full \
+                       record) or section (\"actions\" / \"controls\" / \"trigger_kinds\" / \
+                       \"definition_template\") to re-read just the contract you are about \
+                       to use instead of the whole catalog. Read-only."
     )]
-    pub async fn routines_actions_list(&self) -> Result<CallToolResult, ErrorData> {
+    pub async fn routines_actions_list(
+        &self,
+        params: Parameters<ActionsListParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let Parameters(ActionsListParams { action, section }) = params;
         let dto = self
             .state
             .routines
             .actions_catalog()
             .await
             .map_err(port_err)?;
+
+        // tuxlink-6i8jz: the full catalog is a ~22k-char monolith; a small
+        // model re-fetching the ONE contract it is about to use keeps the
+        // load-bearing sentence in fresh context instead of relying on
+        // mid-blob recall from many turns ago.
+        if let Some(name) = action {
+            if let Some(rec) = dto.actions.iter().find(|a| a.name == name) {
+                return Ok(CallToolResult::success(vec![ContentBlock::json(rec)?]));
+            }
+            let mut names: Vec<&str> = dto.actions.iter().map(|a| a.name.as_str()).collect();
+            names.sort_unstable();
+            return Err(ErrorData::invalid_request(
+                format!(
+                    "no action named \"{name}\". Valid actions: {}",
+                    names.join(", ")
+                ),
+                None,
+            ));
+        }
+        if let Some(sec) = section {
+            let body = match sec.as_str() {
+                "actions" => serde_json::json!({ "actions": dto.actions }),
+                "controls" => serde_json::json!({ "controls": dto.controls }),
+                "trigger_kinds" => serde_json::json!({ "trigger_kinds": dto.trigger_kinds }),
+                "definition_template" => {
+                    serde_json::json!({ "definition_template": dto.definition_template })
+                }
+                other => {
+                    return Err(ErrorData::invalid_request(
+                        format!(
+                            "unknown section \"{other}\". Valid sections: actions, controls, \
+                             trigger_kinds, definition_template"
+                        ),
+                        None,
+                    ))
+                }
+            };
+            return Ok(CallToolResult::success(vec![ContentBlock::json(body)?]));
+        }
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
     }
 
@@ -1805,6 +1851,21 @@ pub struct BandParams {
 pub struct RoutineGetParams {
     /// The routine's name, exactly as `routines_list` reports it.
     pub name: String,
+}
+
+/// Optional narrowing for `routines_actions_list` (tuxlink-6i8jz). Both
+/// fields absent returns the full catalog, exactly as before.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ActionsListParams {
+    /// Return ONLY this action's full record (exact name, e.g.
+    /// "radio.connect"). An unknown name errors and enumerates the valid
+    /// set. Takes precedence over `section`.
+    #[serde(default)]
+    pub action: Option<String>,
+    /// Return ONLY this section of the catalog: "actions", "controls",
+    /// "trigger_kinds", or "definition_template".
+    #[serde(default)]
+    pub section: Option<String>,
 }
 
 /// `{ "name": "..." }` — input for `routines_validate`.
@@ -3240,7 +3301,13 @@ mod tests {
     async fn routines_actions_list_round_trips_catalog_and_does_not_taint() {
         let h = handler();
         assert!(!h.state.guard.is_tainted());
-        let result = h.routines_actions_list().await.unwrap();
+        let result = h
+            .routines_actions_list(Parameters(ActionsListParams {
+                action: None,
+                section: None,
+            }))
+            .await
+            .unwrap();
         let json: serde_json::Value = json_of(&result);
         // Mock lists local.log (the template's step action — closed-set
         // consistent, Codex rt4ey P2) then radio.connect; assert on the latter.
@@ -3279,6 +3346,65 @@ mod tests {
         assert!(
             !h.state.guard.is_tainted(),
             "routines_actions_list is app-owned structural metadata and must NOT taint"
+        );
+    }
+
+    /// tuxlink-6i8jz: the catalog narrows to one action record or one
+    /// section, and unknown names error with the valid set enumerated
+    /// (never a silent empty result a small model would misread as "no
+    /// actions exist").
+    #[tokio::test]
+    async fn routines_actions_list_narrows_by_action_and_section() {
+        let h = handler();
+
+        let one = h
+            .routines_actions_list(Parameters(ActionsListParams {
+                action: Some("radio.connect".into()),
+                section: None,
+            }))
+            .await
+            .unwrap();
+        let json: serde_json::Value = json_of(&one);
+        assert_eq!(json["name"], "radio.connect", "one full record: {json}");
+
+        let err = h
+            .routines_actions_list(Parameters(ActionsListParams {
+                action: Some("modem.vara.connect".into()),
+                section: None,
+            }))
+            .await
+            .unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("radio.connect"),
+            "unknown action enumerates the valid set: {msg}"
+        );
+
+        let sec = h
+            .routines_actions_list(Parameters(ActionsListParams {
+                action: None,
+                section: Some("trigger_kinds".into()),
+            }))
+            .await
+            .unwrap();
+        let json: serde_json::Value = json_of(&sec);
+        assert!(json["trigger_kinds"].is_array(), "{json}");
+        assert!(
+            json.get("actions").is_none() || json["actions"].is_null(),
+            "section narrowing omits the other sections: {json}"
+        );
+
+        let err = h
+            .routines_actions_list(Parameters(ActionsListParams {
+                action: None,
+                section: Some("bogus".into()),
+            }))
+            .await
+            .unwrap_err();
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("definition_template"),
+            "unknown section enumerates the valid sections: {msg}"
         );
     }
 

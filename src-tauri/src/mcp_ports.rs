@@ -4645,7 +4645,7 @@ const DEFINITION_TEMPLATE_JSON: &str = r#"{
     {
       "name": "track-1",
       "steps": [
-        { "id": "s1", "action": "data.find_stations", "params": { "modes": ["vara-hf"], "bands": ["20m"], "limit": 3 } },
+        { "id": "s1", "action": "data.find_stations", "params": { "bands": ["20m"], "limit": 3 } },
         { "id": "s2", "action": "radio.connect", "on_radio_busy": "wait", "params": { "stations": "$s1.callsigns", "bands": ["20m"] } },
         { "id": "s3", "control": "branch", "on": "s2.connected", "then": ["s4"], "else": ["s5"] },
         { "id": "s4", "control": "end" },
@@ -4680,15 +4680,20 @@ fn control_kind_docs() -> Vec<ControlInfoDto> {
                           the strict-boolean form (on must resolve to a boolean); supply op \
                           AND value together to compare. then and else are LISTS OF STEP IDS \
                           (never inline step objects); an empty arm falls through to the next \
-                          step. NOTE: to try N stations until one connects, pass them all to \
-                          one radio.connect - do not build per-station branching."
+                          step. POLARITY: then runs when the CONDITION IS TRUE - it is NOT \
+                          'the main path' or 'the next step in sequence'. For a threshold \
+                          gate like k_index gte 4, TRUE means DISTURBED conditions, so then \
+                          must route to the skip/abort steps and else to the proceed steps. \
+                          After any edit, re-read each arm and say which arm fires on which \
+                          outcome. NOTE: to try N stations until one connects, pass them all \
+                          to one radio.connect - do not build per-station branching."
                 .to_string(),
             fields: serde_json::json!({
                 "on": "bare output path, e.g. \"s1.connected\" or \"s1.indices.k_index\" (no $ prefix)",
                 "op": "optional eq | ne | lt | lte | gt | gte - supplied together with value",
                 "value": "comparison right-hand side, required with op",
-                "then": "LIST of step ids to run when the condition holds",
-                "else": "LIST of step ids to run otherwise (may be [])"
+                "then": "LIST of step ids that run when the condition is TRUE (k_index gte 4 true = disturbed = this arm should skip, not transmit)",
+                "else": "LIST of step ids that run when the condition is FALSE (may be [])"
             }),
             example: serde_json::json!({
                 "id": "s3", "control": "branch", "on": "s2.connected",

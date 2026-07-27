@@ -158,7 +158,7 @@ struct PresetParam {
 // rig.read_state
 // ============================================================================
 
-const RIG_READ_STATE: &str = "rig.read_state";
+pub(crate) const RIG_READ_STATE: &str = "rig.read_state";
 
 /// `rig.read_state` — live CAT state (freq/mode/PTT) via [`RigService`].
 /// `needs_radio: true`, `transmits: false`.
@@ -248,7 +248,7 @@ impl Action for RigReadState {
 // rig.validate_preset
 // ============================================================================
 
-const RIG_VALIDATE_PRESET: &str = "rig.validate_preset";
+pub(crate) const RIG_VALIDATE_PRESET: &str = "rig.validate_preset";
 
 #[derive(Debug, Deserialize)]
 struct ValidatePresetParams {

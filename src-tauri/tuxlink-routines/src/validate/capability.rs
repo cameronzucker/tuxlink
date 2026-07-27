@@ -33,6 +33,18 @@ pub const NEEDS_INTERNET_OFFGRID: &str = "NEEDS_INTERNET_OFFGRID";
 pub const NO_RIG_CONFIGURED: &str = "NO_RIG_CONFIGURED";
 pub const SAME_RIG_PARALLEL_LANES: &str = "SAME_RIG_PARALLEL_LANES";
 pub const STEP_TIMEOUT_LIKELY_INSUFFICIENT: &str = "STEP_TIMEOUT_LIKELY_INSUFFICIENT";
+/// A message staged (compose) with no outbox-flushing step (connect) at a
+/// LATER position in the same track (tuxlink-rrk51): the staged message is
+/// never sent this run — the lnctz B2F-inversion class, where models placed
+/// compose after connect (or inside its success arm) while narrating it as
+/// "send". Which actions stage/flush comes from
+/// `ValidationContext::{stages_outbox,flushes_outbox}` — the context, not a
+/// name sniff, per this module's rule. Lexical (array-position) order,
+/// matching contracts.rs's v1 rule; a compose that is positionally earlier
+/// but only reachable via a post-connect arm is out of v1 scope. Warning,
+/// not error: staging-for-a-future-connection is a legitimate authoring
+/// intent, and the message teaches both readings.
+pub const COMPOSE_AFTER_CONNECT: &str = "COMPOSE_AFTER_CONNECT";
 
 /// The action name [`check_wwv_timeout`] applies to (spec §6 "Update space
 /// weather from WWV": the shipped off-air decode — tune, capture at
@@ -103,6 +115,75 @@ pub fn check(def: &RoutineDef, ctx: &dyn ValidationContext, findings: &mut Vec<F
 
     if radio_track_names.len() >= 2 {
         findings.push(same_rig_parallel_lanes_finding(def, &radio_track_names));
+    }
+
+    check_outbox_ordering(def, ctx, findings);
+}
+
+/// COMPOSE_AFTER_CONNECT: see the const doc. A per-track positional scan —
+/// for each staging step, is there ANY flushing step at a later array
+/// position in the same track? Tracks run CONCURRENTLY against the shared
+/// mailbox (`run_tracks`), so a flusher in a DIFFERENT track can pick the
+/// staged message up (Codex 2026-07-27 P2); when one exists anywhere else
+/// in the def, the check stays silent rather than claiming "never sent" —
+/// same conservative posture as `CROSS_TRACK_VAR` being a warning, not an
+/// error, for timing the validator cannot prove.
+fn check_outbox_ordering(
+    def: &RoutineDef,
+    ctx: &dyn ValidationContext,
+    findings: &mut Vec<Finding>,
+) {
+    for (track_idx, track) in def.tracks.iter().enumerate() {
+        let other_track_flushes = def.tracks.iter().enumerate().any(|(j, t)| {
+            j != track_idx
+                && t.steps.iter().any(|s| match s {
+                    Step::Action(a) => ctx.flushes_outbox(&a.action),
+                    _ => false,
+                })
+        });
+        if other_track_flushes {
+            continue;
+        }
+        let flush_positions: Vec<usize> = track
+            .steps
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| match s {
+                Step::Action(a) if ctx.flushes_outbox(&a.action) => Some(i),
+                _ => None,
+            })
+            .collect();
+
+        for (i, step) in track.steps.iter().enumerate() {
+            let Step::Action(a) = step else { continue };
+            if !ctx.stages_outbox(&a.action) {
+                continue;
+            }
+            if flush_positions.iter().any(|&j| j > i) {
+                continue;
+            }
+            let hint = if flush_positions.is_empty() {
+                "no connect step exists in this track"
+            } else {
+                "the only connect step(s) run BEFORE it"
+            };
+            findings.push(
+                Finding::warning(
+                    COMPOSE_AFTER_CONNECT,
+                    def.routine.clone(),
+                    format!(
+                        "the message staged at \"{}\" ({}) is never sent this run: {hint}, \
+                         and a connect only sends what was staged BEFORE it started. Move \
+                         the compose ahead of the connect that should carry it (compose -> \
+                         connect, not connect -> compose). If the intent is stage-only — \
+                         send on some future connection — ignore this",
+                        a.id.0, a.action
+                    ),
+                )
+                .with_track(track.name.clone())
+                .with_step(a.id.clone()),
+            );
+        }
     }
 }
 
@@ -530,6 +611,147 @@ mod tests {
         assert!(
             findings.is_empty(),
             "expected no capability findings, got {findings:?}"
+        );
+    }
+
+    // --- COMPOSE_AFTER_CONNECT (tuxlink-rrk51) --------------------------
+
+    fn outbox_ctx() -> StaticContext {
+        StaticContext::new()
+            .with_action(RADIO_CONNECT)
+            .with_action(LOCAL_NOTE)
+            .with_profile(StationProfile {
+                has_internet: true,
+                rigs: vec!["default".into()],
+            })
+            .with_stages_outbox("local.compose")
+            .with_flushes_outbox("radio.connect")
+    }
+
+    fn def_with_steps(steps: Vec<Step>) -> RoutineDef {
+        RoutineDef {
+            routine: "r1".into(),
+            schema_version: crate::types::SUPPORTED_SCHEMA_VERSION,
+            transmit_mode: TransmitMode::Attended,
+            transmit_ack: None,
+            write_ack: None,
+            on_interrupted: OnInterrupted::Stay,
+            inputs: vec![],
+            triggers: vec![Trigger::Manual],
+            tracks: vec![Track {
+                name: "t1".into(),
+                steps,
+            }],
+        }
+    }
+
+    #[test]
+    fn compose_after_the_last_connect_warns_it_cannot_send_this_run() {
+        // The lnctz B2F-inversion shape: connect, then compose.
+        let def = def_with_steps(vec![
+            action_step("s1", "radio.connect"),
+            action_step("s2", "local.compose"),
+        ]);
+        let mut findings = Vec::new();
+        check(&def, &outbox_ctx(), &mut findings);
+        let hits: Vec<_> = findings
+            .iter()
+            .filter(|f| f.code == COMPOSE_AFTER_CONNECT)
+            .collect();
+        assert_eq!(hits.len(), 1, "{findings:?}");
+        assert_eq!(hits[0].severity, Severity::Warning);
+        assert_eq!(hits[0].step, Some(StepId("s2".into())));
+        assert!(
+            hits[0].message.contains("compose -> connect"),
+            "{}",
+            hits[0].message
+        );
+    }
+
+    #[test]
+    fn compose_before_a_connect_is_the_correct_shape_and_stays_silent() {
+        let def = def_with_steps(vec![
+            action_step("s1", "local.compose"),
+            action_step("s2", "radio.connect"),
+        ]);
+        let mut findings = Vec::new();
+        check(&def, &outbox_ctx(), &mut findings);
+        assert!(
+            findings.iter().all(|f| f.code != COMPOSE_AFTER_CONNECT),
+            "{findings:?}"
+        );
+    }
+
+    #[test]
+    fn compose_with_no_connect_anywhere_warns_with_the_stage_only_reading() {
+        let def = def_with_steps(vec![action_step("s1", "local.compose")]);
+        let mut findings = Vec::new();
+        check(&def, &outbox_ctx(), &mut findings);
+        let hits: Vec<_> = findings
+            .iter()
+            .filter(|f| f.code == COMPOSE_AFTER_CONNECT)
+            .collect();
+        assert_eq!(hits.len(), 1, "{findings:?}");
+        assert!(
+            hits[0].message.contains("stage-only"),
+            "teaches the legitimate reading: {}",
+            hits[0].message
+        );
+    }
+
+    #[test]
+    fn a_flusher_in_another_track_silences_the_compose_warning() {
+        // Codex 2026-07-27 P2 regression: tracks run concurrently against
+        // the shared mailbox, so track B's connect can send track A's
+        // staged message — "never sent this run" would be a false claim.
+        let def = RoutineDef {
+            routine: "r1".into(),
+            schema_version: crate::types::SUPPORTED_SCHEMA_VERSION,
+            transmit_mode: TransmitMode::Attended,
+            transmit_ack: None,
+            write_ack: None,
+            on_interrupted: OnInterrupted::Stay,
+            inputs: vec![],
+            triggers: vec![Trigger::Manual],
+            tracks: vec![
+                Track {
+                    name: "a".into(),
+                    steps: vec![action_step("s1", "local.compose")],
+                },
+                Track {
+                    name: "b".into(),
+                    steps: vec![action_step("s2", "radio.connect")],
+                },
+            ],
+        };
+        let mut findings = Vec::new();
+        check(&def, &outbox_ctx(), &mut findings);
+        assert!(
+            findings.iter().all(|f| f.code != COMPOSE_AFTER_CONNECT),
+            "{findings:?}"
+        );
+    }
+
+    #[test]
+    fn contexts_that_do_not_model_outbox_roles_never_fire_the_check() {
+        // Default trait impls return false for every action: the shape that
+        // would warn above is silent without the role mapping.
+        let def = def_with_steps(vec![
+            action_step("s1", "radio.connect"),
+            action_step("s2", "local.compose"),
+        ]);
+        let ctx = StaticContext::new()
+            .with_action(RADIO_CONNECT)
+            .with_action(LOCAL_NOTE)
+            .with_profile(StationProfile {
+                has_internet: true,
+                rigs: vec!["default".into()],
+            });
+        let mut findings = Vec::new();
+        check(&def, &ctx, &mut findings);
+        assert!(
+            findings.iter().all(|f| f.code != COMPOSE_AFTER_CONNECT),
+            "{findings:?}"
         );
     }
 }

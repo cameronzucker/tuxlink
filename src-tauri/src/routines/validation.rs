@@ -168,6 +168,39 @@ impl ValidationContext for MonolithValidationContext {
     fn station_profile(&self) -> StationProfile {
         self.profile.clone()
     }
+
+    /// Store-and-forward roles for `COMPOSE_AFTER_CONNECT` (tuxlink-rrk51).
+    /// The crate keeps action names out of its checks (capability.rs's
+    /// no-name-sniffing rule), so the app maps its own actions HERE — via
+    /// the same name consts the descriptors are registered under, so a
+    /// rename updates this mapping or fails to compile, never silently
+    /// orphans it.
+    fn stages_outbox(&self, action: &str) -> bool {
+        action == super::actions::local::LOCAL_COMPOSE
+            || action == super::actions::local::LOCAL_COMPOSE_CATALOG_REQUEST
+    }
+
+    fn flushes_outbox(&self, action: &str) -> bool {
+        action == super::actions::radio::RADIO_CONNECT
+    }
+
+    /// The read family whose only point is the data it outputs — gates
+    /// `OUTPUT_NEVER_CONSUMED`. Explicit list, same const-coupled pattern as
+    /// the outbox roles (Codex 2026-07-27 P1: inferring purity from
+    /// transmits/writes_config would flag every local.compose).
+    /// `data.stationlist_update` is deliberately absent: its point is
+    /// refreshing the stored directory, not its outputs. `data.read` is
+    /// listed but inert today (it declares no outputs); it starts working
+    /// when tuxlink-tii83 lands per-source OutputSpecs.
+    fn is_pure_read(&self, action: &str) -> bool {
+        action == super::actions::data::DATA_SPACEWX_SWPC
+            || action == super::actions::data::DATA_SPACEWX_WWV
+            || action == super::actions::data::DATA_READ
+            || action == super::actions::find_stations::DATA_FIND_STATIONS
+            || action == super::actions::docs_search::DATA_DOCS_SEARCH
+            || action == super::actions::cat::RIG_READ_STATE
+            || action == super::actions::cat::RIG_VALIDATE_PRESET
+    }
 }
 
 /// The station's declared capabilities, read from the operator's config. A

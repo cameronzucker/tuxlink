@@ -52,6 +52,9 @@ pub const BRANCH_TARGET_MISSING: &str = "BRANCH_TARGET_MISSING";
 pub const ARM_FALLTHROUGH_LEAK: &str = "ARM_FALLTHROUGH_LEAK";
 pub const CALL_RECURSION: &str = "CALL_RECURSION";
 pub const CALL_TARGET_MISSING: &str = "CALL_TARGET_MISSING";
+pub const BRANCH_OP_VALUE_PAIR: &str = "BRANCH_OP_VALUE_PAIR";
+pub const BRANCH_BOTH_ARMS_EMPTY: &str = "BRANCH_BOTH_ARMS_EMPTY";
+pub const TX_ONLY_ON_FAILURE_ARM: &str = "TX_ONLY_ON_FAILURE_ARM";
 
 /// Append every structural finding for `def` into `findings`. Retry/graph
 /// checks are pure over `def`; the call checks need `ctx.routine_def` to
@@ -63,8 +66,183 @@ pub fn check(def: &RoutineDef, ctx: &dyn ValidationContext, findings: &mut Vec<F
         check_graph_properties(def, track, findings);
         check_arm_fallthrough_leaks(def, track, findings);
         cross_reference_terminal_and_leak(&mut findings[before..]);
+        check_branch_shapes(def, track, findings);
+        check_tx_only_on_failure_arm(def, track, ctx, findings);
     }
     check_calls(def, ctx, findings);
+}
+
+/// BRANCH_OP_VALUE_PAIR / BRANCH_BOTH_ARMS_EMPTY (tuxlink-rrk51, lnctz
+/// evidence): both shapes save and validate clean today and then do nothing
+/// useful — op-without-value is a guaranteed runtime step error
+/// (`executor.rs::eval_branch_condition`'s "op and value must be supplied
+/// together" arm), so it is an Error here, same rationale as
+/// `UNKNOWN_READ_SOURCE`'s severity; an all-empty-arms branch falls through
+/// to the same next step on BOTH outcomes (`ARM_FALLTHROUGH_LEAK`
+/// deliberately skips it), deciding nothing, which in the observed corpus
+/// was always an editing accident, so it earns a Warning.
+fn check_branch_shapes(def: &RoutineDef, track: &Track, findings: &mut Vec<Finding>) {
+    for step in &track.steps {
+        let Step::Control(c) = step else { continue };
+        let Control::Branch {
+            op,
+            value,
+            then,
+            r#else,
+            ..
+        } = &c.control
+        else {
+            continue;
+        };
+        if op.is_some() != value.is_some() {
+            let (present, missing) = if op.is_some() {
+                ("op", "value")
+            } else {
+                ("value", "op")
+            };
+            findings.push(
+                Finding::error(
+                    BRANCH_OP_VALUE_PAIR,
+                    def.routine.clone(),
+                    format!(
+                        "branch \"{}\" has {present} without {missing} — this fails at run \
+                         time. Supply op AND value together to compare, or neither for the \
+                         strict-boolean form (on must then resolve to a boolean)",
+                        c.id.0
+                    ),
+                )
+                .with_track(track.name.clone())
+                .with_step(c.id.clone()),
+            );
+        }
+        if then.is_empty() && r#else.is_empty() {
+            findings.push(
+                Finding::warning(
+                    BRANCH_BOTH_ARMS_EMPTY,
+                    def.routine.clone(),
+                    format!(
+                        "branch \"{}\" has an empty then AND an empty else: both outcomes \
+                         fall through to the same next step, so the branch decides nothing. \
+                         Point at least one arm at a target step — then runs when the \
+                         condition is TRUE, else when it is FALSE",
+                        c.id.0
+                    ),
+                )
+                .with_track(track.name.clone())
+                .with_step(c.id.clone()),
+            );
+        }
+    }
+}
+
+/// TX_ONLY_ON_FAILURE_ARM (tuxlink-rrk51): a transmitting step reachable
+/// ONLY through the else arm of a strict-boolean `*.connected` branch runs
+/// exclusively when the connection FAILED. The lnctz corpus shows models
+/// wiring a success confirmation there while narrating it as the success
+/// path (skill/S4/rev_off: the model diagnosed exactly this inversion,
+/// re-wired it inverted again, and nothing told it which arm the step landed
+/// in). A failure alert is a legitimate resident of that arm, so this is a
+/// Warning that teaches both readings, like `ARM_FALLTHROUGH_LEAK`. Scoped
+/// to `.connected` strict-boolean branches deliberately: for threshold gates
+/// (k_index gte 4) the else arm is often the CORRECT transmit path, and a
+/// broader check would misfire there.
+fn check_tx_only_on_failure_arm(
+    def: &RoutineDef,
+    track: &Track,
+    ctx: &dyn ValidationContext,
+    findings: &mut Vec<Finding>,
+) {
+    let tx_steps: Vec<usize> = track
+        .steps
+        .iter()
+        .enumerate()
+        .filter_map(|(i, s)| match s {
+            Step::Action(a) => ctx
+                .action_descriptor(&a.action)
+                .filter(|d| d.transmits)
+                .map(|_| i),
+            _ => None,
+        })
+        .collect();
+    if tx_steps.is_empty() {
+        return;
+    }
+
+    let (adj, _) = build_graph(track);
+    let base_reach = reachable_from_start(&adj);
+
+    for (i, step) in track.steps.iter().enumerate() {
+        let Step::Control(c) = step else { continue };
+        let Control::Branch {
+            on,
+            op,
+            then,
+            r#else,
+            ..
+        } = &c.control
+        else {
+            continue;
+        };
+        if op.is_some() || !on.ends_with(".connected") || r#else.is_empty() {
+            continue;
+        }
+        // The branch must test a CONNECT ATTEMPT's own output (Codex
+        // 2026-07-27 P2): `.connected` also appears on status reads (e.g. a
+        // modem_status snapshot), where the else arm means "modem idle", not
+        // "a dial failed" — and dialing WHEN idle is exactly right there.
+        // The producer must be a same-track action the context classifies as
+        // outbox-flushing (a connect); anything else carries no
+        // failed-attempt semantics and is skipped.
+        let producer_is_connect = on.split('.').next().is_some_and(|producer_id| {
+            track.steps.iter().any(|s| match s {
+                Step::Action(a) => a.id.0 == producer_id && ctx.flushes_outbox(&a.action),
+                _ => false,
+            })
+        });
+        if !producer_is_connect {
+            continue;
+        }
+        let Some(else_entry) = r#else.first().and_then(|t| find_index(track, t)) else {
+            continue; // dangling target: BRANCH_TARGET_MISSING's job
+        };
+        // Both arms entering the same step claims no exclusivity; and if the
+        // then arm shares the else entry, removing the edge would cut both.
+        let then_entry = match then.first() {
+            Some(t) => find_index(track, t),
+            None => Some(i + 1),
+        };
+        if then_entry == Some(else_entry) {
+            continue;
+        }
+        let mut pruned = adj.clone();
+        pruned[i].retain(|&v| v != else_entry);
+        let pruned_reach = reachable_from_start(&pruned);
+
+        for &t in &tx_steps {
+            if base_reach.contains(&t) && !pruned_reach.contains(&t) {
+                let (tx_id, tx_action) = match &track.steps[t] {
+                    Step::Action(a) => (&a.id, a.action.as_str()),
+                    _ => unreachable!("tx_steps only holds action indices"),
+                };
+                findings.push(
+                    Finding::warning(
+                        TX_ONLY_ON_FAILURE_ARM,
+                        def.routine.clone(),
+                        format!(
+                            "\"{}\" ({tx_action}) transmits and is reachable ONLY through \
+                             branch \"{}\"'s else arm — it runs exclusively when \"{on}\" is \
+                             FALSE (the connection failed). If it is a failure alert, that \
+                             is correct; if it is meant to confirm a successful connection, \
+                             it never will — move it into the then arm (condition TRUE)",
+                            tx_id.0, c.id.0
+                        ),
+                    )
+                    .with_track(track.name.clone())
+                    .with_step(tx_id.clone()),
+                );
+            }
+        }
+    }
 }
 
 /// tuxlink-lnctz: [`NO_TERMINAL_PATH`] and [`ARM_FALLTHROUGH_LEAK`] are
@@ -1383,5 +1561,275 @@ mod tests {
             )],
         );
         assert!(leak_findings(&benign).is_empty(), "{:?}", leak_findings(&benign));
+    }
+
+    // --- BRANCH_OP_VALUE_PAIR / BRANCH_BOTH_ARMS_EMPTY (tuxlink-rrk51) ---
+
+    fn cmp_branch(
+        id: &str,
+        on: &str,
+        op: Option<crate::types::CmpOp>,
+        value: Option<serde_json::Value>,
+        then: Vec<&str>,
+        r#else: Vec<&str>,
+    ) -> Step {
+        Step::Control(ControlStep {
+            id: StepId(id.into()),
+            control: Control::Branch {
+                on: on.into(),
+                op,
+                value,
+                then: then.into_iter().map(|s| StepId(s.into())).collect(),
+                r#else: r#else.into_iter().map(|s| StepId(s.into())).collect(),
+            },
+        })
+    }
+
+    #[test]
+    fn op_without_value_is_an_error_and_value_without_op_too() {
+        use crate::types::CmpOp;
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    action("s1"),
+                    cmp_branch("b1", "s1.k", Some(CmpOp::Gte), None, vec!["e1"], vec![]),
+                    end("e1"),
+                ],
+            )],
+        );
+        let ctx = StaticContext::new();
+        let mut findings = Vec::new();
+        check(&def, &ctx, &mut findings);
+        let hits: Vec<_> = findings
+            .iter()
+            .filter(|f| f.code == BRANCH_OP_VALUE_PAIR)
+            .collect();
+        assert_eq!(hits.len(), 1, "{findings:?}");
+        assert_eq!(hits[0].severity, crate::validate::Severity::Error);
+        assert!(hits[0].message.contains("op without value"), "{}", hits[0].message);
+
+        let def2 = routine_named(
+            "r2",
+            vec![track(
+                "t1",
+                vec![
+                    action("s1"),
+                    cmp_branch("b1", "s1.k", None, Some(json!(4)), vec!["e1"], vec![]),
+                    end("e1"),
+                ],
+            )],
+        );
+        let mut findings2 = Vec::new();
+        check(&def2, &ctx, &mut findings2);
+        assert!(
+            findings2
+                .iter()
+                .any(|f| f.code == BRANCH_OP_VALUE_PAIR && f.message.contains("value without op")),
+            "{findings2:?}"
+        );
+    }
+
+    #[test]
+    fn paired_op_value_and_strict_boolean_forms_are_clean() {
+        use crate::types::CmpOp;
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    action("s1"),
+                    cmp_branch("b1", "s1.k", Some(CmpOp::Gte), Some(json!(4)), vec!["e1"], vec![]),
+                    branch("b2", "s1.ok", vec!["e1"], vec![]),
+                    end("e1"),
+                ],
+            )],
+        );
+        let ctx = StaticContext::new();
+        let mut findings = Vec::new();
+        check(&def, &ctx, &mut findings);
+        assert!(findings.iter().all(|f| f.code != BRANCH_OP_VALUE_PAIR), "{findings:?}");
+    }
+
+    #[test]
+    fn a_branch_with_both_arms_empty_warns_it_decides_nothing() {
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![action("s1"), branch("b1", "s1.ok", vec![], vec![]), end("e1")],
+            )],
+        );
+        let ctx = StaticContext::new();
+        let mut findings = Vec::new();
+        check(&def, &ctx, &mut findings);
+        let hits: Vec<_> = findings
+            .iter()
+            .filter(|f| f.code == BRANCH_BOTH_ARMS_EMPTY)
+            .collect();
+        assert_eq!(hits.len(), 1, "{findings:?}");
+        assert_eq!(hits[0].severity, crate::validate::Severity::Warning);
+        assert_eq!(hits[0].step, Some(StepId("b1".into())));
+        // One non-empty arm is a legitimate fall-through shape: no warning.
+        let def2 = routine_named(
+            "r2",
+            vec![track(
+                "t1",
+                vec![action("s1"), branch("b1", "s1.ok", vec!["e1"], vec![]), end("e1")],
+            )],
+        );
+        let mut findings2 = Vec::new();
+        check(&def2, &ctx, &mut findings2);
+        assert!(findings2.iter().all(|f| f.code != BRANCH_BOTH_ARMS_EMPTY), "{findings2:?}");
+    }
+
+    // --- TX_ONLY_ON_FAILURE_ARM (tuxlink-rrk51) -----------------------
+
+    fn tx_descriptor(name: &'static str) -> crate::action::ActionDescriptor {
+        crate::action::ActionDescriptor {
+            name,
+            label: "",
+            description: "",
+            needs_radio: true,
+            transmits: true,
+            writes_config: false,
+            needs_internet: false,
+            example_params: None,
+            allowed_values: None,
+            params: &[],
+            outputs: &[],
+            dry_run_shape: None,
+        }
+    }
+
+    fn tx_action(id: &str, name: &str) -> Step {
+        Step::Action(ActionStep {
+            id: StepId(id.into()),
+            action: name.into(),
+            params: json!({}),
+            timeout_s: None,
+            on_radio_busy: BusyPolicy::Wait,
+        })
+    }
+
+    #[test]
+    fn a_transmit_step_reachable_only_via_the_else_arm_of_a_connected_branch_warns() {
+        // s1 connect -> b1 on s1.connected: then -> log/end, else -> aprs/end.
+        // The aprs "confirmation" runs only on failure — the lnctz S4 shape.
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    tx_action("s1", "radio.connect"),
+                    branch("b1", "s1.connected", vec!["ok"], vec!["tx"]),
+                    action("ok"),
+                    end("e_ok"),
+                    tx_action("tx", "radio.aprs_send"),
+                    end("e_tx"),
+                ],
+            )],
+        );
+        let ctx = StaticContext::new()
+            .with_action(tx_descriptor("radio.connect"))
+            .with_action(tx_descriptor("radio.aprs_send"))
+            .with_flushes_outbox("radio.connect");
+        let mut findings = Vec::new();
+        check(&def, &ctx, &mut findings);
+        let hits: Vec<_> = findings
+            .iter()
+            .filter(|f| f.code == TX_ONLY_ON_FAILURE_ARM)
+            .collect();
+        assert_eq!(hits.len(), 1, "{findings:?}");
+        assert_eq!(hits[0].step, Some(StepId("tx".into())));
+        assert!(hits[0].message.contains("failure alert"), "{}", hits[0].message);
+    }
+
+    #[test]
+    fn a_connected_branch_over_a_status_read_is_not_a_failed_connect() {
+        // Codex 2026-07-27 P2 regression: s1 is a modem-status READ exposing
+        // `connected`; dialing in its else arm (modem idle) is exactly
+        // right, so no warning may fire — the producer is not a connect.
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    action("s1"), // a status read, NOT classified as flushing
+                    branch("b1", "s1.connected", vec!["done"], vec!["tx"]),
+                    action("done"),
+                    end("e_done"),
+                    tx_action("tx", "radio.connect"),
+                    end("e_tx"),
+                ],
+            )],
+        );
+        let ctx = StaticContext::new()
+            .with_action(tx_descriptor("radio.connect"))
+            .with_flushes_outbox("radio.connect");
+        let mut findings = Vec::new();
+        check(&def, &ctx, &mut findings);
+        assert!(
+            findings.iter().all(|f| f.code != TX_ONLY_ON_FAILURE_ARM),
+            "{findings:?}"
+        );
+    }
+
+    #[test]
+    fn a_transmit_step_on_the_success_arm_or_shared_tail_does_not_warn() {
+        // Success-arm confirmation: the correct wiring stays silent.
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    tx_action("s1", "radio.connect"),
+                    branch("b1", "s1.connected", vec!["tx"], vec!["fail"]),
+                    tx_action("tx", "radio.aprs_send"),
+                    end("e_ok"),
+                    action("fail"),
+                    end("e_fail"),
+                ],
+            )],
+        );
+        let ctx = StaticContext::new()
+            .with_action(tx_descriptor("radio.connect"))
+            .with_action(tx_descriptor("radio.aprs_send"))
+            .with_flushes_outbox("radio.connect");
+        let mut findings = Vec::new();
+        check(&def, &ctx, &mut findings);
+        assert!(findings.iter().all(|f| f.code != TX_ONLY_ON_FAILURE_ARM), "{findings:?}");
+
+        // A threshold (op) branch is out of scope even with a TX in its else.
+        use crate::types::CmpOp;
+        let def2 = routine_named(
+            "r2",
+            vec![track(
+                "t1",
+                vec![
+                    action("s0"),
+                    cmp_branch(
+                        "b1",
+                        "s0.k_index",
+                        Some(CmpOp::Gte),
+                        Some(json!(4)),
+                        vec!["skip"],
+                        vec!["tx"],
+                    ),
+                    action("skip"),
+                    end("e_skip"),
+                    tx_action("tx", "radio.connect"),
+                    end("e_tx"),
+                ],
+            )],
+        );
+        let ctx2 = StaticContext::new().with_action(tx_descriptor("radio.connect"));
+        let mut findings2 = Vec::new();
+        check(&def2, &ctx2, &mut findings2);
+        assert!(
+            findings2.iter().all(|f| f.code != TX_ONLY_ON_FAILURE_ARM),
+            "{findings2:?}"
+        );
     }
 }

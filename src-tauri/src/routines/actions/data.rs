@@ -202,7 +202,7 @@ pub(crate) fn system_now_ms() -> u64 {
 // data.spacewx_wwv
 // ============================================================================
 
-const DATA_SPACEWX_WWV: &str = "data.spacewx_wwv";
+pub(crate) const DATA_SPACEWX_WWV: &str = "data.spacewx_wwv";
 
 /// `data.spacewx_wwv` — schedule-aware off-air WWV/WWVH capture-decode. Waits
 /// (cancellably) until the next :18/:45 broadcast window, then arms the real
@@ -392,7 +392,7 @@ impl Action for SpaceWxWwv {
 // data.spacewx_swpc
 // ============================================================================
 
-const DATA_SPACEWX_SWPC: &str = "data.spacewx_swpc";
+pub(crate) const DATA_SPACEWX_SWPC: &str = "data.spacewx_swpc";
 
 /// `data.spacewx_swpc` — the online NOAA SWPC fetch. `needs_internet: true`;
 /// no rig involvement, no arbiter lease.
@@ -430,7 +430,15 @@ impl Action for SpaceWxSwpc {
                 OutputSpec {
                     key: "indices",
                     ty: ValueType::Object,
-                    description: "Current solar indices from SWPC; may be null",
+                    description: "Current solar indices from SWPC with keys sfi, a_index, \
+                                  k_index - a branch gates on e.g. sN.indices.k_index \
+                                  (high k_index means disturbed conditions: route the \
+                                  gte-threshold arm AWAY from connecting). A fully-failed \
+                                  SWPC fetch fails this STEP, not the branch; indices may \
+                                  be null when only part of the fetch parsed, and an \
+                                  ordering comparison against null is a runtime error - \
+                                  guard with an eq-null branch on sN.indices first when \
+                                  partial data matters.",
                     nullable: true,
                 },
             ],
@@ -580,7 +588,7 @@ impl Action for StationlistUpdate {
 // data.read
 // ============================================================================
 
-const DATA_READ: &str = "data.read";
+pub(crate) const DATA_READ: &str = "data.read";
 
 /// The closed `source` vocabulary — the descriptor's `allowed_values` and the
 /// validator's `UNKNOWN_READ_SOURCE` lint (D6) read this. MUST stay in lock-step
