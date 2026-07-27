@@ -2,7 +2,7 @@
 """Ladder-2 progress dashboard. Read-only; scans the run tree per request.
 Serves on the tailnet: http://r2-poe.twin-bramble.ts.net:8899/
 """
-import html, json, os, glob, re, subprocess, datetime, time
+import html, json, os, glob, re, subprocess, datetime, time, hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # LADDER2_ROOT lets this be render-tested against an rsync mirror off-box.
 ROOT=os.path.expanduser(os.environ.get("LADDER2_ROOT","~/tuxlink-eig6e-build/battery-results/ladder2"))
@@ -56,12 +56,36 @@ def rung_header(cell):
             f'<div class="cl">PREDICATES ({len(preds)})</div><ol class="cq">{plist}</ol>'
             f'</div></th>')
 def verdicts():
+    """{bundle_id: full verdict record}. Keep the whole record, not just
+    `overall`: the daemon stamps each verdict with a content fingerprint, and
+    read_att needs it to reject stale verdicts (see fingerprint below)."""
     v={}; p=os.path.join(ROOT,"judgments.jsonl")
     if os.path.exists(p):
         for l in open(p):
-            try: r=json.loads(l); v[r["id"]]=r.get("overall")
+            try: r=json.loads(l); v[r["id"]]=r
             except: pass
     return v
+def fingerprint(bundle):
+    """Same content hash the judge daemon stamps on each verdict (sha256 over
+    score.json + outcome.json, '<missing>' sentinel, first 16 hex).
+
+    Verdicts are keyed by bundle PATH, which is stable only while the run tree
+    is immutable. When a slot is archived and re-run (the truncated-bundle
+    sweep), the path names a DIFFERENT artifact; joining on path alone showed
+    the archived bundle's verdict on the fresh in-flight slot — a judged letter
+    over a det '?' with a blue still-running border (operator-reported
+    2026-07-27). The daemon already re-judges on fingerprint mismatch; this
+    makes the dashboard honor the same contract: a verdict renders only for the
+    bundle content it actually graded."""
+    h=hashlib.sha256()
+    for n in ("score.json","outcome.json"):
+        p=os.path.join(bundle,n)
+        try:
+            with open(p,"rb") as f: h.update(f.read())
+        except OSError:
+            h.update(b"<missing>")
+        h.update(b"\0")
+    return h.hexdigest()[:16]
 def attempts(skill,cell,cond):
     """The attempt-N run directories, and ONLY those.
 
@@ -85,7 +109,10 @@ def read_att(skill,cell,cond,a,V):
         s=json.load(open(os.path.join(b,"score.json"))).get("deterministic") or {}
         det="sg" if (s.get("routine_saved") and s.get("validates_green")) else ("s" if s.get("routine_saved") else "x")
     except: det=""
-    verd=V.get(f"{skill}/{cell}/{cond}/{a}","")
+    verd=""
+    rec=V.get(f"{skill}/{cell}/{cond}/{a}")
+    if rec and (("fp" not in rec) or rec["fp"]==fingerprint(b)):
+        verd=rec.get("overall") or ""
     return outcome,det,verd
 def driver_state():
     """RUNNING / COMPLETE / STOPPED, for EITHER driver.
@@ -230,11 +257,17 @@ def page():
         try: mtimes.append(os.path.getmtime(sc))
         except OSError: pass
     scored=len(scored_ids)
-    awaiting=len([i for i in scored_ids if i not in V])
+    # A scored bundle whose stored verdict fingerprints to DIFFERENT content
+    # (archived + re-run slot) counts as awaiting judge, not as judged.
+    def _vok(i,rec):
+        sk,c,cond,a=i.split("/")
+        return ("fp" not in rec) or rec["fp"]==fingerprint(os.path.join(ROOT,sk,c,ph(cond),a))
+    vmap={i:(V[i].get("overall") or "") for i in scored_ids if i in V and _vok(i,V[i])}
+    awaiting=len(scored_ids)-len(vmap)
     total=len(CELLS)*len(COLS)
     done=sum(1 for c in CELLS for (sk,cd) in COLS if any(os.path.exists(os.path.join(ROOT,sk,c,ph(cd),a,"score.json")) for a in attempts(sk,c,cd)))
     from collections import Counter
-    tally=Counter(V[i] for i in scored_ids if i in V)
+    tally=Counter(vmap.values())
     rows=""
     for c in CELLS:
         tds=""
