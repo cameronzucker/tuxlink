@@ -11,9 +11,15 @@
 #
 # env: OPENROUTER_API_KEY / ORKEY (Nemotron reviewer curl only)
 #      LADDER2_CONC  worker width, default 3
-#      LADDER2_TURN_TIMEOUT_SECS  response deadline, default 3600
-#      TUXLINK_MAX_RUN_SECS       whole-run deadline; exported to the binary,
-#                                 which falls back to its built-in 1800s default
+#      LADDER2_TURN_TIMEOUT_SECS  per-PROVIDER-TURN timeout, default 1800 —
+#                                 bounds a single hung stream (tuxlink-3cal1
+#                                 is the finer fix), NOT the whole response
+#      TUXLINK_MAX_RUN_SECS       whole-RESPONSE budget (COR-1), default 7200,
+#                                 exported; read by the binary since
+#                                 tuxlink-zq44u — before that fix NOTHING read
+#                                 it and every cell was silently bounded by the
+#                                 runner's built-in 1800s default while the
+#                                 START line advertised max_run=7200s
 #
 # BOTH deadlines are WALL-CLOCK. Running wide slows each individual bundle even
 # though aggregate throughput rises, so at width>3 they must be raised or long
@@ -53,13 +59,16 @@ REVCONDS_SKILL="${LADDER2_REVCONDS_SKILL:-off}"
 SKILLFILE="$OUT/review-skill.md"
 MAXATT=3
 CONC="${LADDER2_CONC:-3}"
-# 3600s, not 1800: the enriched authoring surface (14 grounding tools + 5
-# validator advisories, PRs #1261/#1262) legitimately deepened iteration on
-# branch-heavy cells — natural runtime moved to ~1800s+ (base/S4 completed at
-# 1903s/22 turns; P3 base truncated 3/3 at the 1800s wall). A tighter budget
-# censors exactly the cells the experiment cares about; churn cost is measured
-# as duration instead. Evidence: tuxlink-3cal1 notes (2026-07-27).
-TURNTO="${LADDER2_TURN_TIMEOUT_SECS:-3600}"
+TURNTO="${LADDER2_TURN_TIMEOUT_SECS:-1800}"
+# Whole-response budget, 7200s not 1800: the enriched authoring surface (14
+# grounding tools + 5 validator advisories, PRs #1261/#1262) legitimately
+# deepened iteration on branch-heavy cells — natural runtime moved to ~1800s+
+# (base/S4 completed at 1903s/22 turns; P3 base truncated 3/3 at the 1800s
+# wall). A budget below natural runtime censors exactly the cells the
+# experiment cares about; churn cost is measured as duration instead.
+# Evidence: tuxlink-3cal1 notes (2026-07-27). Exported: run_cell subshells and
+# the binary must both see it.
+export TUXLINK_MAX_RUN_SECS="${TUXLINK_MAX_RUN_SECS:-7200}"
 
 mkdir -p "$OUT"
 # Per-run, unlike the append-only run.log/manifest: a stale list from a previous
@@ -218,7 +227,7 @@ except Exception: pass' "$bdir/attempt-1/outcome.json" > "$mdir/final_text.txt" 
   fi
 }
 
-log "LADDER2-PAR START conc=$CONC turn_timeout=${TURNTO}s max_run=${TUXLINK_MAX_RUN_SECS:-1800(default)}s cells=[$CELLS] skills=[$SKILLS] revconds=[none $REVCONDS / skill-arm: $REVCONDS_SKILL]"
+log "LADDER2-PAR START conc=$CONC turn_timeout=${TURNTO}s max_run=${TUXLINK_MAX_RUN_SECS}s cells=[$CELLS] skills=[$SKILLS] revconds=[none $REVCONDS / skill-arm: $REVCONDS_SKILL]"
 idx=0
 running=0
 for skill in $SKILLS; do

@@ -119,6 +119,29 @@ const MAX_TURNS: usize = 200;
 /// issuing a forced `AbortHandle::abort()`.
 const CANCEL_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// COR-1 whole-response wall-clock budget, overridable via `TUXLINK_MAX_RUN_SECS`.
+///
+/// The ladder battery drivers have exported `TUXLINK_MAX_RUN_SECS` since their
+/// first launch and echo it in every START line ("max_run=7200s"), but no
+/// binary ever read it — every battery cell was silently bounded by the
+/// runner's 1800s [`Limits`] default while the log advertised otherwise
+/// (surface1, 2026-07-27: cells at 19-27 active provider turns died mid-work
+/// at exactly 1800s under a START line claiming 7200). This closes the
+/// driver's side of the contract. Unset or unparsable → the runner default;
+/// values under 30s are rejected as misconfiguration rather than honored into
+/// instant-death runs (mirrors the `elmer_config_set` floor on the per-turn
+/// timeout).
+fn response_budget() -> Duration {
+    parse_response_budget(std::env::var("TUXLINK_MAX_RUN_SECS").ok())
+}
+
+fn parse_response_budget(raw: Option<String>) -> Duration {
+    raw.and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|&s| s >= 30)
+        .map(Duration::from_secs)
+        .unwrap_or_else(|| Limits::default().max_response_duration)
+}
+
 // ---------------------------------------------------------------------------
 // SessionInner — the short-lock mutable state
 // ---------------------------------------------------------------------------
@@ -506,6 +529,7 @@ impl ElmerSession {
         let turn_timeout_secs = self.model_config.snapshot().await.turn_timeout_secs;
         let limits = Limits {
             per_turn_timeout: Duration::from_secs(turn_timeout_secs as u64),
+            max_response_duration: response_budget(),
             ..Limits::default()
         };
 
@@ -1019,6 +1043,43 @@ mod tests {
         ScriptedProvider, ScriptedTurn, ToolCall, ToolOutcome, ToolSpec,
     };
     use tuxlink_mcp_core::ports::{PortError, StagedRecordDto};
+
+    // -----------------------------------------------------------------------
+    // parse_response_budget — the TUXLINK_MAX_RUN_SECS → COR-1 budget contract.
+    // Pure-parse tests (no env mutation: std::env is process-global and racy
+    // under the parallel test harness).
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn response_budget_unset_falls_back_to_runner_default() {
+        assert_eq!(
+            parse_response_budget(None),
+            Limits::default().max_response_duration
+        );
+    }
+
+    #[test]
+    fn response_budget_env_value_is_honored() {
+        assert_eq!(
+            parse_response_budget(Some("7200".into())),
+            Duration::from_secs(7200)
+        );
+        assert_eq!(
+            parse_response_budget(Some(" 3600 ".into())),
+            Duration::from_secs(3600)
+        );
+    }
+
+    #[test]
+    fn response_budget_garbage_and_instant_death_values_fall_back() {
+        for bad in ["", "abc", "-5", "7200s", "0", "29"] {
+            assert_eq!(
+                parse_response_budget(Some(bad.into())),
+                Limits::default().max_response_duration,
+                "input {bad:?} must fall back to the runner default"
+            );
+        }
+    }
 
     // -----------------------------------------------------------------------
     // Probes — per-abort AtomicBool + in_transmit flag
