@@ -4,7 +4,7 @@ scored-but-unjudged ladder2 bundles, grades each against its predicates, writes 
 verdict to judgments.jsonl, and pushes it to R2 so the dashboard updates. No main
 agent-loop involvement. Detached; survives the interactive session ending.
 """
-import fcntl, json, os, re, subprocess, time, glob
+import fcntl, glob, hashlib, json, os, re, subprocess, time
 HERE=os.path.dirname(os.path.abspath(__file__))
 LOCK=os.path.join(HERE,"judge_daemon.lock")   # single-instance guard
 LADDER=os.path.join(HERE,"ladder2")
@@ -52,12 +52,35 @@ def judged_ids():
     if not os.path.exists(STORE): return {}
     return {json.loads(l)["id"]:json.loads(l) for l in open(STORE)}
 
+def fingerprint(bundle):
+    """Content hash of what the judge actually grades.
+
+    The store is keyed on the bundle PATH (<skill>/<cell>/<cond>/attempt-N),
+    which is stable only while a run tree is immutable. Rebuild the tree in
+    place — a re-run, a resumed run, a driver fix — and identical paths now name
+    DIFFERENT artifacts, so the daemon skips every one of them as already-judged
+    and the dashboard shows the OLD run's verdicts against the new run's work.
+    Observed twice on 2026-07-26; the second time only because the numbers were
+    implausible. Hash score.json + outcome.json so a rebuilt bundle re-judges by
+    itself instead of relying on whoever rebuilt it remembering to clear the
+    store."""
+    h=hashlib.sha256()
+    for n in ("score.json","outcome.json"):
+        p=os.path.join(bundle,n)
+        try:
+            with open(p,"rb") as f: h.update(f.read())
+        except OSError:
+            h.update(b"<missing>")
+        h.update(b"\0")
+    return h.hexdigest()[:16]
+
 def pkg(bundle,cells):
     p=bundle.split(os.sep); cond="none" if p[-2]=="build" else p[-2]
     bid=f"{p[-4]}/{p[-3]}/{cond}/{p[-1]}"
     sc=json.load(open(os.path.join(bundle,"score.json"))); ji=sc.get("judge_input") or {}
     o=json.load(open(os.path.join(bundle,"outcome.json")))
-    return bid, {"id":bid,"cell":p[-3],"skill":p[-4],"cond":cond,
+    return bid, {"id":bid,"fp":fingerprint(bundle),
+        "cell":p[-3],"skill":p[-4],"cond":cond,
         "prompt":cells[p[-3]]["prompt"],
         "predicates":ji.get("predicates") or cells[p[-3]]["predicates"],
         "outcome":o.get("outcome"),"deterministic":sc.get("deterministic"),
@@ -158,17 +181,28 @@ def main():
         try: cells={c["id"]:c for c in json.load(open(CORPUS))["prompts"]}
         except Exception as e: log(f"corpus err {e}"); time.sleep(60); continue
         done=judged_ids()
-        todo=[]
+        todo=[]; restale=0
         for sc in glob.glob(os.path.join(LADDER,"*","*","*","attempt-*","score.json")):
             b=os.path.dirname(sc)
             try: bid,one=pkg(b,cells)
             except Exception: continue
-            if bid not in done: todo.append((bid,one))
+            prior=done.get(bid)
+            if prior is None:
+                todo.append((bid,one))
+            elif prior.get("fp") != one["fp"]:
+                # Same path, different artifact: the tree was rebuilt under a
+                # verdict that no longer describes it. Re-judge rather than show
+                # a stale result. A store written before fingerprints existed has
+                # no "fp" and lands here too — that costs one re-judge pass on
+                # first upgrade, which is the correct trade against silently
+                # reporting the previous run's verdicts.
+                restale+=1; todo.append((bid,one))
         if todo:
-            log(f"{len(todo)} unjudged")
+            log(f"{len(todo)} unjudged" + (f" ({restale} stale: bundle changed under an existing verdict)" if restale else ""))
             for bid,one in todo:
                 try:
                     v=judge(one); v["judge"]="sonnet-5"; v["judged_at"]=int(time.time())
+                    v["fp"]=one["fp"]   # never trust the model to echo it back
                     with open(STORE,"a") as f: f.write(json.dumps(v)+"\n")
                     push_store()
                     log(f"judged {bid} -> {v.get('overall')}")
