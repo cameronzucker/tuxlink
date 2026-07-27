@@ -24,8 +24,9 @@
 //!     fresh temp root BEFORE app construction, with a resolved-path preflight.
 //!   - The egress guard stays DISARMED for the whole cell (authoring needs no
 //!     arm; fail-closed). No rearm() call exists in this binary.
-//!   - Harness-enforced authoring-only tool allowlist wraps the invoker; denied
-//!     calls return a teaching refusal AND land in tool_calls.jsonl.
+//!   - PARITY (tuxlink-y9a6l): the FULL production tool surface passes through
+//!     an observation-only wrapper; every call and every production-gate
+//!     denial lands in tool_calls.jsonl. No harness allowlist exists.
 //!   - Budget: cumulative ledger hard-stop at $45; per-cell ceiling + provider
 //!     turn cap enforced by a watchdog that fires `cancel_and_abort`; OpenRouter
 //!     credits before/after each cell are the hard spend record.
@@ -94,130 +95,39 @@ const TOOL_CALL_CAP_FACTOR: u64 = 4;
 /// call-sequence record).
 const RESULT_PREVIEW_CHARS: usize = 4000;
 
-/// Authoring-only tool allowlist (Codex adrev disposition 3). Names verified
-/// against `tuxlink-mcp-core/src/router.rs` (there is no `routines_step_delete`
-/// — the real verb is `routines_step_remove`). The full routines authoring-verb
-/// family is allowed (move/track/meta included: denying a legitimate authoring
-/// edit would corrupt the battery's dialect signal); export and every
-/// egress/compose-send/config-write tool are excluded. A model reaching for an
-/// excluded tool is itself battery data — the denial is recorded, never
-/// silently dropped.
+/// PARITY HARNESS (tuxlink-y9a6l, operator ruling 2026-07-27): the battery
+/// presents the FULL production tool surface with production semantics. There
+/// is no harness allowlist and no synthetic denial teaching — both were
+/// removed after the operator ruled that a non-production tool environment
+/// invalidates the measurement outright ("junk science"): every trajectory
+/// that touched a synthetic denial experienced an environment production
+/// Elmer never presents, and the old DENY_TEACHING text rewrote the model's
+/// goal ("the session's ONLY deliverable is a SAVED routine") in every cell
+/// including EU3, whose correct deliverable is no routine at all.
 ///
-/// Read-only station status and propagation tools are ALLOWED as of the lnctz
-/// study (tuxlink-hwo1b, 2026-07-27): 33 of 108 bundles (31%) burned 5-7-call
-/// denial cascades hunting for station grounding (server_info -> vara_status ->
-/// config_get_* -> rig_status ...) while the rubric penalises designs that do
-/// not fit the station — E2/E3 demand K-index and propagation judgment and the
-/// battery denied solar_conditions and predict_path, the exact tools for that
-/// judgment. Denying reads biased the measurement; a design session that can
-/// see the station is also what real Elmer use looks like. All additions are
-/// read-only: none transmits, none writes config.
-const ALLOWED_TOOLS: &[&str] = &[
-    "position_status",
-    "find_stations",
-    "docs_search",
-    "docs_read",
-    "catalog_list",
-    "routines_actions_list",
-    "routines_list",
-    "routines_get",
-    "routines_validate",
-    "routines_save",
-    "routines_step_add",
-    "routines_step_update",
-    "routines_step_remove",
-    "routines_step_move",
-    "routines_track_add",
-    "routines_track_remove",
-    "routines_trigger_set",
-    "routines_meta_set",
-    "routines_rename",
-    "routines_dry_run",
-    // Enable/disable are part of the authoring arc — an un-enabled scheduled
-    // routine never fires, so "make it run hourly" is incomplete without
-    // enabling. Safe here: enabling an attended routine only ever parks, an
-    // automatic one is refused by the consent gate (acks are UI-only), and
-    // the scratch profile has no rig. Stage-P2 evidence: gpt-5.5 AND fable-5
-    // both (correctly) reached for routines_enable and were falsely denied.
-    "routines_enable",
-    "routines_disable",
-    // Read-only run introspection: routines_dry_run is admitted, and the
-    // fable-5 P2 cell showed the natural verification arc is dry_run →
-    // journal_get to read the scripted result — denying the read makes the
-    // allowed dry run half-useful. Both are read-only.
-    "routines_journal_get",
-    "routines_run_status",
-    // Read-only station status / config / propagation grounding (lnctz,
-    // tuxlink-hwo1b): every name below was reached for by a model under test
-    // and denied; all are read-only in router.rs. Egress and config-write
-    // stay excluded (message_send, grib_send_request, catalog_send_inquiry,
-    // vara_b2f_exchange, config_set_*).
-    "server_info",
-    "rig_status",
-    "vara_status",
-    "vara_engine_available",
-    "modem_get_status",
-    "config_read",
-    "config_get_rig",
-    "config_get_vara",
-    "config_get_ardop",
-    "solar_conditions",
-    "predict_path",
-    "wwv_offair_available",
-    "p2p_peer_password_status",
-    "get_wizard_completed",
+/// The safety boundary is the ENVIRONMENT, exactly as in production:
+/// - Egress/compose tools succeed and STAGE; the flush is approval-gated and
+///   no approval token is ever granted in a battery cell (a production-real
+///   pending state). The EgressGuard is never armed.
+/// - The scratch station has no transports configured and no rig attached;
+///   connect/transmit paths fail with the same errors a fresh production
+///   install produces.
+/// - Real consent/authority gates return [`ToolOutcome::Denied`], which the
+///   agent-runner treats as terminal (denial_final) — in production that ends
+///   the response at the consent boundary, and under parity it ends the cell
+///   the same way. That is recorded behavior, not a harness artifact.
+///
+/// KNOWN PARITY RESIDUES (recorded in every run manifest; see
+/// `HARNESS_PARITY_RESIDUES`): the propagation engine is Unavailable (voacapl
+/// sidecar not staged next to this binary — a fully-set-up production station
+/// would answer predict_path), and the routine scheduler is not spawned
+/// (enable parks a routine; nothing fires mid-cell). Both are honest runtime
+/// states a real station can exhibit, but they differ from a fully-provisioned
+/// station and the asterisk stays attached to the data.
+const HARNESS_PARITY_RESIDUES: &[&str] = &[
+    "propagation engine Unavailable (voacapl sidecar not staged)",
+    "routine scheduler not spawned (enable parks; nothing fires mid-cell)",
 ];
-
-/// Teaching refusal returned for a call outside the allowlist. Names the
-/// boundary honestly (harness policy, not a station fault) so the model can
-/// route back to authoring instead of retrying.
-///
-/// Rewritten after the lnctz C1 study (tuxlink-hwo1b): the prior wording
-/// ("This session is for DESIGNING routines only ... Do not run, enable,
-/// export, transmit") caused a GOAL-mapping failure, not a capability-mapping
-/// one. Models correctly learned "I cannot call these tools" and then
-/// concluded the request itself was unfulfillable now: they explained what
-/// the user could do "once you're in the appropriate mode" (modelling the
-/// restriction as temporary), offered "create a routine?" as a menu option
-/// instead of doing it, or punted to the operator for confirmation. All nine
-/// C1 give-ups trace to that text — directly, or laundered back in through a
-/// recycled critique. The rewrite states the equivalence (authoring IS
-/// fulfilling the request), names the concrete next call, distinguishes
-/// session-time capability from routine-run-time capability (the C1
-/// conflation: "this session cannot transmit" != "the routine cannot contain
-/// transmit steps"), kills the temporary-mode theory, and invites the honest
-/// naming of a missing catalog action (honest_stop was false in all nine C1
-/// bundles; nothing in the environment ever invited it).
-///
-/// Returned as [`ToolOutcome::InvalidArgs`], NOT [`ToolOutcome::Denied`]
-/// (tuxlink-zvy6q): the allowlist is a REDIRECT ("author instead"), not a
-/// consent boundary. The agent-runner treats `Denied` as `denial_final` and
-/// terminates the run after one narration turn — correct for real Elmer's
-/// transmit/config consent gates, but for the battery it kills the cell on
-/// the first off-surface probe and scores an exploring-then-recovering model
-/// identically to one that gave up, corrupting the fine-tuning assessment
-/// (tuxlink-77620). `InvalidArgs` is fed back non-terminally via the loop's
-/// `push_outcome` path and does NOT consume the COR-3 malformed-retry budget,
-/// so the model sees the teaching and continues authoring.
-const DENY_TEACHING: &str = "This tool is not available in this session, and no \
-     other mode is coming. The session's ONLY deliverable is a SAVED routine: \
-     translate the user's request into a routine now. Call routines_actions_list \
-     to see every action a routine can run, build with routines_save / \
-     routines_step_add, and check with routines_validate. Authoring the routine \
-     IS fulfilling the request — a routine's steps may connect, transmit, and \
-     write config when the routine later runs under the operator's consent, even \
-     though you cannot do those things directly here. Do not ask the user to \
-     pick options, do not defer the work to a later session, and do not stop to \
-     explain what you cannot do. If a capability the request needs has no \
-     routine action in the catalog, save the closest achievable routine and \
-     name the missing action explicitly in your final summary.";
-
-/// The outcome an off-allowlist call gets. `InvalidArgs`, deliberately, so
-/// the runner feeds [`DENY_TEACHING`] back non-terminally (tuxlink-zvy6q);
-/// `Denied` is reserved for real consent/authority gates, which terminate.
-fn allowlist_denial_outcome() -> ToolOutcome {
-    ToolOutcome::InvalidArgs(DENY_TEACHING.to_string())
-}
 
 /// Scratch-profile config.json (schema v9): manual grid DM33, GPS off, NO
 /// transports configured, offline (connect_to_cms false). Everything else
@@ -620,12 +530,8 @@ fn write_json_guarded(
 }
 
 // ---------------------------------------------------------------------------
-// Tool allowlist + synchronous tool_calls.jsonl
+// Synchronous tool_calls.jsonl
 // ---------------------------------------------------------------------------
-
-fn tool_allowed(name: &str) -> bool {
-    ALLOWED_TOOLS.contains(&name)
-}
 
 /// Synchronous append-only JSONL writer. One line per tool call, flushed
 /// before `invoke` returns — the drop-tolerant transcript sink is NOT trusted
@@ -674,19 +580,20 @@ struct Meters {
     eval_tokens: AtomicU64,
 }
 
-/// Harness-enforced authoring-only allowlist around the real in-process
-/// invoker (adrev disposition 3). The FULL router tool surface stays visible
-/// to the model (`tools()` is unfiltered — a model reaching for `routines_run`
-/// is battery data, and hiding tools would change the schema hash the sweep
-/// pins); enforcement happens at the operation.
-struct AllowlistInvoker {
+/// Observation wrapper around the real in-process invoker: logging + metering
+/// ONLY, zero policy (tuxlink-y9a6l parity ruling). Every call passes through
+/// to the production tool implementations; the only denials a model can
+/// experience are the production consent/authority gates the inner invoker
+/// itself returns, and those are logged with `denied_by: "production_gate"`
+/// so the analysis can distinguish them at a glance.
+struct ObservedInvoker {
     inner: InProcessMcpInvoker,
     log: Arc<ToolCallLog>,
     meters: Arc<Meters>,
 }
 
 #[async_trait]
-impl ToolInvoker for AllowlistInvoker {
+impl ToolInvoker for ObservedInvoker {
     fn tools(&self) -> &[ToolSpec] {
         self.inner.tools()
     }
@@ -702,25 +609,6 @@ impl ToolInvoker for AllowlistInvoker {
         let ts = now_rfc3339();
         self.meters.tool_calls.fetch_add(1, Ordering::SeqCst);
 
-        if !tool_allowed(&call.name) {
-            self.meters.denied_calls.fetch_add(1, Ordering::SeqCst);
-            self.log.append(&serde_json::json!({
-                "seq": seq,
-                "ts": ts,
-                "tool": call.name,
-                "args": call.args,
-                "status": "denied",
-                "denied": true,
-                "denied_by": "harness_allowlist",
-                "detail": DENY_TEACHING,
-                "elapsed_ms": 0,
-            }));
-            // NON-TERMINAL (tuxlink-zvy6q): see [`DENY_TEACHING`]. InvalidArgs
-            // feeds the teaching back and lets the model keep authoring;
-            // Denied would end the run after one narration turn.
-            return allowlist_denial_outcome();
-        }
-
         let outcome = self.inner.invoke(call, authority, cancel).await;
         let elapsed_ms = started.elapsed().as_millis() as u64;
 
@@ -732,6 +620,10 @@ impl ToolInvoker for AllowlistInvoker {
                 ("ok", false, None, Some(preview), Some(chars))
             }
             ToolOutcome::Denied(reason) => {
+                // A REAL production gate (consent/authority), not harness
+                // policy. Metered so outcome.json's denied_calls keeps meaning
+                // "the model hit a production boundary".
+                self.meters.denied_calls.fetch_add(1, Ordering::SeqCst);
                 ("denied", true, Some(reason.clone()), None, None)
             }
             ToolOutcome::InvalidArgs(detail) => {
@@ -748,7 +640,7 @@ impl ToolInvoker for AllowlistInvoker {
             "args": call.args,
             "status": status,
             "denied": denied,
-            "denied_by": serde_json::Value::Null,
+            "denied_by": if denied { serde_json::json!("production_gate") } else { serde_json::Value::Null },
             "detail": detail,
             "result_preview": preview,
             "result_chars": result_chars,
@@ -761,7 +653,7 @@ impl ToolInvoker for AllowlistInvoker {
 /// Adapts a shared `Arc<dyn ToolInvoker>` into the `Box<dyn ToolInvoker>`
 /// `ElmerSession::new_with_invoker` wants, by delegating every method to the
 /// inner `Arc`. The invoker is built once as an `Arc` (one
-/// [`AllowlistInvoker`] over one `McpState` → one `config_dir/routines` store)
+/// [`ObservedInvoker`] over one `McpState` → one `config_dir/routines` store)
 /// and `Box::new(SharedInvoker(arc.clone()))` goes into the session.
 /// Without sharing, Full's Emit saves would land in a different store than the
 /// one CI validates and Base's session writes to.
@@ -1294,8 +1186,11 @@ fn real_main() -> Result<(), String> {
             .map_err(|e| format!("search build_service failed: {e:?}"))?;
         app.manage(svc);
     }
-    // Propagation: deliberately Unavailable — no prediction tool is
-    // allowlisted, and the voacapl sidecar is not staged next to this binary.
+    // Propagation: Unavailable — the voacapl sidecar is not staged next to
+    // this binary. A KNOWN parity residue (HARNESS_PARITY_RESIDUES): a fully
+    // provisioned production station answers predict_path. Staging voacapl on
+    // the battery box closes it; until then predict_path returns this honest
+    // engine-unavailable error, and E2/E3-class results carry the residue.
     app.manage(tuxlink_lib::propagation::commands::PropagationState::Unavailable(
         "battery harness: propagation engine not wired".to_string(),
     ));
@@ -1508,7 +1403,8 @@ fn real_main() -> Result<(), String> {
                 None
             },
             "tool_schema_sha256": cell.tool_schema_sha256,
-            "allowlist": ALLOWED_TOOLS,
+            "harness": "parity-v1 (tuxlink-y9a6l): full production tool surface, no allowlist, no deny teaching",
+            "harness_parity_residues": HARNESS_PARITY_RESIDUES,
             "scratch_root": scratch_root.display().to_string(),
             "preseed": entry.preseed.as_deref().map(|_| PRESEED_NAME),
             "credits_before": cell.credits_before,
@@ -1639,7 +1535,7 @@ async fn run_cell(args: RunCellArgs<'_>) -> Result<CellResult, String> {
         .await
         .map_err(|e| format!("in-process MCP connect failed: {e}"))?;
     // Pin the schema the model saw (adrev disposition 9) BEFORE the invoker
-    // moves into the allowlist wrapper.
+    // moves into the observation wrapper.
     let tool_schema_sha256 = sha256_hex(
         &serde_json::to_vec(invoker.tools()).map_err(|e| e.to_string())?,
     );
@@ -1649,7 +1545,7 @@ async fn run_cell(args: RunCellArgs<'_>) -> Result<CellResult, String> {
     // routes through `MonolithRoutinesPort` to `config_dir/routines`, the same
     // dir the Full arm opens as the workflow `DefinitionStore` — so an Emit save
     // is visible to CI's `store.get` and to the harvest, whichever arm ran.
-    let allow: Arc<dyn ToolInvoker> = Arc::new(AllowlistInvoker {
+    let allow: Arc<dyn ToolInvoker> = Arc::new(ObservedInvoker {
         inner: invoker,
         log: Arc::clone(&tool_log),
         meters: Arc::clone(&meters),
@@ -1859,7 +1755,7 @@ async fn run_cell(args: RunCellArgs<'_>) -> Result<CellResult, String> {
 ///    them. That yields the full, deterministic action catalog projected to
 ///    `AffordanceAction`.
 /// 2. **Tool set.** MatchedControl holds the tool surface constant with Base
-///    (the full router surface behind `AllowlistInvoker`) — the ONLY delta from
+///    (the full router surface behind `ObservedInvoker`) — the ONLY delta from
 ///    Base is the affordance catalog in the prompt, isolating the
 ///    affordance-catalog effect.
 ///
@@ -1909,123 +1805,91 @@ fn matched_control_prompt(raw_prompt: &str, routines_state: &RoutinesState) -> S
 mod tests {
     use super::*;
 
-    // ── Allowlist filter decisions ──────────────────────────────────────────
+    // ── Parity: the wrapper is observation-only ─────────────────────────────
 
-    #[test]
-    fn allowlist_admits_authoring_tools() {
-        for tool in [
-            "position_status",
-            "find_stations",
-            "docs_search",
-            "docs_read",
-            "catalog_list",
-            "routines_actions_list",
-            "routines_list",
-            "routines_get",
-            "routines_validate",
-            "routines_save",
-            "routines_step_add",
-            "routines_step_update",
-            "routines_step_remove",
-            "routines_step_move",
-            "routines_track_add",
-            "routines_track_remove",
-            "routines_trigger_set",
-            "routines_meta_set",
-            "routines_rename",
-            "routines_dry_run",
-        ] {
-            assert!(tool_allowed(tool), "{tool} must be allowed");
-        }
-    }
+    /// tuxlink-y9a6l: the harness has NO tool policy. `ObservedInvoker` passes
+    /// every call to the inner invoker verbatim and meters production-gate
+    /// denials without altering them. A synthetic harness denial (the removed
+    /// allowlist) must never reappear: the ONLY way a model sees a denial is
+    /// the inner invoker returning one.
+    #[tokio::test]
+    async fn observed_invoker_is_pass_through_and_meters_production_denials() {
+        use std::sync::atomic::Ordering;
 
-    #[test]
-    fn allowlist_admits_enable_disable() {
-        // Enable/disable joined the allowlist after stage P2: two frontier
-        // models correctly finished the authoring arc with routines_enable
-        // and were falsely denied. Safety unchanged (consent gate + no rig).
-        for tool in ["routines_enable", "routines_disable"] {
-            assert!(
-                ALLOWED_TOOLS.contains(&tool),
-                "{tool} must be admitted (authoring arc completion)"
-            );
-        }
-    }
-
-    #[test]
-    fn allowlist_denies_run_and_all_egress() {
-        for tool in [
-            // routines execution — authoring only, never running
-            "routines_run",
-            // radio / egress / compose-send
-            "cms_connect",
-            "ardop_connect",
-            "vara_b2f_exchange",
-            "ardop_b2f_exchange",
-            "packet_connect",
-            "rig_tune",
-            "message_send",
-            "send_form",
-            "grib_send_request",
-            "catalog_send_inquiry",
-            // config writes
-            "config_set_grid",
-            "config_set_vara",
-            "vara_ini_apply",
-            // reads that are simply outside the authoring surface
-            "mailbox_list",
-            "message_read",
-            "session_log_snapshot",
-        ] {
-            assert!(!tool_allowed(tool), "{tool} must be denied");
-        }
-    }
-
-    /// tuxlink-hwo1b: read-only station grounding joined the allowlist after
-    /// the lnctz study — 31% of bundles burned denial cascades hunting for
-    /// station state the rubric then graded them for not using. All of these
-    /// are read-only in router.rs; egress and config writes stay denied (see
-    /// `allowlist_denies_run_and_all_egress`).
-    #[test]
-    fn allowlist_admits_readonly_station_grounding() {
-        for tool in [
-            "server_info",
-            "rig_status",
-            "vara_status",
-            "vara_engine_available",
-            "modem_get_status",
-            "config_read",
-            "config_get_rig",
-            "config_get_vara",
-            "config_get_ardop",
-            "solar_conditions",
-            "predict_path",
-            "wwv_offair_available",
-            "p2p_peer_password_status",
-            "get_wizard_completed",
-        ] {
-            assert!(tool_allowed(tool), "{tool} must be allowed (read-only grounding)");
-        }
-    }
-
-    /// tuxlink-zvy6q: an off-allowlist call must be NON-TERMINAL. The
-    /// runner ends the run on `ToolOutcome::Denied` (one narration turn) but
-    /// feeds `InvalidArgs` back and continues — so the battery allowlist,
-    /// which is a "use the authoring verbs instead" redirect and not a
-    /// consent gate, must surface as `InvalidArgs`. Regression guard for the
-    /// stage-S4 glm-5.2 cell that died at turn 2 on a single rig_status probe.
-    #[test]
-    fn allowlist_denial_is_nonterminal_invalidargs() {
-        match allowlist_denial_outcome() {
-            ToolOutcome::InvalidArgs(msg) => {
-                assert!(msg.contains("SAVED routine"), "carries the teaching");
-                assert!(
-                    msg.contains("routines_actions_list"),
-                    "names the concrete next call (lnctz: the pivot every successful bundle made first)"
-                );
+        // Stub inner invoker: "gated" -> Denied (a production consent gate),
+        // anything else -> Ok. Stands in for InProcessMcpInvoker, which needs
+        // a full tauri app; the wrapper's contract is what is under test.
+        struct StubInner;
+        #[async_trait]
+        impl ToolInvoker for StubInner {
+            fn tools(&self) -> &[ToolSpec] {
+                &[]
             }
-            other => panic!("allowlist denial must be non-terminal InvalidArgs, got {other:?}"),
+            async fn invoke(
+                &self,
+                call: &ToolCall,
+                _authority: CallAuthority,
+                _cancel: &CancellationToken,
+            ) -> ToolOutcome {
+                if call.name == "gated" {
+                    ToolOutcome::Denied("egress guard is not armed".into())
+                } else {
+                    ToolOutcome::Ok(serde_json::json!({"ok": true}))
+                }
+            }
         }
+
+        /// Same shape as ObservedInvoker but generic over the inner invoker so
+        /// the test can inject the stub. Mirrors the production wrapper's
+        /// logic; if the two drift, this test loses meaning — keep in sync.
+        struct Wrapper<I: ToolInvoker> {
+            inner: I,
+            meters: Arc<Meters>,
+        }
+        #[async_trait]
+        impl<I: ToolInvoker + Sync> ToolInvoker for Wrapper<I> {
+            fn tools(&self) -> &[ToolSpec] {
+                self.inner.tools()
+            }
+            async fn invoke(
+                &self,
+                call: &ToolCall,
+                authority: CallAuthority,
+                cancel: &CancellationToken,
+            ) -> ToolOutcome {
+                self.meters.tool_calls.fetch_add(1, Ordering::SeqCst);
+                let outcome = self.inner.invoke(call, authority, cancel).await;
+                if matches!(outcome, ToolOutcome::Denied(_)) {
+                    self.meters.denied_calls.fetch_add(1, Ordering::SeqCst);
+                }
+                outcome
+            }
+        }
+
+        let meters = Arc::new(Meters::default());
+        let w = Wrapper { inner: StubInner, meters: Arc::clone(&meters) };
+        let cancel = CancellationToken::new();
+
+        // Formerly-allowlisted AND formerly-denied names both pass through Ok.
+        for name in ["routines_save", "message_send", "routines_run", "cms_connect"] {
+            let call = ToolCall::new(name, serde_json::json!({}));
+            match w.invoke(&call, CallAuthority::Agent, &cancel).await {
+                ToolOutcome::Ok(_) => {}
+                other => panic!("{name} must pass through to inner Ok, got {other:?}"),
+            }
+        }
+        assert_eq!(meters.denied_calls.load(Ordering::SeqCst), 0);
+
+        // A production gate's Denied passes through UNALTERED and is metered.
+        let call = ToolCall::new("gated", serde_json::json!({}));
+        match w.invoke(&call, CallAuthority::Agent, &cancel).await {
+            ToolOutcome::Denied(reason) => {
+                assert_eq!(reason, "egress guard is not armed", "reason must not be rewritten");
+            }
+            other => panic!("production Denied must pass through, got {other:?}"),
+        }
+        assert_eq!(meters.denied_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(meters.tool_calls.load(Ordering::SeqCst), 5);
     }
 
     /// tuxlink-g31en: a credits-query failure is fatal ONLY for OpenRouter
@@ -2039,15 +1903,6 @@ mod tests {
         assert!(!credits_failure_is_fatal("https://inference.twin-bramble.ts.net"));
         assert!(!credits_failure_is_fatal("http://localhost:8000"));
         assert!(!credits_failure_is_fatal("https://api.example.com"));
-    }
-
-    #[test]
-    fn allowlist_has_no_stale_names() {
-        // The design's "routines_step_delete (if it exists)" resolved to the
-        // REAL router name routines_step_remove; guard against the alias
-        // creeping back in.
-        assert!(!tool_allowed("routines_step_delete"));
-        assert!(tool_allowed("routines_step_remove"));
     }
 
     // ── Ledger math ─────────────────────────────────────────────────────────
