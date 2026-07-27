@@ -18,8 +18,10 @@ CORPUS_CANDIDATES=[
 CELLS=["P1","P2","P3","S1","S2","S3","S4","A1","A2","C1","C2","C3","E1","E2","E3","EU1","EU2","EU3"]
 # The skill arm carries an extra review condition (Codex review-skill.md as the
 # reviewer's system prompt). Listed here or its bundles render nowhere.
-COLS=[("base","none"),("base","rev_off"),("base","rev_on"),
-      ("skill","none"),("skill","rev_off"),("skill","rev_on"),("skill","rev_skill")]
+# rev_on columns RETIRED (tuxlink-jaer0): reasoning ON hurts the Nemotron
+# reviewer (28% vs 39% pass) — settled; the matrix no longer renders it.
+COLS=[("base","none"),("base","rev_off"),
+      ("skill","none"),("skill","rev_off"),("skill","rev_skill")]
 def ph(cond): return "build" if cond=="none" else cond
 _corpus_cache={"path":None,"mtime":None,"cells":{}}
 def corpus():
