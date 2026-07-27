@@ -22,7 +22,7 @@ TURNCAP=40
 TEMP=0.2
 CELLS="P1 P2 P3 S1 S2 S3 S4 A1 A2 C1 C2 C3 E1 E2 E3 EU1 EU2 EU3"
 SKILLS="base skill"
-REVCONDS="off on"     # Nemotron reasoning on/off; plus implicit 'none' baseline (= the build)
+REVCONDS="off"        # rev_on RETIRED (tuxlink-jaer0): reasoning ON hurts the reviewer (28% vs 39%); implicit 'none' baseline (= the build)
 MAXATT=3              # 1 base attempt + up to 2 determinism re-runs on deterministic fail
 
 mkdir -p "$OUT"

@@ -10,9 +10,13 @@ agent token wall does not stop it.
 - **Builder (subject):** `qwen35-122b-nvfp4`, local Spark vLLM
   (`https://inference.twin-bramble.ts.net/v1/chat/completions`), keyless.
 - **Skill factor:** `base` (raw prompt) and `skill` (Build-Carefully scaffold).
-- **Review factor (3 conditions):** `none` (baseline = the build itself),
-  `rev_off`, `rev_on` (Nemotron adversarial QA then a qwen revise; reasoning
-  OFF vs ON is the factor).
+- **Review factor:** `none` (baseline = the build itself) and `rev_off`
+  (Nemotron adversarial QA then a qwen revise, reasoning OFF). **`rev_on` is
+  RETIRED (operator decision 2026-07-27, tuxlink-jaer0):** reasoning ON only
+  hurts the Nemotron reviewer — rev_off beat rev_on 39% vs 28% pass in the
+  clean skill arm. Do not re-add it; a deliberate re-test is a new experiment
+  with its own bd issue. `rev_skill` (reviewer-skill column) remains an
+  outstanding test item under tuxlink-0dj6d.
 - **Reviewer:** `nvidia/nemotron-3-super-120b-a12b` via OpenRouter, **pinned to
   Nebius fp4 (NVFP4)** (`provider.order=[Nebius]`, `quantizations=[fp4]`),
   reasoning toggled per condition. Cheap ($0.30/$0.90 per M).
@@ -24,7 +28,7 @@ agent token wall does not stop it.
   OR routine not saved OR not validates-green) is re-run to N=3. Green-but-
   incomplete fails are caught by the Sonnet judge and re-run in a follow-up pass.
 
-Per (cell, skill): ONE shared build (`none` = it), then rev_off / rev_on =
+Per (cell, skill): ONE shared build (`none` = it), then rev_off =
 review+revise on that build's saved def.
 
 ## Where everything lives (R2: `ssh r2-poe`)

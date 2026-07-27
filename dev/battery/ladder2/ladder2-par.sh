@@ -38,13 +38,18 @@ TURNCAP=40
 TEMP=0.2
 CELLS="P1 P2 P3 S1 S2 S3 S4 A1 A2 C1 C2 C3 E1 E2 E3 EU1 EU2 EU3"
 SKILLS="base skill"
-REVCONDS="off on"
-# The skill arm may carry an extra review condition. `skill` uses the Codex-authored
-# review-skill.md as the reviewer's system prompt (reasoning OFF, since rev_off beat
-# rev_on 39% vs 28% pass in the clean skill arm). Set to "off on skill" to add it;
-# the driver skips conditions that already have a score.json, so adding it to a
-# populated tree runs ONLY the new column.
-REVCONDS_SKILL="${LADDER2_REVCONDS_SKILL:-off on}"
+# rev_on is RETIRED (operator decision 2026-07-27, tuxlink-jaer0): reasoning ON
+# only hurts the Nemotron reviewer — rev_off beat rev_on 39% vs 28% pass in the
+# clean skill arm, and Nemotron is vetted capable with reasoning OFF. This was
+# settled earlier but only applied via per-run env overrides, so every fresh
+# launch silently re-tested a settled question. Do not re-add "on" here; a
+# deliberate re-test is a new experiment with its own bd issue.
+REVCONDS="off"
+# The skill arm may carry an extra review condition: `skill` uses the
+# Codex-authored review-skill.md as the reviewer's system prompt (reasoning
+# OFF). Set to "off skill" to add it; the driver skips conditions that already
+# have a score.json, so adding it to a populated tree runs ONLY the new column.
+REVCONDS_SKILL="${LADDER2_REVCONDS_SKILL:-off}"
 SKILLFILE="$OUT/review-skill.md"
 MAXATT=3
 CONC="${LADDER2_CONC:-3}"
