@@ -290,12 +290,24 @@ struct CliArgs {
     /// The experiment condition (default [`Arm::Base`], preserving today's
     /// behavior and the existing default-args test).
     arm: Arm,
+    /// Ladder-2 revise phase: install THIS def into the scratch profile before
+    /// the session (instead of the hardcoded S2 constant), so a run can start
+    /// from a previously-built routine and edit it. The file is a v1 RoutineDef
+    /// JSON; the install path is `<routine>.json` per the DefinitionStore
+    /// contract (filename must equal the def's `routine`). None = today's
+    /// behavior (S2 constant when the corpus cell declares a preseed).
+    preseed_def: Option<PathBuf>,
+    /// Ladder-2 revise phase: send THIS text as the operator prompt instead of
+    /// the frozen corpus text (file-based so a long multi-line reviewer critique
+    /// needs no shell escaping). None = the corpus cell's frozen prompt.
+    prompt_override: Option<String>,
 }
 
 const USAGE: &str = "usage: elmer_battery --corpus <path> --model <openrouter-model-id> \
      --prompt <corpus-id> --out <bundle-dir> [--arm base|matched-control|skill] \
      [--endpoint <url>] [--turn-cap N] [--cell-ceiling-usd X] [--temperature T] \
-     [--ledger <path>] [--turn-timeout-secs N]   (or `--list-arms` to print the \
+     [--ledger <path>] [--turn-timeout-secs N] [--preseed-def <def.json>] \
+     [--prompt-override-file <path>]   (or `--list-arms` to print the \
      supported arms and exit; reads OPENROUTER_API_KEY from the environment)";
 
 fn parse_cli(args: &[String]) -> Result<CliArgs, String> {
@@ -310,6 +322,8 @@ fn parse_cli(args: &[String]) -> Result<CliArgs, String> {
     let mut ledger = None;
     let mut turn_timeout_secs = DEFAULT_TURN_TIMEOUT_SECS;
     let mut arm = Arm::Base;
+    let mut preseed_def = None;
+    let mut prompt_override = None;
 
     let mut it = args.iter();
     while let Some(flag) = it.next() {
@@ -348,6 +362,13 @@ fn parse_cli(args: &[String]) -> Result<CliArgs, String> {
                     .parse()
                     .map_err(|e| format!("--turn-timeout-secs: {e}"))?;
             }
+            "--preseed-def" => preseed_def = Some(PathBuf::from(val("--preseed-def")?)),
+            "--prompt-override-file" => {
+                let p = PathBuf::from(val("--prompt-override-file")?);
+                let text = std::fs::read_to_string(&p)
+                    .map_err(|e| format!("--prompt-override-file {}: {e}", p.display()))?;
+                prompt_override = Some(text);
+            }
             other => return Err(format!("unknown argument {other:?}\n{USAGE}")),
         }
     }
@@ -364,6 +385,8 @@ fn parse_cli(args: &[String]) -> Result<CliArgs, String> {
         ledger,
         turn_timeout_secs,
         arm,
+        preseed_def,
+        prompt_override,
     })
 }
 
@@ -714,26 +737,72 @@ impl ToolInvoker for SharedInvoker {
 /// The battery's [`EventSink`]: appends assistant turns to `turns.log`
 /// (synchronous JSONL) and feeds the meters the watchdog reads. Deltas are
 /// deliberately not persisted — the finalizing Turn carries the full text.
-fn make_battery_sink(meters: Arc<Meters>, turns_log: PathBuf) -> Result<EventSink, String> {
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&turns_log)
-        .map_err(|e| format!("could not open {}: {e}", turns_log.display()))?;
-    let file = Mutex::new(file);
+/// Flush the accumulated streaming-delta run (one `(delta_kind, text)` buffer)
+/// as a single `deltas.jsonl` line. The caller must NOT hold `pending`'s lock.
+fn flush_pending_delta(pending: &Mutex<Option<(String, String)>>, deltas: &Mutex<std::fs::File>) {
+    let taken = pending.lock().expect("delta buffer lock poisoned").take();
+    if let Some((delta_kind, text)) = taken {
+        let mut f = deltas.lock().expect("deltas.jsonl lock poisoned");
+        let line = serde_json::json!({ "ts": now_rfc3339(), "delta_kind": delta_kind, "text": text });
+        if let Err(e) = writeln!(f, "{line}") {
+            eprintln!("elmer_battery: deltas.jsonl append failed: {e}");
+        }
+        let _ = f.flush();
+    }
+}
+
+fn make_battery_sink(
+    meters: Arc<Meters>,
+    turns_log: PathBuf,
+    deltas_log: PathBuf,
+) -> Result<EventSink, String> {
+    let open = |p: &PathBuf| {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(p)
+            .map_err(|e| format!("could not open {}: {e}", p.display()))
+    };
+    let turns = Mutex::new(open(&turns_log)?);
+    let deltas = Mutex::new(open(&deltas_log)?);
+    // Coalesce contiguous same-kind streaming deltas into one line per run. The
+    // finalizing `Turn` carries the assembled ASSISTANT text, but "reasoning"
+    // deltas have no finalizing turn — on a tool-only turn (e.g. base/S1's whole
+    // run) they were previously discarded (`_ => {}`). Capturing them is this
+    // fix's point: full run visibility, esp. for reasoning-emitting cloud models.
+    let pending: Mutex<Option<(String, String)>> = Mutex::new(None);
     Ok(Arc::new(move |event: ElmerEvent| {
         match &event {
+            ElmerEvent::Delta { delta_kind, chunk } => {
+                let mut p = pending.lock().expect("delta buffer lock poisoned");
+                match p.as_mut() {
+                    Some((k, acc)) if k == delta_kind => acc.push_str(chunk),
+                    _ => {
+                        // Kind changed (or first chunk): flush the prior run, start new.
+                        let prev = p.replace((delta_kind.clone(), chunk.clone()));
+                        drop(p);
+                        if let Some((k, text)) = prev {
+                            let mut f = deltas.lock().expect("deltas.jsonl lock poisoned");
+                            let line = serde_json::json!({ "ts": now_rfc3339(), "delta_kind": k, "text": text });
+                            let _ = writeln!(f, "{line}");
+                            let _ = f.flush();
+                        }
+                    }
+                }
+            }
             ElmerEvent::Turn { role, text } => {
-                let mut f = file.lock().expect("turns.log lock poisoned");
-                let line = serde_json::json!({
-                    "ts": now_rfc3339(),
-                    "role": role,
-                    "text": text,
-                });
+                flush_pending_delta(&pending, &deltas);
+                let mut f = turns.lock().expect("turns.log lock poisoned");
+                let line = serde_json::json!({ "ts": now_rfc3339(), "role": role, "text": text });
                 if let Err(e) = writeln!(f, "{line}") {
                     eprintln!("elmer_battery: turns.log append failed: {e}");
                 }
                 let _ = f.flush();
+            }
+            // Tool-call / terminal boundaries: flush any reasoning that preceded
+            // them (the tool-only-turn case where no finalizing Turn arrives).
+            ElmerEvent::Chip { .. } | ElmerEvent::Outcome { .. } => {
+                flush_pending_delta(&pending, &deltas);
             }
             ElmerEvent::Context {
                 prompt_tokens,
@@ -753,9 +822,6 @@ fn make_battery_sink(meters: Arc<Meters>, turns_log: PathBuf) -> Result<EventSin
                     .eval_tokens
                     .fetch_add(u64::from(*eval_tokens), Ordering::SeqCst);
             }
-            // Chips/deltas: the invoker-side tool_calls.jsonl is the call
-            // record; deltas are transient streaming noise.
-            _ => {}
         }
     }))
 }
@@ -905,6 +971,18 @@ fn env_keyring(key: String) -> ElmerKeyring {
 fn outcome_fields(outcome: &RunOutcome) -> (&'static str, String) {
     match outcome {
         RunOutcome::Completed(text) => ("completed", text.clone()),
+        // A wall-clock deadline is CENSORED data, not a verdict about the model.
+        // Folding it into `needs_operator` made it unreadable in both directions:
+        // scored as a capability failure, while its near-zero tool-call count
+        // simultaneously read as an ideal low-churn run. 2026-07-25: 50 of 220
+        // bundles were misread this way and drove a whole round of failure
+        // analysis before it was caught. The predicate lives beside the two
+        // constructors in tuxlink-agent-runner so this cannot drift.
+        RunOutcome::NeedsOperator(reason)
+            if tuxlink_agent_runner::is_deadline_reason(reason) =>
+        {
+            ("truncated", reason.clone())
+        }
         RunOutcome::NeedsOperator(reason) => ("needs_operator", reason.clone()),
         RunOutcome::InvalidAction(detail) => ("invalid_action", detail.clone()),
         RunOutcome::Cancelled => ("cancelled", String::new()),
@@ -1007,8 +1085,32 @@ fn real_main() -> Result<(), String> {
     std::fs::write(config_dir.join("config.json"), SCRATCH_CONFIG_JSON)
         .map_err(|e| format!("could not seed scratch config.json: {e}"))?;
 
-    // S2 preseed: install the reference def before the session exists.
-    if entry.preseed.is_some() {
+    // Preseed: install a reference def before the session exists so the model
+    // edits an existing routine rather than authoring from scratch. Ladder-2's
+    // revise phase supplies an arbitrary built def via --preseed-def (filename
+    // MUST equal the def's `routine` per the DefinitionStore contract);
+    // otherwise the S2 corpus cell installs the hardcoded nearest-40m-dial
+    // constant. --preseed-def takes precedence when both are present.
+    if let Some(def_path) = cli.preseed_def.as_ref() {
+        let def_json = std::fs::read_to_string(def_path)
+            .map_err(|e| format!("could not read --preseed-def {}: {e}", def_path.display()))?;
+        let parsed: serde_json::Value = serde_json::from_str(&def_json)
+            .map_err(|e| format!("--preseed-def {} is not JSON: {e}", def_path.display()))?;
+        let routine_name = parsed
+            .get("routine")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                format!(
+                    "--preseed-def {} has no string `routine` field",
+                    def_path.display()
+                )
+            })?;
+        let routines_dir = config_dir.join("routines");
+        std::fs::create_dir_all(&routines_dir)
+            .map_err(|e| format!("could not create scratch routines dir: {e}"))?;
+        std::fs::write(routines_dir.join(format!("{routine_name}.json")), &def_json)
+            .map_err(|e| format!("could not write preseed def: {e}"))?;
+    } else if entry.preseed.is_some() {
         let routines_dir = config_dir.join("routines");
         std::fs::create_dir_all(&routines_dir)
             .map_err(|e| format!("could not create scratch routines dir: {e}"))?;
@@ -1162,7 +1264,11 @@ fn real_main() -> Result<(), String> {
     // ── Bundle instrumentation files ────────────────────────────────────────
     let tool_log = Arc::new(ToolCallLog::open(&bundle.join("tool_calls.jsonl"))?);
     let meters = Arc::new(Meters::default());
-    let sink = make_battery_sink(Arc::clone(&meters), bundle.join("turns.log"))?;
+    let sink = make_battery_sink(
+        Arc::clone(&meters),
+        bundle.join("turns.log"),
+        bundle.join("deltas.jsonl"),
+    )?;
     let transcript = ElmerTranscriptSink::new(bundle.join("transcript"));
 
     // ── The async cell ──────────────────────────────────────────────────────
@@ -1626,22 +1732,28 @@ async fn run_cell(args: RunCellArgs<'_>) -> Result<CellResult, String> {
     // ── The measured run, per condition arm ─────────────────────────────────
     // Both arms feed the SAME `sink`/`Meters`, so the cross-arm token/turn
     // comparison is apples-to-apples.
+    // Ladder-2 revise phase overrides the frozen corpus prompt with the
+    // reviewer-critique prompt; otherwise the corpus cell's frozen text is used.
+    let effective_prompt = cli
+        .prompt_override
+        .clone()
+        .unwrap_or_else(|| entry.prompt.clone());
     let outcome = match cli.arm {
         // Base: one send over the operator's raw prompt. authoring=false — the
         // pure "no workflow" reference arm (Build Carefully skill NOT injected).
-        Arm::Base => session.send(entry.prompt.clone(), false, sink).await,
+        Arm::Base => session.send(effective_prompt.clone(), false, sink).await,
         // MatchedControl: Base's single send, but the prompt is augmented with
         // the deterministic affordance catalog (see `matched_control_prompt`).
         // authoring=false — this is a user-prompt catalog control, distinct from
         // the Build Carefully system-prompt skill (the +Skill arm is P5).
         Arm::MatchedControl => {
-            let prompt = matched_control_prompt(&entry.prompt, &routines_state);
+            let prompt = matched_control_prompt(&effective_prompt, &routines_state);
             session.send(prompt, false, sink).await
         }
         // Skill: Base's single send with authoring ON — compose_system_prompt
         // injects the routine invariant + authoring skill into the system prompt.
         // The only difference from Base is the skill, so the lift is confound-free.
-        Arm::Skill => session.send(entry.prompt.clone(), true, sink).await,
+        Arm::Skill => session.send(effective_prompt.clone(), true, sink).await,
     };
 
     watchdog_stop.cancel();

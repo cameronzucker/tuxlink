@@ -49,7 +49,10 @@ mod validate;
 
 pub use conversation::{Conversation, Message};
 pub use fakes::{RecordedCall, RecordingInvoker, ScriptedProvider, ScriptedTurn};
-pub use runner::{run, run_with_conversation, run_with_conversation_with_transcript};
+pub use runner::{
+    is_deadline_reason, run, run_with_conversation, run_with_conversation_with_transcript,
+    RUN_BUDGET_REASON, TURN_TIMEOUT_REASON,
+};
 pub use traits::{EgressStatus, Provider, ProviderError, ToolInvoker};
 pub use transcript::{NullTranscript, TranscriptSink};
 pub use types::{

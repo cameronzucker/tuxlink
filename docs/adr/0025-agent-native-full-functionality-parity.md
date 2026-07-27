@@ -1,8 +1,9 @@
-# 25. Agent-native: a feature's complete functionality is reachable by the agent, by design
+# 25. Agent-native parity: a feature's complete functionality AND its diagnostics are reachable and actionable by the agent, by design
 
 Date: 2026-07-19
 Status: Proposed (drafted per operator direction; awaiting operator review)
 Deciders: cameronzucker (N7CPZ), isthmus-sage-owl (authoring session)
+Amended: 2026-07-24 (tanager-owl-cardinal) to add the second parity dimension, quality/diagnostic actionability, per operator direction. The original 2026-07-19 record is preserved intact below; the extension is the dated "Amendment 2026-07-24" section near the end. Parity now has two dimensions under one invariant: **accessibility** (can the agent reach the whole capability) and **quality** (is the feedback the agent gets held to the human-facing bar).
 
 ## Context
 
@@ -125,3 +126,98 @@ surface to depend on the caller's cleverness is the failure mode, not the fix.
 ADR 0024 is the highest existing number; this is 0025. It generalizes 0024;
 0024 is not superseded — it becomes the parity-of-existence application of this
 principle.
+
+## Amendment 2026-07-24: the quality dimension (structural safety over model-parsed advisories)
+
+Amended by tanager-owl-cardinal per operator direction during the Build-Carefully
+lift session, and CORRECTED the same day: a two-front adversarial convergence check (a
+blind Codex re-derivation from the raw run data, plus an independent source-grounded
+critique) overturned this amendment's original precipitating example. The correction is
+preserved below as the honest record, per the project's evidence discipline.
+
+The original ADR establishes parity of *functionality* (the accessibility dimension:
+the agent can reach a capability's complete behavior). This amendment adds the second
+facet of the same bar: parity of *feedback quality*. When the agent uses a capability
+and something is wrong, the diagnostic it receives is held to the same design standard
+as the human-facing one. These are two facets of one invariant, which is why they live
+in one ADR.
+
+### A corrected precipitating finding
+
+The first draft of this amendment cited lift cell base/S1 as a missing-typed-remedy
+defect: an `ARM_FALLTHROUGH_LEAK` warning named its fix only in prose,
+`disposition.remedies` was `[]`, and the model looped to the turn cap, so (the draft
+argued) authoring findings should carry typed remedies the way the consent findings do.
+**That diagnosis was wrong**, and three sources agree:
+
+- `ARM_FALLTHROUGH_LEAK` is a **warning**, and base/S1's routine was already **valid**
+  (`validates_green`).
+- `AuthoringDispositionDto::classify` returns `remedies: []` for any warning-only
+  routine **by deliberate design**: a tested anti-ping-pong invariant
+  (`tuxlink-mcp-core/src/ports.rs:1644`, plus a test at `ports.rs:2214` asserting
+  "no remedy for an acceptable warning (kills the ping-pong)"). Emitting a typed remedy
+  for a non-blocking warning would **reintroduce** the ping-pong the invariant prevents.
+- base/S1's real mechanism is a **model non-termination** (tuxlink-m5oia): it re-sent a
+  byte-identical no-op patch ~35 times, each correctly reported `applied: false` (the
+  m5oia idempotency guard, `src/routines/commands.rs:911`), while ignoring both that
+  signal and the `state: valid` disposition telling it to stop. skill/S1 hit the same
+  warning on the same prose and resolved it. So base/S1 is a model/teaching failure, not
+  a remedy-typing gap.
+
+The quality dimension survives the correction; only the product lever moves. Where a
+diagnostic names a fix the agent *should* make, the parity-respecting move is
+**structural**, not "narrate a remedy and hope the model parses it and does not loop."
+
+### Decision (the quality dimension, corrected)
+
+Add to the Decision above:
+
+5. **Prefer making the unsafe shape unrepresentable, or blocking, over surfacing a
+   non-actionable advisory the weak model must judge.** For the recurring branch
+   fall-through footgun (`ARM_FALLTHROUGH_LEAK` and the `BRANCH_*` family): either make
+   the safe shape the default (auto-terminate a `then` arm unless the author opts into a
+   shared tail), or, where fall-through genuinely corrupts intent (a transmit-bearing
+   arm leaking into another), **escalate it from a warning to a blocking error** so it
+   is not an "acceptable terminal state" the floor model has to recognize and leave
+   alone. The warning-with-no-remedy design is *correct* for true advisories; it is
+   *wrong* only when the fall-through actually breaks the routine.
+
+6. **Typed remedies belong on BLOCKING findings whose fix is a concrete op, and only
+   there.** The consent findings already do this correctly: `AUTO_TX_UNACKED` ships
+   `remedies: [operator_acknowledge, set_attended]` with `agent_terminal: true`
+   (`ports.rs:1658`). That is the LSP-`CodeAction` pattern applied where it belongs: a
+   *blocking* diagnostic carries its fix as structured data; the operator-only branch
+   stays consistent with ADR 0024's `operator-authority` class. Warnings stay
+   remedy-free under the anti-ping-pong invariant. The original draft's "populate
+   `remedies` for all authoring findings" instruction is **withdrawn** as it conflicted
+   with that invariant.
+
+7. **A surface the model reliably mis-navigates is a product signal even when the model
+   is at fault, but the lever is footgun-reduction, not narration.** base/S1 (ignored
+   `applied: false` + `state: valid`) and skill/S3 (declared a buildable task
+   infeasible) are model errors; the base-vs-skill delta (skill passed what base failed
+   on identical tooling) shows the surface is navigable. The product lever is reducing
+   the number of judgment calls the surface demands (safer defaults, fewer footguns,
+   aligned cross-surface vocabularies) plus the teaching/skill layer, not adding prose.
+
+### Consequences (corrected)
+
+- **First enforcement targets (tuxlink-90vcc re-scoped).** The branch fall-through
+  affordance (safe-default or blocking escalation), and the cross-surface vocab/semantics
+  drifts the lift surfaced: `vara-fm` vocabulary mismatch between the MCP and routine
+  `find_stations` surfaces; `params` patch replace-vs-merge semantics; `rig.tune_atu`
+  advertised but runtime-unimplemented with no validation flag; `data.read source:grid`
+  exposing no per-source output to reference. These are structural affordance/error
+  fixes, not narration.
+- **No new per-turn context tax** (unchanged). Typed remedies ride in tool *results* on
+  *blocking* findings only, never in tool *schemas*, so ADR 0027's context-budget
+  objection does not apply.
+- **`predict_path` Routines-action parity** (ADR 0024) remains a genuine capability gap,
+  confirmed by both fronts of the convergence check.
+- **Reachability is still tested with the shipped model** (Principle 4): the floor model,
+  handed the surface, must navigate it; where it cannot, prefer a safer default over more
+  words.
+- **Method note.** This amendment's own correction is the evidence for a process rule: an
+  agent-authored parity finding is grounded against source and cross-checked before it
+  drives a build. The original draft would have added a typed remedy that violated a
+  tested invariant; the two-front convergence check caught it pre-build.
