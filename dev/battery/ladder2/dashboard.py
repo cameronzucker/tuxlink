@@ -2,7 +2,7 @@
 """Ladder-2 progress dashboard. Read-only; scans the run tree per request.
 Serves on the tailnet: http://r2-poe.twin-bramble.ts.net:8899/
 """
-import html, json, os, glob, re, subprocess, datetime
+import html, json, os, glob, re, subprocess, datetime, time, hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # LADDER2_ROOT lets this be render-tested against an rsync mirror off-box.
 ROOT=os.path.expanduser(os.environ.get("LADDER2_ROOT","~/tuxlink-eig6e-build/battery-results/ladder2"))
@@ -18,8 +18,6 @@ CORPUS_CANDIDATES=[
 CELLS=["P1","P2","P3","S1","S2","S3","S4","A1","A2","C1","C2","C3","E1","E2","E3","EU1","EU2","EU3"]
 # The skill arm carries an extra review condition (Codex review-skill.md as the
 # reviewer's system prompt). Listed here or its bundles render nowhere.
-# rev_on columns RETIRED (tuxlink-jaer0): reasoning ON hurts the Nemotron
-# reviewer (28% vs 39% pass) — settled; the matrix no longer renders it.
 COLS=[("base","none"),("base","rev_off"),
       ("skill","none"),("skill","rev_off"),("skill","rev_skill")]
 def ph(cond): return "build" if cond=="none" else cond
@@ -58,12 +56,36 @@ def rung_header(cell):
             f'<div class="cl">PREDICATES ({len(preds)})</div><ol class="cq">{plist}</ol>'
             f'</div></th>')
 def verdicts():
+    """{bundle_id: full verdict record}. Keep the whole record, not just
+    `overall`: the daemon stamps each verdict with a content fingerprint, and
+    read_att needs it to reject stale verdicts (see fingerprint below)."""
     v={}; p=os.path.join(ROOT,"judgments.jsonl")
     if os.path.exists(p):
         for l in open(p):
-            try: r=json.loads(l); v[r["id"]]=r.get("overall")
+            try: r=json.loads(l); v[r["id"]]=r
             except: pass
     return v
+def fingerprint(bundle):
+    """Same content hash the judge daemon stamps on each verdict (sha256 over
+    score.json + outcome.json, '<missing>' sentinel, first 16 hex).
+
+    Verdicts are keyed by bundle PATH, which is stable only while the run tree
+    is immutable. When a slot is archived and re-run (the truncated-bundle
+    sweep), the path names a DIFFERENT artifact; joining on path alone showed
+    the archived bundle's verdict on the fresh in-flight slot — a judged letter
+    over a det '?' with a blue still-running border (operator-reported
+    2026-07-27). The daemon already re-judges on fingerprint mismatch; this
+    makes the dashboard honor the same contract: a verdict renders only for the
+    bundle content it actually graded."""
+    h=hashlib.sha256()
+    for n in ("score.json","outcome.json"):
+        p=os.path.join(bundle,n)
+        try:
+            with open(p,"rb") as f: h.update(f.read())
+        except OSError:
+            h.update(b"<missing>")
+        h.update(b"\0")
+    return h.hexdigest()[:16]
 def attempts(skill,cell,cond):
     """The attempt-N run directories, and ONLY those.
 
@@ -87,7 +109,10 @@ def read_att(skill,cell,cond,a,V):
         s=json.load(open(os.path.join(b,"score.json"))).get("deterministic") or {}
         det="sg" if (s.get("routine_saved") and s.get("validates_green")) else ("s" if s.get("routine_saved") else "x")
     except: det=""
-    verd=V.get(f"{skill}/{cell}/{cond}/{a}","")
+    verd=""
+    rec=V.get(f"{skill}/{cell}/{cond}/{a}")
+    if rec and (("fp" not in rec) or rec["fp"]==fingerprint(b)):
+        verd=rec.get("overall") or ""
     return outcome,det,verd
 def driver_state():
     """RUNNING / COMPLETE / STOPPED, for EITHER driver.
@@ -112,6 +137,65 @@ def driver_state():
         n=len(re.findall(r"^\S*/target/debug/elmer_battery --corpus", out, re.M))
         return "RUNNING" if n<=1 else f"RUNNING &times;{n}"
     except: return "?"
+ATTEMPTS=int(os.environ.get("LADDER2_ATTEMPTS","3"))  # 3x unconditional (tuxlink-x43aa)
+def run_plan():
+    """(expected_bundles, launch_epoch) from run.log's LAST START line, or (None, None).
+
+    The driver declares its own matrix at launch (cells / skills / revconds per
+    arm), so the dashboard derives the bundle target from what THIS run is
+    actually doing instead of hardcoding a count that drifts the next time the
+    matrix changes (rev_on retirement and 3x-unconditional both changed it this
+    week). Per (skill, cell): ATTEMPTS build bundles + ATTEMPTS per review cond
+    ('none' is the build itself, not an extra bundle)."""
+    last=None
+    try:
+        for l in open(os.path.join(ROOT,"run.log")):
+            if re.search(r"LADDER2(?:-PAR)? START",l): last=l
+    except OSError:
+        return None,None
+    if not last: return None,None
+    m=re.match(r"\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})Z\]",last)
+    if not m: return None,None
+    launch=datetime.datetime.strptime(m.group(1),"%Y-%m-%dT%H:%M:%S").replace(tzinfo=datetime.timezone.utc).timestamp()
+    cells=re.search(r"cells=\[([^\]]*)\]",last)
+    skills=re.search(r"skills=\[([^\]]*)\]",last)
+    rv=re.search(r"revconds=\[([^\]]*)\]",last)
+    if not (cells and skills and rv): return None,None
+    ncells=len(cells.group(1).split()); arms=skills.group(1).split()
+    # "none off / skill-arm: off on" (parallel driver) or "none off" (serial).
+    parts=rv.group(1).split("/")
+    base_conds=[t for t in parts[0].split() if t!="none"]
+    skill_conds=base_conds
+    if len(parts)>1:
+        skill_conds=[t for t in parts[1].replace("skill-arm:","").split() if t!="none"]
+    exp=0
+    for a in arms:
+        conds=skill_conds if a=="skill" else base_conds
+        exp+=ncells*ATTEMPTS*(1+len(conds))
+    return exp,launch
+def _dur(secs):
+    m=int(secs)//60; h,m=divmod(m,60)
+    return f"{h}h{m:02d}m" if h else f"{m}m"
+def eta_html(scored,mtimes,state):
+    """bundles-done / pace / ETA summary fragment. Pace counts only score.json
+    written since THIS launch's START: bundles inherited from a previous launch
+    via the idempotent skip have old mtimes and would inflate the rate. Elapsed
+    is wall time since launch, so 1800s stall-eaten turns depress the pace
+    honestly instead of being censored out of it."""
+    exp,launch=run_plan()
+    if not exp: return ""
+    frag=f'&nbsp;|&nbsp; bundles: <b>{scored}/{exp}</b>'
+    if state=="COMPLETE" or scored>=exp or not launch: return frag
+    now=time.time(); recent=[t for t in mtimes if t>=launch]
+    if len(recent)<3 or now<=launch+60:
+        return frag+' &nbsp;|&nbsp; ETA: <b>warming up</b>'
+    rate=len(recent)/(now-launch)  # bundles/sec, this launch only
+    secs=(exp-scored)/rate
+    eta=datetime.datetime.fromtimestamp(now+secs,datetime.timezone.utc)
+    day="" if eta.date()==datetime.datetime.now(datetime.timezone.utc).date() else eta.strftime(" %b %d")
+    return (frag+f' &nbsp;|&nbsp; pace: <b>{rate*3600:.1f}/hr</b>'
+            f' &nbsp;|&nbsp; ETA: <b>~{eta.strftime("%H:%M")}Z{day}</b>'
+            f' <span style="color:#8b949e">(+{_dur(secs)}, {len(recent)} this launch)</span>')
 def logtail(n=14):
     try: return "".join(open(os.path.join(ROOT,"run.log")).readlines()[-n:])
     except: return "(no run.log)"
@@ -166,16 +250,24 @@ def badge(outcome,det,verd,rerun=False):
             f'color:{vc};font-weight:600">{vtxt}<sub style="color:{oc};font-weight:400">{det or "?"}</sub></span>')
 def page():
     V=verdicts(); state=driver_state(); RR=rerun_targets()
-    scored_ids=set()
+    scored_ids=set(); mtimes=[]
     for sc in glob.glob(os.path.join(ROOT,"*/*/*/*/score.json")):
         p=os.path.dirname(sc).split(os.sep); cond="none" if p[-2]=="build" else p[-2]
         scored_ids.add(f"{p[-4]}/{p[-3]}/{cond}/{p[-1]}")
+        try: mtimes.append(os.path.getmtime(sc))
+        except OSError: pass
     scored=len(scored_ids)
-    awaiting=len([i for i in scored_ids if i not in V])
+    # A scored bundle whose stored verdict fingerprints to DIFFERENT content
+    # (archived + re-run slot) counts as awaiting judge, not as judged.
+    def _vok(i,rec):
+        sk,c,cond,a=i.split("/")
+        return ("fp" not in rec) or rec["fp"]==fingerprint(os.path.join(ROOT,sk,c,ph(cond),a))
+    vmap={i:(V[i].get("overall") or "") for i in scored_ids if i in V and _vok(i,V[i])}
+    awaiting=len(scored_ids)-len(vmap)
     total=len(CELLS)*len(COLS)
     done=sum(1 for c in CELLS for (sk,cd) in COLS if any(os.path.exists(os.path.join(ROOT,sk,c,ph(cd),a,"score.json")) for a in attempts(sk,c,cd)))
     from collections import Counter
-    tally=Counter(V[i] for i in scored_ids if i in V)
+    tally=Counter(vmap.values())
     rows=""
     for c in CELLS:
         tds=""
@@ -217,7 +309,7 @@ th.rung .cq li{{margin:3px 0;color:#c9d1d9}}
 /* Last rows would push the card off-screen; flip it upward. */
 tr:nth-last-child(-n+5) th.rung .card{{top:auto;bottom:0}}</style></head><body>
 <h2>Ladder 2 &nbsp;<span style="color:{sc}">{state}</span></h2>
-<p>cells done: <b>{done}/{total}</b> conditions &nbsp;|&nbsp; scored bundles (incl. determinism re-runs): <b>{scored}</b>
+<p>cells done: <b>{done}/{total}</b> conditions{eta_html(scored,mtimes,state)}
 &nbsp;|&nbsp; judged: <b>{sum(tally.values())}</b> (<span style="color:#1a7f37">P {tally.get("PASS",0)}</span> / <span style="color:#9a6700">~ {tally.get("PARTIAL",0)}</span> / <span style="color:#cf222e">F {tally.get("FAIL",0)}</span>) &nbsp;|&nbsp; <b style="color:#388bfd">awaiting judge: {awaiting}</b> &nbsp;|&nbsp; updated {now} (auto-refresh 20s)</p>
 <div style="background:#161b22;border:1px solid #30363d;border-radius:6px;padding:10px 14px;margin:8px 0;max-width:900px">
 <b>How to read a cell.</b> Each badge is one run. Multiple badges = determinism re-runs of the same condition.<br>
