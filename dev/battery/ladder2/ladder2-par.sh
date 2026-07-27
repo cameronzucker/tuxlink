@@ -151,14 +151,15 @@ run_cell(){
 do_cell(){
   local skill="$1" cell="$2" disp="$3"
   local bdir="$OUT/$skill/$cell/build"
-  run_cell "$bdir/attempt-1" "$skill" "$cell" "$disp" && log "build $skill/$cell #1: $(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["outcome"])' "$bdir/attempt-1/outcome.json" 2>/dev/null)"
-  man "{\"phase\":\"build\",\"skill\":\"$skill\",\"cell\":\"$cell\",\"attempt\":1,\"det_fail\":$(det_fail "$bdir/attempt-1")}"
-  if [ "$(det_fail "$bdir/attempt-1")" = "1" ]; then
-    for a in 2 3; do
-      run_cell "$bdir/attempt-$a" "$skill" "$cell" "$disp" && log "build $skill/$cell #$a (determinism re-run)"
-      man "{\"phase\":\"build\",\"skill\":\"$skill\",\"cell\":\"$cell\",\"attempt\":$a,\"det_fail\":$(det_fail "$bdir/attempt-$a")}"
-    done
-  fi
+  # EVERY rung runs 3x unconditionally (operator decision 2026-07-27,
+  # tuxlink-x43aa): the det_fail-gated design re-sampled only FAILURES, so a
+  # lucky single-attempt green was trusted as stable. Models are
+  # non-deterministic; a result is a RATE, and successes get flakiness-tested
+  # exactly like failures. Per-attempt score.json skip keeps resume semantics.
+  for a in 1 2 3; do
+    run_cell "$bdir/attempt-$a" "$skill" "$cell" "$disp" && log "build $skill/$cell #$a: $(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["outcome"])' "$bdir/attempt-$a/outcome.json" 2>/dev/null)"
+    man "{\"phase\":\"build\",\"skill\":\"$skill\",\"cell\":\"$cell\",\"attempt\":$a,\"det_fail\":$(det_fail "$bdir/attempt-$a")}"
+  done
   local def; def="$(built_def "$bdir/attempt-1")"
   local conds="$REVCONDS"
   [ "$skill" = "skill" ] && conds="$REVCONDS_SKILL"
@@ -167,7 +168,8 @@ do_cell(){
     for a in 1 2 3; do
       local adir="$rdir/attempt-$a" mdir="$rdir/meta-$a"
       if [ -f "$adir/score.json" ]; then continue; fi
-      if [ "$a" -gt 1 ] && { [ ! -f "$rdir/attempt-1/score.json" ] || [ "$(det_fail "$rdir/attempt-1")" != "1" ]; }; then break; fi
+      # 3x unconditional (tuxlink-x43aa): no det_fail gate — every rev
+      # attempt runs, sampling reviewer+revise stability like the build.
       mkdir -p "$mdir"
       local cp_prompt="$mdir/user_prompt.txt"; cell_prompt "$cell" > "$cp_prompt"
       # The builder's own account + the post-build routine inventory. Both were

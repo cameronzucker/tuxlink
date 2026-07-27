@@ -112,14 +112,12 @@ for skill in $SKILLS; do
 for cell in $CELLS; do
   # ---- BUILD (shared; 'none' condition == build/attempt-1) ----
   bdir="$OUT/$skill/$cell/build"
-  run_cell "$bdir/attempt-1" "$skill" "$cell" && log "build $skill/$cell #1: $(cat "$bdir/attempt-1/outcome.json" 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin)["outcome"])' 2>/dev/null)"
-  man "{\"phase\":\"build\",\"skill\":\"$skill\",\"cell\":\"$cell\",\"attempt\":1,\"det_fail\":$(det_fail "$bdir/attempt-1")}"
-  if [ "$(det_fail "$bdir/attempt-1")" = "1" ]; then
-    for a in 2 3; do
-      run_cell "$bdir/attempt-$a" "$skill" "$cell" && log "build $skill/$cell #$a (determinism re-run)"
-      man "{\"phase\":\"build\",\"skill\":\"$skill\",\"cell\":\"$cell\",\"attempt\":$a,\"det_fail\":$(det_fail "$bdir/attempt-$a")}"
-    done
-  fi
+  # EVERY rung runs 3x unconditionally (tuxlink-x43aa): see ladder2-par.sh —
+  # successes get flakiness-tested like failures; a result is a RATE.
+  for a in 1 2 3; do
+    run_cell "$bdir/attempt-$a" "$skill" "$cell" && log "build $skill/$cell #$a: $(cat "$bdir/attempt-$a/outcome.json" 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin)["outcome"])' 2>/dev/null)"
+    man "{\"phase\":\"build\",\"skill\":\"$skill\",\"cell\":\"$cell\",\"attempt\":$a,\"det_fail\":$(det_fail "$bdir/attempt-$a")}"
+  done
   # ---- REVIEW + REVISE conditions (on the shared build attempt-1) ----
   def="$(built_def "$bdir/attempt-1")"
   for cond in $REVCONDS; do
@@ -128,8 +126,8 @@ for cell in $CELLS; do
       adir="$rdir/attempt-$a"      # the revise bundle (run_cell rm -rf's this)
       mdir="$rdir/meta-$a"         # review inputs live HERE, a sibling run_cell never wipes
       if [ -f "$adir/score.json" ]; then continue; fi
-      # attempt>1 only if attempt-1 was a determinism fail
-      if [ "$a" -gt 1 ] && { [ ! -f "$rdir/attempt-1/score.json" ] || [ "$(det_fail "$rdir/attempt-1")" != "1" ]; }; then break; fi
+      # 3x unconditional (tuxlink-x43aa): no det_fail gate — every rev
+      # attempt runs, sampling reviewer+revise stability like the build.
       mkdir -p "$mdir"
       # review (fresh critique per attempt); reasoning capture -> critique.meta
       cp_prompt="$mdir/user_prompt.txt"; cell_prompt "$cell" > "$cp_prompt"

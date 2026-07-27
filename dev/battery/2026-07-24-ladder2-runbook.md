@@ -55,8 +55,10 @@ ssh r2-poe 'tail -20 ~/tuxlink-eig6e-build/battery-results/ladder2/run.log
   find ~/tuxlink-eig6e-build/battery-results/ladder2 -name score.json | wc -l   # bundles scored
   ps -eo pid,etime,comm | grep -E "ladder2|elmer_battery" | grep -v grep'
 ```
-Expected total bundles at completion (no re-runs): 36 build + 72 revise = 108,
-plus determinism re-runs. `run.log` ends with `LADDER2 COMPLETE`.
+Expected total bundles at completion: every rung runs **3x unconditionally**
+(tuxlink-x43aa, operator decision 2026-07-27 — successes get flakiness-tested
+like failures; a result is a RATE): 108 build + 108 revise = 216 with the
+current base/skill × rev_off matrix. `run.log` ends with `LADDER2 COMPLETE`.
 
 ## Resume (if the detached driver died)
 
