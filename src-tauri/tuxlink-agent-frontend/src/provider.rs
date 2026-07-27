@@ -981,13 +981,22 @@ from the docs — the docs describe what actions do, not their JSON shapes. \
 BUILD ROUTINES IN SMALL PIECES, never as one big document: (1) save the \
 catalog's definition_template under your routine's name with routines_save \
 (def is a JSON object — pass the definition itself, not a quoted string of \
-it); (2) the template's first step is a SAMPLE local.log — change it to your \
-first real action with routines_step_update (its params replace wholesale); \
-(3) add each further step with its own routines_step_add call (omit the step \
-id to have one assigned; appending to the track lands new steps before the \
-template's final end step, where they run); (4) the template starts with a \
-manual trigger — call routines_trigger_set ONLY when the operator asked for \
-a schedule or other trigger, and set exactly what was asked. Each call is \
+it); (2) the template's steps are a SAMPLE find-and-connect flow — adapt them: \
+routines_step_update changes a step's params (they replace wholesale) but a \
+step can NEVER change kind between action and control, so a sample step \
+that does not fit your routine (an unneeded find/connect/branch) is removed \
+with routines_step_remove, and its replacement added with routines_step_add; \
+(3) add each further step with its \
+own routines_step_add call (omit the step id to have one assigned; appending \
+to the track lands new steps before the template's final end step, where \
+they run);(4) the template starts with a MANUAL trigger, which never fires \
+on its own — whenever the request states any recurrence (\"daily\", \
+\"hourly\", \"a few times a day\", \"on a regular basis\", \"check in every \
+morning\"), call routines_trigger_set with a schedule trigger matching that \
+cadence; the operator does not need to say the word \"schedule\". Keep \
+manual only for run-on-demand requests. A message the routine should SEND \
+must be staged by a local.compose step placed BEFORE the radio.connect that \
+carries it — connect sends what is already in the outbox. Each call is \
 validated on its own, so a mistake costs one small retry and the error names \
 the exact step and field. To CHANGE an existing routine, edit the one piece: \
 routines_step_update / routines_step_remove / routines_step_move / \

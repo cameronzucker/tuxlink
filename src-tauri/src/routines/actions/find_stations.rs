@@ -37,7 +37,7 @@ use tuxlink_routines::error::StepError;
 
 use super::{StationDirectory, StationQueryService};
 
-const DATA_FIND_STATIONS: &str = "data.find_stations";
+pub(crate) const DATA_FIND_STATIONS: &str = "data.find_stations";
 
 /// Default number of DISTINCT stations returned when the routine author omits
 /// `limit`. A shortlist to feed `radio.connect` — NOT the whole catalog. An
@@ -135,14 +135,20 @@ impl Action for FindStations {
             needs_radio: false,
             transmits: false,
             needs_internet: true,
-            example_params: Some(r#"{"modes":["vara-hf"],"limit":3}"#),
+            // The example deliberately OMITS modes: the lnctz study
+            // (tuxlink-6i8jz) showed models copy the example over the param
+            // prose, and a mode-pinned example taught mode-pinning even when
+            // the request said "any available mode".
+            example_params: Some(r#"{"bands":["20m"],"limit":3}"#),
             allowed_values: None,
             params: &[
                 ParamSpec {
                     key: "modes",
                     ty: ValueType::StringList,
                     required: false,
-                    description: "Listing modes to include (all when omitted)",
+                    description: "Listing modes to include. OMIT this param for ANY \
+                                  available mode (omitted = all); list modes only when \
+                                  the operator constrained them",
                     allowed: Some(&["vara-hf", "packet", "ardop-hf", "pactor", "robust-packet"]),
                     example: r#"["vara-hf"]"#,
                 },
@@ -813,7 +819,7 @@ mod tests {
     #[test]
     fn descriptor_advertises_example_params_and_dry_run_shape() {
         let d = action(FakeStationQueryService::default()).descriptor();
-        assert_eq!(d.example_params, Some(r#"{"modes":["vara-hf"],"limit":3}"#));
+        assert_eq!(d.example_params, Some(r#"{"bands":["20m"],"limit":3}"#));
         assert!(d.dry_run_shape.is_some());
     }
 

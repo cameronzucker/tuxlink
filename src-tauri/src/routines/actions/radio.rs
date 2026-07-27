@@ -314,7 +314,7 @@ struct ConnectParams {
     listen_before_tx_s: Option<u64>,
 }
 
-const RADIO_CONNECT: &str = "radio.connect";
+pub(crate) const RADIO_CONNECT: &str = "radio.connect";
 
 /// `radio.connect` — spec §6 "Connect attempt": station set × band set in
 /// order; forwards staged outbox traffic; outputs `connected`, `station`,
@@ -358,13 +358,20 @@ pub(crate) fn radio_connect_descriptor() -> ActionDescriptor {
             // live-session MCP tools, which models kept importing).
             description: "To try N stations until one connects, pass them ALL in stations - \
                           this ONE step walks every station-and-band pair in order and stops \
-                          at the first success; do NOT build per-station branching. Exchanges \
-                          mail on success. Self-contained: tunes the rig and runs the modem \
-                          per attempt - no separate tune or open-session step exists, and \
-                          there is no intent param. stations accepts a prior step's output \
-                          (e.g. \"$s2.callsigns\"). Omitting bands is the band-less \
-                          packet-dial shape, NOT \"use current tuning\" - HF modes should \
-                          list bands.",
+                          at the first success; do NOT build per-station branching. On success \
+                          it exchanges mail: it SENDS the messages staged in the outbox BEFORE \
+                          this step (for the identity the session runs under) and pulls the \
+                          inbox. A local.compose placed after this step (or inside its success \
+                          branch) is staged too late and waits for the NEXT connection - to \
+                          send a message this run, compose BEFORE connect. Self-contained: \
+                          tunes the rig and runs the modem per attempt - no separate tune or \
+                          open-session step exists, and there is no intent param. The \
+                          transport mode comes from station config; there is no modes param \
+                          on this step; a station with no usable frequency for the configured \
+                          transport on the requested band is skipped and the walk continues. \
+                          stations accepts a prior step's output (e.g. \"$s2.callsigns\"). \
+                          Omitting bands is the band-less packet-dial shape, NOT \"use \
+                          current tuning\" - HF modes should list bands.",
             needs_radio: true,
             transmits: true,
             needs_internet: false,
@@ -958,9 +965,23 @@ impl ConnectService for MonolithConnectService {
             .state::<Arc<crate::catalog::stations_cache::StationsCache>>();
         let resolver = GatewayFrequencyResolver::new(cache.inner().clone());
         let now_ms = super::data::system_now_ms();
-        let freqs_hz = resolver
-            .resolve(mode, station, band, now_ms)
-            .map_err(|e| e.message())?;
+        // A no-frequency miss is a PER-CANDIDATE condition, not a station
+        // fault (Codex 2026-07-27 P2): with modes-omitted discovery the
+        // nearest callsign can be listed for a transport this station is
+        // not configured for, and a hard error here aborted the whole walk
+        // before later dialable candidates — contradicting the step's
+        // documented "walks every station-and-band pair" contract. Soft
+        // outcome lets the walk record it as last_error and continue.
+        let freqs_hz = match resolver.resolve(mode, station, band, now_ms) {
+            Ok(f) => f,
+            Err(e) => {
+                return Ok(ConnectOutcome {
+                    connected: false,
+                    gateway: None,
+                    error: Some(e.message()),
+                });
+            }
+        };
 
         let mut last_error: Option<String> = None;
         for freq_hz in freqs_hz {

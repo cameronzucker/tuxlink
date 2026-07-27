@@ -47,9 +47,11 @@ Example step:
 
 ## Actions that do work
 
-Beyond reading, three actions in this release find gateways, search the app's
-own help, and write a single config value. Each is described with its
-parameters and a small example.
+Beyond reading, the catalog covers finding gateways, composing and sending
+Winlink traffic, APRS, rig control, space weather, doc search, and config
+writes. The in-app catalog (`routines_actions_list` on the agent side, the
+step editor's palette on yours) is the authoritative list with every
+parameter; this page explains the ones whose behavior is easy to get wrong.
 
 ### data.find_stations (Find gateway stations)
 
@@ -79,11 +81,56 @@ Output: an object with `gateways` (the surviving directory rows), `callsigns`
 Example step:
 
 ```json
-{ "action": "data.find_stations", "params": { "modes": ["vara-hf"], "limit": 3 } }
+{ "action": "data.find_stations", "params": { "bands": ["20m"], "limit": 3 } }
 ```
+
+Leaving `modes` out means "any available mode" - only list modes when you
+want to constrain them.
 
 A following `radio.connect` step reads `$s1.callsigns` (the output of the step
 named `s1`) to try those stations in order.
+
+### local.compose and radio.connect: the two-pass model
+
+Winlink is store-and-forward. Composing a message **stages** it in the outbox;
+nothing goes on the air until a connect. `radio.connect` opens a session with
+a gateway and, on success, exchanges mail: it sends the messages staged in
+the outbox **before** the connect started (under the identity the session
+runs as), and pulls anything waiting in your inbox.
+
+The order inside a routine therefore matters:
+
+```
+compose  ->  connect        the message goes out on this run
+connect  ->  compose        the message waits for some FUTURE connection
+```
+
+A compose placed after the connect, or inside the connect's success branch, is
+staged too late for that session. The validator warns about this shape
+(`COMPOSE_AFTER_CONNECT`), because it is almost always an accident; the one
+legitimate use is a deliberate "stage now, send whenever I next connect"
+routine.
+
+`radio.connect` walks every station in its `stations` list (usually
+`$sN.callsigns` from a find step) across its `bands` list in order and stops
+at the first success. Pass all your candidates to ONE connect step rather than
+building per-station branches. The transport mode comes from your station
+config; there is no per-step mode choice.
+
+`local.compose_catalog_request` stages a catalog request the same way; the
+catalog **response** arrives on a later connection, so the usual shape is
+request, connect, delay, connect again.
+
+### Space weather gates (data.spacewx_swpc / data.spacewx_wwv)
+
+Both fetch solar indices - `spacewx_swpc` from NOAA over the internet,
+`spacewx_wwv` off-air from WWV using the radio. Each outputs `indices` with
+`sfi`, `a_index`, and `k_index`. Fetching alone checks nothing: to make a
+routine act on conditions, add a branch on the value, for example
+`on: "s2.indices.k_index", op: "gte", value: 4`. A high K-index means
+disturbed conditions, so the `then` arm (condition true) should skip or delay
+the connect, and the `else` arm should proceed. The validator flags a fetch
+whose output nothing reads (`OUTPUT_NEVER_CONSUMED`).
 
 ### data.docs_search (Search app docs)
 

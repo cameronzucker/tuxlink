@@ -33,7 +33,7 @@ use tuxlink_routines::error::StepError;
 
 use super::DocsSearchService;
 
-const DATA_DOCS_SEARCH: &str = "data.docs_search";
+pub(crate) const DATA_DOCS_SEARCH: &str = "data.docs_search";
 
 /// Shape-true dry-run output for `data.docs_search` (D6): a well-shaped
 /// zero-hit result — a dry run never touches the FTS index, and empty hits is a

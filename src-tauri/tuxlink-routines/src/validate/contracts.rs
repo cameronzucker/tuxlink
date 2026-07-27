@@ -55,6 +55,18 @@ pub const CROSS_TRACK_VAR: &str = "CROSS_TRACK_VAR";
 /// the step is guaranteed to fail. A `$ref` value is chosen at run time and is
 /// NOT flagged (the validator cannot know its resolved value).
 pub const UNKNOWN_READ_SOURCE: &str = "UNKNOWN_READ_SOURCE";
+/// A pure-read action step (no transmit, no config write) whose declared
+/// outputs nothing in the routine ever reads — no branch tests them, no
+/// later step references them (tuxlink-rrk51). The lnctz corpus calls this
+/// the DEAD READ: 10 of 12 saved E2/EU1 defs carried a `data.spacewx_swpc`
+/// or `data.read` step narrated as "checking" something while its result
+/// influenced nothing. Warning, not error: a fetch that deliberately just
+/// refreshes the station's stored data is legitimate; the message teaches
+/// both readings. The rev_off natural experiment showed a named finding
+/// with a remedy hint reliably converts the dead read into a real gate, so
+/// the message names the wiring (and its polarity — the elicited gates then
+/// failed on then/else direction about half the time).
+pub const OUTPUT_NEVER_CONSUMED: &str = "OUTPUT_NEVER_CONSUMED";
 
 #[derive(Debug, Clone, Copy)]
 struct StepLocation {
@@ -149,6 +161,87 @@ pub fn check(def: &RoutineDef, vctx: &dyn ValidationContext, findings: &mut Vec<
                     Control::Retry { .. } | Control::Delay { .. } | Control::End { .. } => {}
                 },
             }
+        }
+    }
+
+    check_unconsumed_outputs(def, vctx, findings);
+}
+
+/// OUTPUT_NEVER_CONSUMED: see the const doc. Consumption is lexical over
+/// the whole def (any track), matching this module's v1 rule: a `$s2.x`
+/// param token, an embedded `$s2.x` inside text, a branch `on: "s2.x"`, or
+/// a Call arg all count as reads of step s2.
+fn check_unconsumed_outputs(
+    def: &RoutineDef,
+    vctx: &dyn ValidationContext,
+    findings: &mut Vec<Finding>,
+) {
+    fn collect_consumed(value: &serde_json::Value, consumed: &mut HashSet<StepId>) {
+        let mut tokens = Vec::new();
+        collect_dollar_tokens(value, &mut tokens);
+        for (token, _kind) in tokens {
+            if let Some(vp) = VarPath::parse(&token[1..]) {
+                consumed.insert(vp.step);
+            }
+        }
+    }
+    let mut consumed: HashSet<StepId> = HashSet::new();
+    for track in &def.tracks {
+        for step in &track.steps {
+            match step {
+                Step::Action(a) => collect_consumed(&a.params, &mut consumed),
+                Step::Control(c) => match &c.control {
+                    Control::Branch { on, .. } => {
+                        if let Some(vp) = VarPath::parse(on) {
+                            consumed.insert(vp.step);
+                        }
+                    }
+                    Control::Call { args, .. } => collect_consumed(args, &mut consumed),
+                    Control::Retry { .. } | Control::Delay { .. } | Control::End { .. } => {}
+                },
+            }
+        }
+    }
+
+    for track in &def.tracks {
+        for step in &track.steps {
+            let Step::Action(a) = step else { continue };
+            // Explicit read role, NOT inferred from transmits/writes_config
+            // (Codex 2026-07-27 P1: local.compose is neither, yet its point
+            // is the outbox side effect — the consent flags cannot express
+            // "the output IS the point"). Contexts that don't classify
+            // reads never fire this.
+            if !vctx.is_pure_read(&a.action) {
+                continue;
+            }
+            let Some(desc) = vctx.action_descriptor(&a.action) else {
+                continue; // UNKNOWN_ACTION is refs::check's finding
+            };
+            if desc.outputs.is_empty() {
+                continue; // nothing consumable is declared (e.g. data.read today)
+            }
+            if consumed.contains(&a.id) {
+                continue;
+            }
+            let example_key = desc.outputs[0].key;
+            findings.push(
+                Finding::warning(
+                    OUTPUT_NEVER_CONSUMED,
+                    def.routine.clone(),
+                    format!(
+                        "step \"{}\" ({}) reads data but nothing uses its result: no branch \
+                         tests it and no later step references it, so the routine behaves \
+                         identically with or without the read. To act on it, add a branch on \
+                         one of its outputs (e.g. on: \"{}.{example_key}\") — remember then \
+                         runs when the condition is TRUE — or reference it in a later step's \
+                         params. If the step deliberately just refreshes stored station data, \
+                         ignore this",
+                        a.id.0, a.action, a.id.0
+                    ),
+                )
+                .with_track(track.name.clone())
+                .with_step(a.id.clone()),
+            );
         }
     }
 }
@@ -869,6 +962,161 @@ mod tests {
         assert!(
             !findings.iter().any(|f| f.code == UNSATISFIABLE_VAR),
             "interpolation strings must not hit whole-ref errors: {findings:?}"
+        );
+    }
+
+    // --- OUTPUT_NEVER_CONSUMED (tuxlink-rrk51) --------------------------
+
+    fn reader_descriptor(name: &'static str) -> ActionDescriptor {
+        ActionDescriptor {
+            name,
+            label: "",
+            description: "",
+            needs_radio: false,
+            transmits: false,
+            writes_config: false,
+            needs_internet: true,
+            example_params: None,
+            allowed_values: None,
+            params: &[],
+            outputs: &[crate::action::OutputSpec {
+                key: "indices",
+                ty: crate::action::ValueType::Object,
+                description: "",
+                nullable: true,
+            }],
+            dry_run_shape: None,
+        }
+    }
+
+    fn named_action(id: &str, name: &str, params: serde_json::Value) -> Step {
+        Step::Action(ActionStep {
+            id: StepId(id.into()),
+            action: name.into(),
+            params,
+            timeout_s: None,
+            on_radio_busy: BusyPolicy::Wait,
+        })
+    }
+
+    #[test]
+    fn a_pure_read_whose_output_nothing_references_warns_as_dead_read() {
+        // The lnctz E2 shape: spacewx fetched, flow proceeds unconditionally.
+        let def = routine_with(
+            vec![],
+            vec![Track {
+                name: "t1".into(),
+                steps: vec![
+                    named_action("s1", "data.spacewx_swpc", json!({})),
+                    named_action("s2", "local.note", json!({})),
+                ],
+            }],
+        );
+        let ctx = StaticContext::new()
+            .with_action(reader_descriptor("data.spacewx_swpc"))
+            .with_pure_read("data.spacewx_swpc");
+        let mut findings = Vec::new();
+        check(&def, &ctx, &mut findings);
+        let hits: Vec<_> = findings
+            .iter()
+            .filter(|f| f.code == OUTPUT_NEVER_CONSUMED)
+            .collect();
+        assert_eq!(hits.len(), 1, "{findings:?}");
+        assert_eq!(hits[0].step, Some(StepId("s1".into())));
+        assert!(
+            hits[0].message.contains("s1.indices"),
+            "remedy names a concrete gate path: {}",
+            hits[0].message
+        );
+        assert!(
+            hits[0].message.contains("TRUE"),
+            "remedy is polarity-explicit: {}",
+            hits[0].message
+        );
+    }
+
+    #[test]
+    fn consumption_by_branch_on_param_ref_or_embedded_text_silences_the_dead_read() {
+        // Branch `on` consumes.
+        let branched = routine_with(
+            vec![],
+            vec![Track {
+                name: "t1".into(),
+                steps: vec![
+                    named_action("s1", "data.spacewx_swpc", json!({})),
+                    branch("b1", "s1.indices"),
+                ],
+            }],
+        );
+        // A later step's whole-value $ref consumes.
+        let reffed = routine_with(
+            vec![],
+            vec![Track {
+                name: "t1".into(),
+                steps: vec![
+                    named_action("s1", "data.spacewx_swpc", json!({})),
+                    named_action("s2", "local.note", json!({"payload": "$s1.indices"})),
+                ],
+            }],
+        );
+        // An embedded token inside prose consumes.
+        let embedded = routine_with(
+            vec![],
+            vec![Track {
+                name: "t1".into(),
+                steps: vec![
+                    named_action("s1", "data.spacewx_swpc", json!({})),
+                    named_action("s2", "local.note", json!({"msg": "k is $s1.indices.k_index now"})),
+                ],
+            }],
+        );
+        let ctx = StaticContext::new()
+            .with_action(reader_descriptor("data.spacewx_swpc"))
+            .with_pure_read("data.spacewx_swpc");
+        for (label, def) in [("branch", branched), ("whole-ref", reffed), ("embedded", embedded)] {
+            let mut findings = Vec::new();
+            check(&def, &ctx, &mut findings);
+            assert!(
+                findings.iter().all(|f| f.code != OUTPUT_NEVER_CONSUMED),
+                "{label}: {findings:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn unclassified_outputless_and_unknown_actions_never_earn_the_dead_read_warning() {
+        // Codex 2026-07-27 P1 regression: a compose-shaped action has
+        // bookkeeping outputs and neither consent flag, but its point is the
+        // outbox side effect — WITHOUT the explicit pure-read role it must
+        // never be flagged.
+        let compose_like = reader_descriptor("local.compose");
+        // A classified pure read with NO declared outputs: nothing
+        // consumable exists (data.read today).
+        let no_out = ActionDescriptor {
+            outputs: &[],
+            ..reader_descriptor("data.read")
+        };
+        let def = routine_with(
+            vec![],
+            vec![Track {
+                name: "t1".into(),
+                steps: vec![
+                    named_action("s1", "local.compose", json!({})),
+                    named_action("s2", "data.read", json!({})),
+                    named_action("s3", "data.unknown_thing", json!({})),
+                ],
+            }],
+        );
+        let ctx = StaticContext::new()
+            .with_action(compose_like)
+            .with_action(no_out)
+            .with_pure_read("data.read")
+            .with_pure_read("data.unknown_thing");
+        let mut findings = Vec::new();
+        check(&def, &ctx, &mut findings);
+        assert!(
+            findings.iter().all(|f| f.code != OUTPUT_NEVER_CONSUMED),
+            "{findings:?}"
         );
     }
 }

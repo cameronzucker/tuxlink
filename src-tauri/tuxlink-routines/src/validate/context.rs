@@ -49,6 +49,33 @@ pub trait ValidationContext: Send + Sync {
     fn enabled_routines(&self) -> Vec<RoutineDef>;
     /// The station's current radio/internet capabilities.
     fn station_profile(&self) -> StationProfile;
+    /// Does this action STAGE a message into the outbox (a compose)? Paired
+    /// with [`Self::flushes_outbox`] for the `COMPOSE_AFTER_CONNECT`
+    /// ordering check (tuxlink-rrk51): a staged message is only sent by a
+    /// flushing step that runs AFTER it. Defaults to `false` so contexts
+    /// that don't model store-and-forward ordering opt out silently and the
+    /// check never fires. The mapping lives on the context, not the
+    /// descriptor, so this crate stays free of app action names (see
+    /// capability.rs's no-name-sniffing rule).
+    fn stages_outbox(&self, _action: &str) -> bool {
+        false
+    }
+    /// Does this action FLUSH the outbox on success (a connect)? See
+    /// [`Self::stages_outbox`].
+    fn flushes_outbox(&self, _action: &str) -> bool {
+        false
+    }
+    /// Is this action a PURE READ — its only point is the data it outputs?
+    /// Gates `OUTPUT_NEVER_CONSUMED` (tuxlink-rrk51). Explicit opt-in, not
+    /// inferred from `transmits`/`writes_config` (Codex 2026-07-27 P1): a
+    /// `local.compose` is neither transmitting nor config-writing yet its
+    /// point is the outbox side effect, not its `staged`/`mid` bookkeeping
+    /// outputs — inferring purity from the consent flags would flag every
+    /// normal compose. Default `false`: contexts that don't classify reads
+    /// never fire the check.
+    fn is_pure_read(&self, _action: &str) -> bool {
+        false
+    }
 }
 
 /// Builder-style test double mirroring `fakes.rs`'s conventions
@@ -63,6 +90,9 @@ pub struct StaticContext {
     routines: HashMap<String, RoutineDef>,
     enabled: Vec<String>,
     profile: StationProfile,
+    staging: HashSet<String>,
+    flushing: HashSet<String>,
+    pure_reads: HashSet<String>,
 }
 
 impl StaticContext {
@@ -106,6 +136,27 @@ impl StaticContext {
         self.profile = profile;
         self
     }
+
+    /// Mark an action as outbox-STAGING (`stages_outbox` returns true for
+    /// it) for `COMPOSE_AFTER_CONNECT` tests.
+    pub fn with_stages_outbox(mut self, action: &str) -> Self {
+        self.staging.insert(action.to_string());
+        self
+    }
+
+    /// Mark an action as outbox-FLUSHING (`flushes_outbox` returns true for
+    /// it) for `COMPOSE_AFTER_CONNECT` tests.
+    pub fn with_flushes_outbox(mut self, action: &str) -> Self {
+        self.flushing.insert(action.to_string());
+        self
+    }
+
+    /// Mark an action as a PURE READ (`is_pure_read` returns true for it)
+    /// for `OUTPUT_NEVER_CONSUMED` tests.
+    pub fn with_pure_read(mut self, action: &str) -> Self {
+        self.pure_reads.insert(action.to_string());
+        self
+    }
 }
 
 impl ValidationContext for StaticContext {
@@ -134,6 +185,18 @@ impl ValidationContext for StaticContext {
 
     fn station_profile(&self) -> StationProfile {
         self.profile.clone()
+    }
+
+    fn stages_outbox(&self, action: &str) -> bool {
+        self.staging.contains(action)
+    }
+
+    fn flushes_outbox(&self, action: &str) -> bool {
+        self.flushing.contains(action)
+    }
+
+    fn is_pure_read(&self, action: &str) -> bool {
+        self.pure_reads.contains(action)
     }
 }
 

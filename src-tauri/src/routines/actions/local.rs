@@ -149,7 +149,7 @@ use super::LocalService;
 // local.compose
 // ============================================================================
 
-const LOCAL_COMPOSE: &str = "local.compose";
+pub(crate) const LOCAL_COMPOSE: &str = "local.compose";
 
 /// The resolved `@template:` object shape (`MonolithEntityResolver`'s
 /// `"template"` arm, `routines/resolver.rs`): `{id, name, subjectTemplate,
@@ -253,7 +253,11 @@ impl Action for ComposeMessage {
             writes_config: false,
             name: LOCAL_COMPOSE,
             label: "Compose message",
-            description: "Stage a Winlink message in the outbox for the next connection.",
+            description: "Stage a Winlink message in the outbox. Staged messages are SENT \
+                          by the next radio.connect that starts AFTER this step - place \
+                          compose BEFORE the radio.connect that should carry it; a compose \
+                          after the connect (or inside its success branch) waits for a \
+                          future connection.",
             needs_radio: false,
             transmits: false,
             needs_internet: false,
@@ -401,7 +405,7 @@ impl Action for ComposeMessage {
 // local.compose_catalog_request
 // ============================================================================
 
-const LOCAL_COMPOSE_CATALOG_REQUEST: &str = "local.compose_catalog_request";
+pub(crate) const LOCAL_COMPOSE_CATALOG_REQUEST: &str = "local.compose_catalog_request";
 
 #[derive(Debug, Deserialize)]
 struct CatalogRequestParams {
@@ -464,7 +468,10 @@ impl Action for ComposeCatalogRequest {
             writes_config: false,
             name: LOCAL_COMPOSE_CATALOG_REQUEST,
             label: "Compose catalog request",
-            description: "Stage a WL2K catalog request message in the outbox.",
+            description: "Stage a WL2K catalog request message in the outbox. Like \
+                          local.compose, it must run BEFORE the radio.connect that should \
+                          carry it; the catalog response arrives on a LATER connection \
+                          (typically a second radio.connect after a delay).",
             needs_radio: false,
             transmits: false,
             needs_internet: false,
