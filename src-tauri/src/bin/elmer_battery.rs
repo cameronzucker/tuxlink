@@ -1872,7 +1872,7 @@ mod tests {
 
         // Formerly-allowlisted AND formerly-denied names both pass through Ok.
         for name in ["routines_save", "message_send", "routines_run", "cms_connect"] {
-            let call = ToolCall { name: name.into(), args: serde_json::json!({}) };
+            let call = ToolCall::new(name, serde_json::json!({}));
             match w.invoke(&call, CallAuthority::Agent, &cancel).await {
                 ToolOutcome::Ok(_) => {}
                 other => panic!("{name} must pass through to inner Ok, got {other:?}"),
@@ -1881,7 +1881,7 @@ mod tests {
         assert_eq!(meters.denied_calls.load(Ordering::SeqCst), 0);
 
         // A production gate's Denied passes through UNALTERED and is metered.
-        let call = ToolCall { name: "gated".into(), args: serde_json::json!({}) };
+        let call = ToolCall::new("gated", serde_json::json!({}));
         match w.invoke(&call, CallAuthority::Agent, &cancel).await {
             ToolOutcome::Denied(reason) => {
                 assert_eq!(reason, "egress guard is not armed", "reason must not be rewritten");
