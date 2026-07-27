@@ -4136,6 +4136,16 @@ impl Ft8Port for MonolithFt8Port {
 /// failures pass through untouched.
 fn save_err_with_catalog_pointer(e: PortError) -> PortError {
     match e {
+        // A message that already names a JSON path has localised the fault.
+        // Appending the whole-envelope pointer to it is actively harmful: the
+        // pointer talks about the TOP LEVEL, so a nested error arrives beside
+        // advice about a level the author already got right. Observed
+        // 2026-07-26: serde said "missing field `name`" (from a step sitting in
+        // tracks[]), the pointer said "`routine` is the routine's NAME string",
+        // and the builder resolved the contradiction by renaming its correct
+        // top-level `routine` key to `name` — then resent that payload 23 times.
+        // Path-anchored messages carry their own targeted advice; leave them alone.
+        PortError::InvalidInput(m) if is_path_anchored(&m) => PortError::InvalidInput(m),
         PortError::InvalidInput(m) => PortError::InvalidInput(format!(
             "{m} — copy routines_actions_list's definition_template (the COMPLETE valid \
              envelope) and substitute your steps into it. Note: `routine` is the routine's \
@@ -4144,6 +4154,17 @@ fn save_err_with_catalog_pointer(e: PortError) -> PortError {
         )),
         other => other,
     }
+}
+
+/// Does this rejection already say WHERE the fault is? Matches the paths
+/// `tuxlink_routines::types::structural_diagnosis` emits (`tracks[0]…`,
+/// `tracks[0].steps[2]…`, `top level: …`). Deliberately narrow — an unlocalised
+/// serde message must still get the catalog pointer.
+fn is_path_anchored(m: &str) -> bool {
+    m.contains("top level:")
+        || m.split("tracks[")
+            .skip(1)
+            .any(|rest| rest.chars().next().is_some_and(|c| c.is_ascii_digit()))
 }
 
 /// Map one [`tuxlink_routines::validate::Finding`] onto the agent-facing DTO,
@@ -4179,7 +4200,19 @@ fn finding_remedy(code: &'static str) -> &'static str {
         AUTO_WRITE_UNACKED,
     };
     use tuxlink_routines::validate::refs::UNKNOWN_ACTION;
+    use tuxlink_routines::validate::structure::{ARM_FALLTHROUGH_LEAK, NO_TERMINAL_PATH};
     match code {
+        // tuxlink-lnctz: the validator names WHICH step falls off; this names
+        // the call that places the End there. Ladder-2 base/S4/rev_off spent 14
+        // adds / 13 removes / 11 updates never finding it, because the only
+        // anchored instruction it had pointed mid-track. One placed add ends it.
+        NO_TERMINAL_PATH | ARM_FALLTHROUGH_LEAK => {
+            " Add the End with routines_step_add, setting after_step_id to the step named \
+             above — placement is an argument, so this needs no remove/re-add cycle. An \
+             existing End is repositioned with routines_step_move rather than removed and \
+             recreated. Both of these findings are WARNINGS: neither blocks save or enable, \
+             and the disposition's blocked_by field names what actually does."
+        }
         UNKNOWN_ACTION => {
             " Call routines_actions_list for each action's params, consent flags, and the \
              trigger JSON shapes."
@@ -5454,7 +5487,7 @@ mod tests {
 
     // ── tuxlink-591dw: agent-boundary remedy suffixes ──
     mod finding_remedies {
-        use super::super::{map_finding, save_err_with_catalog_pointer};
+        use super::super::{is_path_anchored, map_finding, save_err_with_catalog_pointer};
         use tuxlink_mcp_core::ports::PortError;
         use tuxlink_routines::validate::Finding;
 
@@ -5507,6 +5540,76 @@ mod tests {
                 untouched.message, "two routines collide",
                 "codes without a remedy pass through verbatim"
             );
+        }
+
+        /// tuxlink-lnctz: the two codes that livelocked Ladder-2 must name the
+        /// placing call. The validator names WHICH step; this names the HOW,
+        /// and says neither finding blocks — the loop ran because the model
+        /// read a persisting warning as a failed edit and reverted it.
+        #[test]
+        fn the_terminal_and_leak_codes_name_the_placing_call_and_disclaim_blocking() {
+            for code in [
+                tuxlink_routines::validate::structure::NO_TERMINAL_PATH,
+                tuxlink_routines::validate::structure::ARM_FALLTHROUGH_LEAK,
+            ] {
+                let m = map_finding(Finding::warning(code, "r".to_string(), "x".to_string())).message;
+                assert!(m.contains("after_step_id"), "{code} must name the placement arg: {m}");
+                assert!(
+                    m.contains("routines_step_move"),
+                    "{code} must point at the move verb instead of remove/re-add: {m}"
+                );
+                assert!(m.contains("WARNINGS"), "{code} must disclaim blocking: {m}");
+            }
+        }
+
+        /// tuxlink-mrp4u: a rejection that already names a JSON path must NOT
+        /// gain the whole-envelope pointer. The pointer talks about the top
+        /// level; pasting it beside a nested-path error is what told a builder
+        /// its correct `routine` key was wrong.
+        #[test]
+        fn a_path_anchored_rejection_is_left_alone() {
+            let nested = save_err_with_catalog_pointer(PortError::InvalidInput(
+                "routine JSON is malformed: tracks[1] is a STEP, not a track — steps \
+                 belong in tracks[N].steps"
+                    .to_string(),
+            ));
+            match nested {
+                PortError::InvalidInput(m) => {
+                    assert!(!m.contains("definition_template"), "pointer must be withheld: {m}");
+                    assert!(
+                        !m.contains("`routine` is the routine's"),
+                        "the contradicting note must not appear: {m}"
+                    );
+                    assert!(m.ends_with("tracks[N].steps"), "message kept verbatim: {m}");
+                }
+                other => panic!("{other:?}"),
+            }
+
+            let toplevel = save_err_with_catalog_pointer(PortError::InvalidInput(
+                "routine JSON is malformed: top level: missing field `routine`".to_string(),
+            ));
+            match toplevel {
+                PortError::InvalidInput(m) => {
+                    assert!(!m.contains("definition_template"), "pointer must be withheld: {m}")
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+
+        /// The narrowness of the anchor check matters: an unlocalised serde
+        /// message must STILL get the pointer, which is its whole purpose.
+        #[test]
+        fn an_unlocalised_rejection_still_gets_the_pointer() {
+            let e = save_err_with_catalog_pointer(PortError::InvalidInput(
+                "routine JSON is malformed: unknown variant `cron`".to_string(),
+            ));
+            match e {
+                PortError::InvalidInput(m) => assert!(m.contains("definition_template"), "{m}"),
+                other => panic!("{other:?}"),
+            }
+            // Prose mentioning tracks[] without an index is not a path.
+            assert!(!is_path_anchored("steps live under tracks[].steps"));
+            assert!(is_path_anchored("tracks[2].steps[0]: missing field `id`"));
         }
 
         /// A save REJECTION (the agent's own bad payload) gains the catalog

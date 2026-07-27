@@ -58,11 +58,50 @@ pub const CALL_TARGET_MISSING: &str = "CALL_TARGET_MISSING";
 /// walk a call closure beyond `def` itself.
 pub fn check(def: &RoutineDef, ctx: &dyn ValidationContext, findings: &mut Vec<Finding>) {
     for track in &def.tracks {
+        let before = findings.len();
         check_retry_controls(def, track, findings);
         check_graph_properties(def, track, findings);
         check_arm_fallthrough_leaks(def, track, findings);
+        cross_reference_terminal_and_leak(&mut findings[before..]);
     }
     check_calls(def, ctx, findings);
+}
+
+/// tuxlink-lnctz: [`NO_TERMINAL_PATH`] and [`ARM_FALLTHROUGH_LEAK`] are
+/// INDEPENDENTLY satisfiable, and a model that reads them as one problem
+/// livelocks. Observed in Ladder-2 (`base/S4/rev_off`, `skill/E1/rev_on`):
+/// the model adds an End to terminate the then-arm, which clears the leak
+/// but not the terminal path (the End lands mid-track, so the track tail
+/// still falls off); it reads the surviving finding as "that edit failed",
+/// removes the End, the leak returns instructing the same edit, and the
+/// cycle repeats until the turn budget is gone. Every call returns ok — no
+/// rejection is involved, so only the finding TEXT can break it.
+///
+/// When both fire for one track, each says so and says what the other edit
+/// will and will not do. Scoped to a single track's finding slice, so a
+/// leak on track A never cross-references a terminal path on track B.
+fn cross_reference_terminal_and_leak(track_findings: &mut [Finding]) {
+    let has_leak = track_findings.iter().any(|f| f.code == ARM_FALLTHROUGH_LEAK);
+    let has_no_terminal = track_findings.iter().any(|f| f.code == NO_TERMINAL_PATH);
+    if !(has_leak && has_no_terminal) {
+        return;
+    }
+    for f in track_findings.iter_mut() {
+        if f.code == NO_TERMINAL_PATH {
+            f.message.push_str(
+                ". This track ALSO has an ARM_FALLTHROUGH_LEAK: they are SEPARATE problems \
+                 needing SEPARATE End controls. An End that terminates a branch arm does not \
+                 terminate this fall-through path",
+            );
+        } else if f.code == ARM_FALLTHROUGH_LEAK {
+            f.message.push_str(
+                ". This track ALSO has NO_TERMINAL_PATH: they are SEPARATE problems. The end \
+                 control described above clears THIS finding only - NO_TERMINAL_PATH will \
+                 correctly persist until the track's fall-through path gets its own End. Do NOT \
+                 remove the end control you just added because NO_TERMINAL_PATH is still present",
+            );
+        }
+    }
 }
 
 /// ARM_FALLTHROUGH_LEAK (tuxlink-ilrav, battery S1 post-6epl8-1 qwen
@@ -392,16 +431,40 @@ fn check_graph_properties(def: &RoutineDef, track: &Track, findings: &mut Vec<Fi
         }
 
         if reachable.contains(&n) {
-            findings.push(
-                Finding::warning(
-                    NO_TERMINAL_PATH,
-                    def.routine.clone(),
-                    format!(
-                        "track \"{}\" can run past its last step without hitting an explicit End",
-                        track.name
-                    ),
+            // tuxlink-lnctz: name the step execution actually falls off, and
+            // the placement that fixes it. The bare "track can run past its
+            // last step" text carried NO anchor, while the co-occurring
+            // ARM_FALLTHROUGH_LEAK carried an imperative one ("insert an end
+            // control after the then arm's steps"). A weak model followed the
+            // only anchored instruction it had, landed the End mid-track, saw
+            // this finding survive, reverted, and livelocked — 34 turns in
+            // Ladder-2 base/S4/rev_off. An anchor of equal strength here is
+            // the fix. No MCP tool is named: this crate stays tool-agnostic.
+            let leavers: Vec<String> = track
+                .steps
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| reachable.contains(i) && adj[*i].contains(&n))
+                .map(|(_, s)| format!("\"{}\"", s.id().0))
+                .collect();
+            let message = if leavers.is_empty() {
+                format!(
+                    "track \"{}\" can run past its last step without hitting an explicit End",
+                    track.name
                 )
-                .with_track(track.name.clone()),
+            } else {
+                let named = leavers.join(", ");
+                format!(
+                    "track \"{}\" can run past its last step without hitting an explicit End - \
+                     execution leaves the track after step {named}. Add an End control AFTER \
+                     {named}, or make {named} an End. Only the step(s) named here fall off the \
+                     end; an End placed elsewhere in the track does not clear this",
+                    track.name
+                )
+            };
+            findings.push(
+                Finding::warning(NO_TERMINAL_PATH, def.routine.clone(), message)
+                    .with_track(track.name.clone()),
             );
         }
     }
@@ -692,6 +755,135 @@ mod tests {
         let mut findings = Vec::new();
         check(&def, &ctx, &mut findings);
         assert!(findings.is_empty());
+    }
+
+    // --- tuxlink-lnctz: anchors + cross-reference (Ladder-2 livelock) -----
+
+    #[test]
+    fn no_terminal_path_names_the_step_execution_falls_off_and_where_the_end_goes() {
+        let def = routine_named("r1", vec![track("t1", vec![action("s1"), action("s2")])]);
+        let ctx = StaticContext::new();
+        let mut findings = Vec::new();
+        check(&def, &ctx, &mut findings);
+        let f = findings
+            .iter()
+            .find(|f| f.code == NO_TERMINAL_PATH)
+            .expect("NO_TERMINAL_PATH");
+        // The anchor is the whole point: without a named step the model has
+        // nowhere to put the End and follows whatever other finding IS
+        // anchored (that is the livelock).
+        assert!(f.message.contains("\"s2\""), "must name the fall-off step: {}", f.message);
+        assert!(f.message.contains("AFTER"), "must state placement: {}", f.message);
+        assert!(!f.message.contains("\"s1\""), "s1 does not fall off: {}", f.message);
+    }
+
+    #[test]
+    fn every_step_that_falls_off_the_end_is_named() {
+        // Both arms run off the track end, so both are legitimate End sites.
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![branch("b1", "x", vec!["a1"], vec!["a2"]), action("a1"), action("a2")],
+            )],
+        );
+        let ctx = StaticContext::new();
+        let mut findings = Vec::new();
+        check(&def, &ctx, &mut findings);
+        let f = findings
+            .iter()
+            .find(|f| f.code == NO_TERMINAL_PATH)
+            .expect("NO_TERMINAL_PATH");
+        assert!(f.message.contains("\"a2\""), "{}", f.message);
+    }
+
+    #[test]
+    fn a_track_with_both_a_leak_and_no_terminal_path_cross_references_them() {
+        // The Ladder-2 base/S4/rev_off shape: the then-arm (a1, a2) falls
+        // through into a3, the else arm's entry (leak), and a3 also runs off
+        // the track end (no terminal path). Both fire; the model must be told
+        // they need SEPARATE Ends, or it removes the End it just added.
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    branch("b1", "x", vec!["a1"], vec!["a3"]),
+                    action("a1"),
+                    action("a2"),
+                    action("a3"),
+                ],
+            )],
+        );
+        let ctx = StaticContext::new();
+        let mut findings = Vec::new();
+        check(&def, &ctx, &mut findings);
+        let leak = findings
+            .iter()
+            .find(|f| f.code == ARM_FALLTHROUGH_LEAK)
+            .expect("ARM_FALLTHROUGH_LEAK");
+        let term = findings
+            .iter()
+            .find(|f| f.code == NO_TERMINAL_PATH)
+            .expect("NO_TERMINAL_PATH");
+        assert!(leak.message.contains(NO_TERMINAL_PATH), "leak must name it: {}", leak.message);
+        assert!(
+            leak.message.contains("Do NOT remove"),
+            "leak must forbid the revert that closes the loop: {}",
+            leak.message
+        );
+        assert!(
+            term.message.contains(ARM_FALLTHROUGH_LEAK),
+            "terminal must name it: {}",
+            term.message
+        );
+    }
+
+    #[test]
+    fn a_terminal_path_finding_alone_is_not_cross_referenced() {
+        let def = routine_named("r1", vec![track("t1", vec![action("s1")])]);
+        let ctx = StaticContext::new();
+        let mut findings = Vec::new();
+        check(&def, &ctx, &mut findings);
+        let f = findings
+            .iter()
+            .find(|f| f.code == NO_TERMINAL_PATH)
+            .expect("NO_TERMINAL_PATH");
+        assert!(!f.message.contains(ARM_FALLTHROUGH_LEAK), "{}", f.message);
+    }
+
+    #[test]
+    fn the_cross_reference_never_spans_two_tracks() {
+        // t1 leaks but terminates; t2 has no terminal path but no leak.
+        // Neither may claim the other track's problem.
+        let def = routine_named(
+            "r1",
+            vec![
+                track(
+                    "t1",
+                    vec![
+                        branch("b1", "x", vec!["a1"], vec!["a2"]),
+                        action("a1"),
+                        action("a2"),
+                        end("e1"),
+                    ],
+                ),
+                track("t2", vec![action("s1")]),
+            ],
+        );
+        let ctx = StaticContext::new();
+        let mut findings = Vec::new();
+        check(&def, &ctx, &mut findings);
+        let leak = findings
+            .iter()
+            .find(|f| f.code == ARM_FALLTHROUGH_LEAK)
+            .expect("ARM_FALLTHROUGH_LEAK on t1");
+        let term = findings
+            .iter()
+            .find(|f| f.code == NO_TERMINAL_PATH)
+            .expect("NO_TERMINAL_PATH on t2");
+        assert!(!leak.message.contains(NO_TERMINAL_PATH), "{}", leak.message);
+        assert!(!term.message.contains(ARM_FALLTHROUGH_LEAK), "{}", term.message);
     }
 
     // --- RETRY_ZERO_ATTEMPTS / RETRY_TARGET_MISSING / RETRY_TARGET_NOT_ACTION ---
