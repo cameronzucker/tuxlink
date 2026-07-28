@@ -219,7 +219,7 @@ pub async fn run_with_conversation_with_transcript(
                 on_event(RunEvent::AssistantText { text: text.clone() });
                 return RunOutcome::Completed(text);
             }
-            ModelTurn::ToolCalls(mut calls) => {
+            ModelTurn::ToolCalls(calls) => {
                 // pf6re: one-shot finalization. If a prior tool call was denied we
                 // granted exactly ONE narration turn. The model was supposed to
                 // ANSWER (Text). It emitted tool calls instead — do NOT dispatch
@@ -233,25 +233,32 @@ pub async fn run_with_conversation_with_transcript(
                     };
                 }
 
-                // Boundary coercion (tuxlink-ewqiy): string-encoded composite
-                // args are normalized BEFORE validation so the validator and
-                // the dispatched call both see the parsed form. Without this,
-                // a stringified object (`def: "{…}"`) is rejected here before
-                // the port layer's per-field absorbers ever run — the exact
-                // wedge that cost GLM-5.2 2/3 P1 attempts and qwen its share
-                // of invalid_action outcomes.
-                for call in &mut calls {
-                    if let Some(spec) = tools.iter().find(|t| t.name == call.name) {
-                        validate::normalize_stringified_composites(
-                            &spec.json_schema,
-                            &mut call.args,
-                        );
-                    }
-                }
+                // Boundary coercion (tuxlink-ewqiy): build a COERCED copy for
+                // validation and dispatch while `calls` stays RAW. Without
+                // coercion, a stringified object (`def: "{…}"`) is rejected
+                // here before the port layer's per-field absorbers ever run —
+                // the exact wedge that cost GLM-5.2 2/3 P1 attempts. The
+                // conversation and durable transcript record the RAW emission:
+                // the transcript sink's arg_shape telemetry and the fine-tune
+                // corpus depend on seeing stringified composites as the model
+                // actually sent them (Codex adrev 2026-07-28, P2).
+                let coerced: Vec<ToolCall> = calls
+                    .iter()
+                    .map(|call| {
+                        let mut c = call.clone();
+                        if let Some(spec) = tools.iter().find(|t| t.name == c.name) {
+                            validate::normalize_stringified_composites(
+                                &spec.json_schema,
+                                &mut c.args,
+                            );
+                        }
+                        c
+                    })
+                    .collect();
 
-                // COR-3: validate the calls. A malformed batch is fed back and
-                // re-prompted, bounded by `max_malformed_retries`.
-                if let Some(detail) = first_validation_error(&tools, &calls) {
+                // COR-3: validate the (coerced) calls. A malformed batch is fed
+                // back and re-prompted, bounded by `max_malformed_retries`.
+                if let Some(detail) = first_validation_error(&tools, &coerced) {
                     if malformed_retries >= limits.max_malformed_retries {
                         return RunOutcome::InvalidAction(detail);
                     }
@@ -274,8 +281,9 @@ pub async fn run_with_conversation_with_transcript(
                 malformed_retries = 0;
 
                 // Dispatch each call. Cancellation is checked before each and
-                // propagated into the in-flight tool future (COR-2).
-                for call in &calls {
+                // propagated into the in-flight tool future (COR-2). The RAW
+                // call is recorded; the COERCED twin is what executes.
+                for (call, exec) in calls.iter().zip(coerced.iter()) {
                     if cancel.is_cancelled() {
                         return RunOutcome::Cancelled;
                     }
@@ -288,7 +296,7 @@ pub async fn run_with_conversation_with_transcript(
                     // SEC-3: the authority is ALWAYS Agent. There is no code
                     // path here that can construct any other CallAuthority.
                     let outcome = invoker
-                        .invoke(call, CallAuthority::Agent, &cancel)
+                        .invoke(exec, CallAuthority::Agent, &cancel)
                         .await;
 
                     // A Cancelled outcome is terminal: surface immediately without

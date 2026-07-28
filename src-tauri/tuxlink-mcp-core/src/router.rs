@@ -128,7 +128,8 @@ fn with_edit_protocol(mut body: serde_json::Value) -> serde_json::Value {
                     "routines_step_add", "routines_step_update",
                     "routines_step_remove", "routines_step_move",
                     "routines_track_add", "routines_track_remove",
-                    "routines_trigger_set", "routines_meta_set"
+                    "routines_trigger_set", "routines_meta_set",
+                    "routines_rename"
                 ],
                 "pass_expected_revision": revision,
             }),
@@ -2756,7 +2757,7 @@ mod tests {
         // decides how to modify.
         assert_eq!(body["edit_protocol"]["pass_expected_revision"], "r7");
         let tools = body["edit_protocol"]["edit_tools"].as_array().unwrap();
-        assert!(tools.len() >= 8, "all fragment-edit verbs listed: {tools:?}");
+        assert!(tools.len() >= 9, "all fragment-edit verbs listed: {tools:?}");
         assert!(body["edit_protocol"]["to_modify"]
             .as_str()
             .unwrap()
