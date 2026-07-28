@@ -82,6 +82,7 @@ Deciders: <names or session monikers of people involved>
 - [0026 - End the GPT-5.6 shadow-assessment program; retain the operational ban](0026-end-gpt56-shadow-assessment-retain-ban.md) — ***Superseded by [0028](0028-lift-gpt-5-6-ban.md).*** (*16 ledger pairs, zero integrity indicators; single 5.5 adrev round returns; ban stays pending further testing - reviewer-role evidence only, and API pricing dwarfs the plan-based 5.5 without proportional benefit*)
 - [0027 - Parity manifest: agent/human parity is CI-enforced](0027-parity-manifest-ci.md) (*every registered Tauri command is classified; CI enforces completeness, mapping liveness, the operator-authority no-mapping rule, and the MCP tool-count budget*)
 - [0028 - Lift the GPT-5.6 ban; GPT-5.6 is permitted for all Tuxlink tasks](0028-lift-gpt-5-6-ban.md) (*supersedes the ADR 0023/0026 ban: reviewer-role evidence (16 pairs, zero integrity indicators) + practical utility + low reversal cost + standing groundedness gates; GPT-5.5 stays the cost-free default*)
+- [0029 - The repo carries its engineering record: two audiences, separated by location, not omission](0029-engineering-record-in-repo.md) (*product surface stays polished, engineering record (ADRs, battery analyses, bug-hunts, handoffs, incidents, beads) is a committed first-class deliverable; local-only classes unchanged; entry map at dev/README.md*)
 
 ## References
 
