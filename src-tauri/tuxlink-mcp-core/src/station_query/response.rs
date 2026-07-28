@@ -233,7 +233,7 @@ pub enum StationResult {
     RefinementRequired {
         matched_stations: u32,
         facets: BoundedVec<Facet, 8>,
-        suggested_refinements: BoundedVec<Refinement, 12>,
+        suggested_refinements: BoundedVec<Refinement, 9>,
     },
     /// Server-side counts/statistics over the whole matched population (no rows).
     AggregateComplete { groups: BoundedVec<AggregateGroup, 3> },
@@ -823,7 +823,7 @@ mod tests {
                 values,
             }
         }));
-        let (refinements, _) = BoundedVec::<Refinement, 12>::from_capped((0..12).map(|_| Refinement {
+        let (refinements, _) = BoundedVec::<Refinement, 9>::from_capped((0..9).map(|_| Refinement {
             label: cap::<48>(),
             add_filters: max_filters(),
             remaining: u32::MAX,

@@ -992,7 +992,7 @@ fn build_refinements(
     stations: &[Station<'_>],
     current: &StationFilters,
     snapshot_id: &SnapshotId,
-) -> BoundedVec<Refinement, 12> {
+) -> BoundedVec<Refinement, 9> {
     let mut out: Vec<Refinement> = Vec::new();
     let mut push = |label: String, add: StationFilters, remaining: u32| {
         out.push(Refinement {
