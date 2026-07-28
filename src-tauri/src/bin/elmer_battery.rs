@@ -1171,6 +1171,35 @@ fn real_main() -> Result<(), String> {
             data_dir.join("channels-feed-cache.json"),
         ),
     ));
+    // Contacts + Favorites stores (tuxlink-gcy3m): production manages BOTH
+    // unconditionally (lib.rs, tuxlink-raez A2 / tuxlink-egmp B2 — open() is
+    // INFALLIBLE, degrades to an empty store). This harness missed them; the
+    // baseline0 EU2 cell's first p2p_peer_password_status call panicked a
+    // worker thread (state() before manage()) and the dead tool future wedged
+    // the cell past every timeout. Scratch data dir, so both start empty —
+    // exactly what a fresh production station presents.
+    app.manage(Arc::new(std::sync::Mutex::new(
+        tuxlink_lib::contacts::store::ContactsStore::open(data_dir.join("contacts.json")),
+    )));
+    app.manage(Arc::new(std::sync::Mutex::new(
+        tuxlink_lib::favorites::store::FavoritesStore::open(data_dir.join("stations.json")),
+    )));
+    // Same audit, same class (tool-reachable via app.state / State params):
+    // the inbound-contact rate limiter and the forms sequence-counter store,
+    // both unconditionally managed by production (lib.rs ~:2012/:2086).
+    // Limiter config from the scratch config, as production reads its own.
+    app.manage(Arc::new(std::sync::Mutex::new(
+        tuxlink_lib::contacts::limiter::InboundCreateLimiter::new(
+            tuxlink_lib::config::read_config()
+                .map(|c| c.p2p_limits)
+                .unwrap_or_default(),
+        ),
+    )));
+    app.manage(Arc::new(std::sync::Mutex::new(
+        tuxlink_lib::forms::sequence::SeqCounterStore::open(
+            data_dir.join("forms-sequence-counters.json"),
+        ),
+    )));
     // find_stations query-snapshot store (tuxlink-m0n38): the redesigned MCP tool
     // resolves this from managed state; the main app registers it in run(), so
     // this harness must too or the port panics (state() before manage()).
