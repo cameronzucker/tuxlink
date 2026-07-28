@@ -6513,7 +6513,7 @@ dependencies = [
 
 [[package]]
 name = "tuxlink"
-version = "0.101.0"
+version = "0.102.0"
 dependencies = [
  "alsa",
  "async-trait",
