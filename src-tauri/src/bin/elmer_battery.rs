@@ -129,6 +129,20 @@ const HARNESS_PARITY_RESIDUES: &[&str] = &[
     "routine scheduler not spawned (enable parks; nothing fires mid-cell)",
 ];
 
+/// The residues actually in force for this run. The propagation entry drops
+/// out when the engine is env-staged (tuxlink-hbu3b): setup() fails the launch
+/// on a half-staged env, so env-present here implies staged-and-validated.
+/// A static list would mislabel every staged run (Codex 2026-07-28 P2).
+fn harness_parity_residues() -> Vec<&'static str> {
+    let staged = std::env::var_os("TUXLINK_VOACAPL_BIN").is_some()
+        && std::env::var_os("TUXLINK_ITSHFBC_DIR").is_some();
+    HARNESS_PARITY_RESIDUES
+        .iter()
+        .copied()
+        .filter(|r| !(staged && r.starts_with("propagation engine")))
+        .collect()
+}
+
 /// Scratch-profile config.json (schema v9): manual grid DM33, GPS off, NO
 /// transports configured, offline (connect_to_cms false). Everything else
 /// takes its serde default.
@@ -1215,14 +1229,81 @@ fn real_main() -> Result<(), String> {
             .map_err(|e| format!("search build_service failed: {e:?}"))?;
         app.manage(svc);
     }
-    // Propagation: Unavailable — the voacapl sidecar is not staged next to
-    // this binary. A KNOWN parity residue (HARNESS_PARITY_RESIDUES): a fully
-    // provisioned production station answers predict_path. Staging voacapl on
-    // the battery box closes it; until then predict_path returns this honest
-    // engine-unavailable error, and E2/E3-class results carry the residue.
-    app.manage(tuxlink_lib::propagation::commands::PropagationState::Unavailable(
-        "battery harness: propagation engine not wired".to_string(),
-    ));
+    // Propagation: env-staged sidecar (tuxlink-hbu3b lift queue closes the
+    // HARNESS_PARITY_RESIDUES entry). The battery box has no Tauri resource
+    // tree, so the engine assets resolve from TUXLINK_VOACAPL_BIN +
+    // TUXLINK_ITSHFBC_DIR (the production-.deb extraction staged on the
+    // battery box). Absent or dangling env keeps the honest
+    // engine-unavailable error and E2/E3-class results carry the residue.
+    {
+        use tuxlink_lib::propagation::commands::{PropagationState, ReadyPropagation};
+        use tuxlink_lib::propagation::{engine::EnginePaths, ssn};
+        let prop_state = match (
+            std::env::var_os("TUXLINK_VOACAPL_BIN").map(PathBuf::from),
+            std::env::var_os("TUXLINK_ITSHFBC_DIR").map(PathBuf::from),
+        ) {
+            (Some(bin), Some(itshfbc)) if bin.is_file() && itshfbc.is_dir() => {
+                // Existence alone is not staging (Codex 2026-07-28 P1): a
+                // non-executable file or a gutted itshfbc tree would register
+                // Ready and only fail lazily when a model calls predict_path.
+                // Verify the executable bit and the read-only subtrees voacapl
+                // opens with status='old' up front.
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mode = std::fs::metadata(&bin)
+                        .map_err(|e| format!("staged voacapl metadata unreadable: {e}"))?
+                        .permissions()
+                        .mode();
+                    if mode & 0o111 == 0 {
+                        return Err(format!(
+                            "staged voacapl is not executable: {}",
+                            bin.display()
+                        ));
+                    }
+                }
+                for sub in ["coeffs", "database"] {
+                    if !itshfbc.join(sub).is_dir() {
+                        return Err(format!(
+                            "staged itshfbc missing required subtree '{sub}': {}",
+                            itshfbc.display()
+                        ));
+                    }
+                }
+                let scratch = data_dir.join("propagation-scratch");
+                std::fs::create_dir_all(&scratch)
+                    .map_err(|e| format!("could not create propagation scratch: {e}"))?;
+                let forecast = ssn::SsnForecast::from_json(ssn::BUNDLED_SSN_FORECAST)
+                    .map_err(|e| format!("bundled SSN forecast failed to parse: {e:?}"))?;
+                eprintln!(
+                    "battery propagation: engine staged (voacapl={})",
+                    bin.display()
+                );
+                PropagationState::Ready(ReadyPropagation {
+                    paths: EnginePaths {
+                        binary: bin,
+                        itshfbc_root: itshfbc,
+                    },
+                    scratch_parent: scratch,
+                    clock: Arc::new(tuxlink_lib::catalog::stations_cache::SystemClock),
+                    forecast,
+                })
+            }
+            (None, None) => PropagationState::Unavailable(
+                "battery harness: propagation engine not wired".to_string(),
+            ),
+            (bin, itshfbc) => {
+                // Half-configured env is a staging mistake, not a valid
+                // degraded mode: fail the launch so a ladder cannot silently
+                // run residue-carrying cells while claiming a staged engine.
+                return Err(format!(
+                    "propagation env incomplete or paths missing \
+                     (TUXLINK_VOACAPL_BIN={bin:?}, TUXLINK_ITSHFBC_DIR={itshfbc:?})"
+                ));
+            }
+        };
+        app.manage(prop_state);
+    }
     // Routines engine over the scratch profile. Scheduler spawn (lib.rs
     // production block) and launch recovery are OMITTED — nothing ever fires;
     // routines exist here only to be authored and validated.
@@ -1433,7 +1514,7 @@ fn real_main() -> Result<(), String> {
             },
             "tool_schema_sha256": cell.tool_schema_sha256,
             "harness": "parity-v1 (tuxlink-y9a6l): full production tool surface, no allowlist, no deny teaching",
-            "harness_parity_residues": HARNESS_PARITY_RESIDUES,
+            "harness_parity_residues": harness_parity_residues(),
             "scratch_root": scratch_root.display().to_string(),
             "preseed": entry.preseed.as_deref().map(|_| PRESEED_NAME),
             "credits_before": cell.credits_before,
