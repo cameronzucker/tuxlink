@@ -31,6 +31,27 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.102.0](https://github.com/cameronzucker/tuxlink/compare/v0.101.0...v0.102.0) (2026-07-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **mcp:** routines_get responses gain an `edit_protocol` field; string-encoded composite tool arguments are now parsed at the boundary instead of rejected.
+
+### Features
+
+* **battery:** close the voacapl parity residue + C1/C2 predicate review (Qwen-lift queue) ([97a75d1](https://github.com/cameronzucker/tuxlink/commit/97a75d13adea871f7935dcb2b82699e2354aebad))
+* **mcp:** schema-driven stringify absorber at the runner boundary + routines edit-protocol wire-teaching ([67102e0](https://github.com/cameronzucker/tuxlink/commit/67102e08b20729a336083cd854db0577dde4b642))
+
+
+### Bug Fixes
+
+* **battery:** manage ContactsStore/FavoritesStore/InboundCreateLimiter/SeqCounterStore — contacts tool call wedged EU2 forever ([d38a874](https://github.com/cameronzucker/tuxlink/commit/d38a8746280bfe2dbc56750ad2c79b14baa7f656))
+* **battery:** validate staged engine assets + dynamic parity residues (Codex P1/P2) + clippy ([a980f1f](https://github.com/cameronzucker/tuxlink/commit/a980f1fbe8461bdd9ea60f4c376c25687898efec))
+* **mcp:** find_stations refinements carry a ready-to-send next_call; filters omit unconstrained axes; description names the nested shape ([b10e034](https://github.com/cameronzucker/tuxlink/commit/b10e034277e8799edf83b3683f068455b665fedc))
+* **mcp:** record raw tool-call emissions, dispatch the coerced twin; add routines_rename to edit_protocol ([ae48111](https://github.com/cameronzucker/tuxlink/commit/ae48111935f7344fbc751629f2798369199b3dbd))
+* **mcp:** tighten suggested_refinements cap to 9 — restores the worst-case byte budget with next_call added ([de0a216](https://github.com/cameronzucker/tuxlink/commit/de0a216ea0ed2238019c7919954a9cd63adc02ea))
+
 ## [0.101.0](https://github.com/cameronzucker/tuxlink/compare/v0.100.0...v0.101.0) (2026-07-27)
 
 
