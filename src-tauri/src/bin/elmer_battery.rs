@@ -129,6 +129,20 @@ const HARNESS_PARITY_RESIDUES: &[&str] = &[
     "routine scheduler not spawned (enable parks; nothing fires mid-cell)",
 ];
 
+/// The residues actually in force for this run. The propagation entry drops
+/// out when the engine is env-staged (tuxlink-hbu3b): setup() fails the launch
+/// on a half-staged env, so env-present here implies staged-and-validated.
+/// A static list would mislabel every staged run (Codex 2026-07-28 P2).
+fn harness_parity_residues() -> Vec<&'static str> {
+    let staged = std::env::var_os("TUXLINK_VOACAPL_BIN").is_some()
+        && std::env::var_os("TUXLINK_ITSHFBC_DIR").is_some();
+    HARNESS_PARITY_RESIDUES
+        .iter()
+        .copied()
+        .filter(|r| !(staged && r.starts_with("propagation engine")))
+        .collect()
+}
+
 /// Scratch-profile config.json (schema v9): manual grid DM33, GPS off, NO
 /// transports configured, offline (connect_to_cms false). Everything else
 /// takes its serde default.
@@ -1229,6 +1243,33 @@ fn real_main() -> Result<(), String> {
             std::env::var_os("TUXLINK_ITSHFBC_DIR").map(PathBuf::from),
         ) {
             (Some(bin), Some(itshfbc)) if bin.is_file() && itshfbc.is_dir() => {
+                // Existence alone is not staging (Codex 2026-07-28 P1): a
+                // non-executable file or a gutted itshfbc tree would register
+                // Ready and only fail lazily when a model calls predict_path.
+                // Verify the executable bit and the read-only subtrees voacapl
+                // opens with status='old' up front.
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mode = std::fs::metadata(&bin)
+                        .map_err(|e| format!("staged voacapl metadata unreadable: {e}"))?
+                        .permissions()
+                        .mode();
+                    if mode & 0o111 == 0 {
+                        return Err(format!(
+                            "staged voacapl is not executable: {}",
+                            bin.display()
+                        ));
+                    }
+                }
+                for sub in ["coeffs", "database"] {
+                    if !itshfbc.join(sub).is_dir() {
+                        return Err(format!(
+                            "staged itshfbc missing required subtree '{sub}': {}",
+                            itshfbc.display()
+                        ));
+                    }
+                }
                 let scratch = data_dir.join("propagation-scratch");
                 std::fs::create_dir_all(&scratch)
                     .map_err(|e| format!("could not create propagation scratch: {e}"))?;
@@ -1258,8 +1299,7 @@ fn real_main() -> Result<(), String> {
                 return Err(format!(
                     "propagation env incomplete or paths missing \
                      (TUXLINK_VOACAPL_BIN={bin:?}, TUXLINK_ITSHFBC_DIR={itshfbc:?})"
-                )
-                .into());
+                ));
             }
         };
         app.manage(prop_state);
@@ -1474,7 +1514,7 @@ fn real_main() -> Result<(), String> {
             },
             "tool_schema_sha256": cell.tool_schema_sha256,
             "harness": "parity-v1 (tuxlink-y9a6l): full production tool surface, no allowlist, no deny teaching",
-            "harness_parity_residues": HARNESS_PARITY_RESIDUES,
+            "harness_parity_residues": harness_parity_residues(),
             "scratch_root": scratch_root.display().to_string(),
             "preseed": entry.preseed.as_deref().map(|_| PRESEED_NAME),
             "credits_before": cell.credits_before,
