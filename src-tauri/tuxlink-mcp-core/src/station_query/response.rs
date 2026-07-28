@@ -476,6 +476,49 @@ pub struct Refinement {
     pub label: CappedString<48>,
     pub add_filters: StationFilters,
     pub remaining: u32,
+    /// The exact `find_stations` call that applies this refinement — echo it
+    /// verbatim as your next tool call. `arguments.filters` already carries the
+    /// FULL merged filter set (this snapshot's filters plus `add_filters`);
+    /// `arguments.snapshot_id` targets this snapshot. This exists because a
+    /// bare `add_filters` patch tells an agent WHAT to narrow by but not HOW
+    /// to shape the next call (tuxlink-eefln: a frontier model looped 28
+    /// identical calls on exactly that gap).
+    pub next_call: RefinementNextCall,
+}
+
+/// A complete, ready-to-send tool call. Send it as-is; extend
+/// `arguments.filters` only if you want to narrow further than the suggestion.
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+pub struct RefinementNextCall {
+    /// Always `find_stations`.
+    pub tool: CappedString<24>,
+    pub arguments: RefinementNextArgs,
+}
+
+/// Arguments for the ready-to-send refinement call. Note the shape: filter
+/// constraints live NESTED under `filters`, never at top level.
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+pub struct RefinementNextArgs {
+    /// Always `explore`.
+    pub intent: CappedString<12>,
+    pub snapshot_id: SnapshotId,
+    pub filters: StationFilters,
+}
+
+impl RefinementNextCall {
+    /// The canonical echo-back call: `explore` against `snapshot_id` with the
+    /// already-merged filter set.
+    #[must_use]
+    pub fn explore(snapshot_id: SnapshotId, filters: StationFilters) -> Self {
+        Self {
+            tool: CappedString::from_truncated("find_stations"),
+            arguments: RefinementNextArgs {
+                intent: CappedString::from_truncated("explore"),
+                snapshot_id,
+                filters,
+            },
+        }
+    }
 }
 
 /// One `aggregate` group: a facet and its exact per-value counts over the FULL
@@ -784,6 +827,7 @@ mod tests {
             label: cap::<48>(),
             add_filters: max_filters(),
             remaining: u32::MAX,
+            next_call: RefinementNextCall::explore(cap::<32>(), max_filters()),
         }));
         worst = worst.max(check(max_envelope(StationResult::RefinementRequired {
             matched_stations: u32::MAX,

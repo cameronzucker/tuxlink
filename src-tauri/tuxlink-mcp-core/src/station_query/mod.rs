@@ -32,5 +32,6 @@ pub use request::{
 pub use response::{
     AggregateBucket, AggregateGroup, Candidate, CompleteSet, ConnectionDto, ContractViolation,
     Facet, FacetCount, FindStationsResponse, Fitness, FitnessComponents, Population, RankedSubset,
-    RankingMeta, Refinement, SnapshotMeta, StationResult, StationSummary, SubsetCoverage,
+    RankingMeta, Refinement, RefinementNextArgs, RefinementNextCall, SnapshotMeta, StationResult,
+    StationSummary, SubsetCoverage,
 };
