@@ -268,36 +268,40 @@ pub enum ConnectObjective {
 /// Agent-supplied narrowing constraints. All optional; omission means "no
 /// constraint" on that axis. Breadth is handled by the response contract
 /// (`refinement-required`), never by silently capping the result.
+///
+/// Serialization omits unconstrained axes (tuxlink-eefln): an echoed filter
+/// set shows only the constraints in force, so a template never presents
+/// null-filled fields a model can pattern-copy into its own arguments.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct StationFilters {
     /// Restrict to these transports; empty = all.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BoundedVec::is_empty")]
     pub modes: BoundedVec<crate::ports::StationModeDto, 6>,
     /// Restrict to these HF bands; empty = all.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BoundedVec::is_empty")]
     pub bands: BoundedVec<Band, 16>,
     /// Restrict to these occupied-bandwidth classes; empty = all.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BoundedVec::is_empty")]
     pub bandwidths: BoundedVec<BandwidthClass, 5>,
     /// FT-8 corroboration policy; default `ignore`.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Ft8Policy::is_ignore")]
     pub ft8_policy: Ft8Policy,
     /// When `Some(true)`, keep only gateways operating now (per advertised
     /// operating hours vs the injected current time); `Some(false)` keep only
     /// off-hours; `None` no constraint.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operating_now: Option<bool>,
     /// Keep only gateways at most this far away.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub distance: Option<DistanceBucket>,
     /// Keep only gateways in this bearing sector from the operator.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bearing: Option<BearingSector>,
     /// Keep only gateways whose callsign starts with this prefix (case-folded).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub callsign_prefix: Option<CappedString<12>>,
     /// Only gateways heard within this many hours; `None` = no bound.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub history_hours: Option<u32>,
 }
 
@@ -311,9 +315,43 @@ impl Ft8Policy {
             Ft8Policy::Require => 2,
         }
     }
+
+    /// `ignore` is the no-constraint default; serialization omits it.
+    #[must_use]
+    pub fn is_ignore(&self) -> bool {
+        matches!(self, Ft8Policy::Ignore)
+    }
 }
 
 impl StationFilters {
+    /// Overlay an additive refinement patch: each axis takes the patch's value
+    /// where the patch constrains it, otherwise keeps `self`'s. This is the
+    /// merge an agent must apply when echoing a
+    /// `suggested_refinements[].add_filters` into its next `explore`; the
+    /// response's `next_call` is built with exactly this so the agent never
+    /// has to perform the merge itself (tuxlink-eefln).
+    #[must_use]
+    pub fn overlaid_with(&self, add: &StationFilters) -> StationFilters {
+        StationFilters {
+            modes: if add.modes.is_empty() { self.modes.clone() } else { add.modes.clone() },
+            bands: if add.bands.is_empty() { self.bands.clone() } else { add.bands.clone() },
+            bandwidths: if add.bandwidths.is_empty() {
+                self.bandwidths.clone()
+            } else {
+                add.bandwidths.clone()
+            },
+            ft8_policy: if add.ft8_policy.is_ignore() { self.ft8_policy } else { add.ft8_policy },
+            operating_now: add.operating_now.or(self.operating_now),
+            distance: add.distance.or(self.distance),
+            bearing: add.bearing.or(self.bearing),
+            callsign_prefix: add
+                .callsign_prefix
+                .clone()
+                .or_else(|| self.callsign_prefix.clone()),
+            history_hours: add.history_hours.or(self.history_hours),
+        }
+    }
+
     /// True when `self` is at least as restrictive as `base` on **every** axis —
     /// i.e. applying `self` to any population can only ever return a SUBSET of
     /// what `base` returns. Snapshots may only narrow: the engine rejects a
@@ -781,5 +819,61 @@ mod tests {
         let ignore = StationFilters::default(); // Ft8Policy::Ignore
         assert!(require.is_narrowing_of(&ignore));
         assert!(!ignore.is_narrowing_of(&require));
+    }
+
+    // ---- tuxlink-eefln: echoed filters must not present null-filled axes ----
+
+    #[test]
+    fn filters_serialize_only_constrained_axes() {
+        let sparse = StationFilters {
+            bands: BoundedVec::from_capped(vec![Band::B40m]).0,
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&sparse).unwrap();
+        let obj = json.as_object().unwrap();
+        // Exactly the one constrained axis appears; no nulls, no empty arrays,
+        // no default ft8_policy — nothing a model can pattern-copy as "null".
+        assert_eq!(obj.len(), 1, "unexpected fields: {json}");
+        assert_eq!(json["bands"], serde_json::json!(["40m"]));
+
+        // Fully-unconstrained serializes to the empty object.
+        let empty = serde_json::to_value(StationFilters::default()).unwrap();
+        assert_eq!(empty, serde_json::json!({}));
+
+        // Omission round-trips: a sparse wire form deserializes to defaults.
+        let back: StationFilters = serde_json::from_value(json).unwrap();
+        assert_eq!(back, sparse);
+    }
+
+    #[test]
+    fn overlaid_with_merges_patch_over_current() {
+        let current = StationFilters {
+            bands: BoundedVec::from_capped(vec![Band::B40m]).0,
+            operating_now: Some(true),
+            ..Default::default()
+        };
+        let add = StationFilters {
+            distance: Some(DistanceBucket::Within300mi),
+            ..Default::default()
+        };
+        let merged = current.overlaid_with(&add);
+        // Patch axis applied…
+        assert_eq!(merged.distance, Some(DistanceBucket::Within300mi));
+        // …current constraints retained…
+        assert_eq!(merged.bands, current.bands);
+        assert_eq!(merged.operating_now, Some(true));
+        // …and a patch that re-constrains an axis wins over current.
+        let re_band = StationFilters {
+            bands: BoundedVec::from_capped(vec![Band::B80m]).0,
+            ..Default::default()
+        };
+        assert_eq!(
+            current.overlaid_with(&re_band).bands,
+            re_band.bands,
+            "patch's band constraint must replace current's"
+        );
+        // The merged set is a narrowing of what the snapshot already had, so
+        // the engine's widening rejection can never fire on an echoed next_call.
+        assert!(merged.is_narrowing_of(&current));
     }
 }

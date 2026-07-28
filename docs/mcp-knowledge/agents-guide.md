@@ -60,9 +60,11 @@ A plain ARM does not clear taint. See the arm/taint model below.
     `exclude_candidate_ids` for "give me another option."
   - `explore` — narrow a broad space. A large set returns `refinement-required`: **zero rows**,
     the exact `matched_stations` total, per-facet counts, and bounded `suggested_refinements`
-    (additive filter patches with the resulting count). Apply one against the returned
-    `snapshot` id to narrow (snapshots only narrow, never widen). A set that already fits
-    returns `complete-set` (≤ 16 stations).
+    (additive filter patches with the resulting count). Each suggestion carries a
+    ready-to-send `next_call` — send its `arguments` object verbatim as your next
+    `find_stations` call (its `filters` are already fully merged with the snapshot's;
+    snapshots only narrow, never widen). Re-issuing an unchanged call returns the same
+    answer. A set that already fits returns `complete-set` (≤ 16 stations).
   - `lookup` — exact callsign(s) → `complete-set` / `no-matches`.
   - `aggregate` — server-side counts by band/mode/distance/bearing/bandwidth/operating-now over
     the WHOLE matched population (`group_by` up to 3 facets).

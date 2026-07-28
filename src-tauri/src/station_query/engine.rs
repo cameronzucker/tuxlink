@@ -20,8 +20,9 @@ use tuxlink_mcp_core::station_query::{
     AggregateBucket, AggregateGroup, Band, BoundedVec, Candidate, CappedString, ConnectObjective,
     ConnectionDto, ContractViolation, DistanceBucket, Facet, FacetCount, FindStationsRequest,
     FindStationsResponse, Fitness, FitnessComponents, Ft8Policy, Population, RankedSubset, RankingMeta,
-    RecommendationGoal, Refinement, SnapshotMeta, StationExportFormat, StationFacet, StationFilters,
-    StationResult, StationSummary, SubsetCoverage,
+    RecommendationGoal, Refinement, RefinementNextCall, SnapshotId, SnapshotMeta,
+    StationExportFormat, StationFacet, StationFilters, StationResult, StationSummary,
+    SubsetCoverage,
 };
 
 use super::snapshot::{SnapshotError, SnapshotStore};
@@ -318,7 +319,7 @@ impl<'a> StationQueryEngine<'a> {
             StationResult::complete_set(bv, omitted)?
         } else {
             let facets = build_facets(&stations, now_ms);
-            let suggested = build_refinements(&stations);
+            let suggested = build_refinements(&stations, filters, &snap_meta.id);
             StationResult::RefinementRequired {
                 matched_stations: stations.len() as u32,
                 facets,
@@ -983,34 +984,52 @@ fn facet_from(field: StationFacet, counts: Vec<(String, u32)>) -> Facet {
 }
 
 /// Build bounded, labelled additive-filter suggestions (top bands, then tightest
-/// productive distance ceilings). Each carries the exact resulting count.
-fn build_refinements(stations: &[Station<'_>]) -> BoundedVec<Refinement, 12> {
+/// productive distance ceilings). Each carries the exact resulting count AND a
+/// ready-to-send `next_call` (tuxlink-eefln): the snapshot id plus the FULL
+/// merged filter set, so applying a refinement is a verbatim echo, never a
+/// merge the model must infer.
+fn build_refinements(
+    stations: &[Station<'_>],
+    current: &StationFilters,
+    snapshot_id: &SnapshotId,
+) -> BoundedVec<Refinement, 9> {
     let mut out: Vec<Refinement> = Vec::new();
+    let mut push = |label: String, add: StationFilters, remaining: u32| {
+        out.push(Refinement {
+            label: CappedString::from_truncated(&label),
+            next_call: RefinementNextCall::explore(
+                snapshot_id.clone(),
+                current.overlaid_with(&add),
+            ),
+            add_filters: add,
+            remaining,
+        });
+    };
 
     // Top bands by population.
     for (band_label, count) in count_bands(stations).into_iter().take(6) {
         if let Some(band) = band_from_label(&band_label) {
-            out.push(Refinement {
-                label: CappedString::from_truncated(&format!("Only {band_label} ({count})")),
-                add_filters: StationFilters {
+            push(
+                format!("Only {band_label} ({count})"),
+                StationFilters {
                     bands: BoundedVec::from_capped(vec![band]).0,
                     ..Default::default()
                 },
-                remaining: count,
-            });
+                count,
+            );
         }
     }
 
     // A couple of distance ceilings (tightest productive first).
     for (token, count, bucket) in count_distance_cumulative(stations).into_iter().take(3) {
-        out.push(Refinement {
-            label: CappedString::from_truncated(&format!("Within {token} ({count})")),
-            add_filters: StationFilters {
+        push(
+            format!("Within {token} ({count})"),
+            StationFilters {
                 distance: Some(bucket),
                 ..Default::default()
             },
-            remaining: count,
-        });
+            count,
+        );
     }
 
     BoundedVec::from_capped(out).0
