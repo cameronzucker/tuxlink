@@ -219,7 +219,7 @@ pub async fn run_with_conversation_with_transcript(
                 on_event(RunEvent::AssistantText { text: text.clone() });
                 return RunOutcome::Completed(text);
             }
-            ModelTurn::ToolCalls(calls) => {
+            ModelTurn::ToolCalls(mut calls) => {
                 // pf6re: one-shot finalization. If a prior tool call was denied we
                 // granted exactly ONE narration turn. The model was supposed to
                 // ANSWER (Text). It emitted tool calls instead — do NOT dispatch
@@ -231,6 +231,22 @@ pub async fn run_with_conversation_with_transcript(
                         DenialKind::Taint => RunOutcome::NeedsOperator(TAINT_REARM_MSG.to_string()),
                         DenialKind::Authority => RunOutcome::ToolDenied(reason),
                     };
+                }
+
+                // Boundary coercion (tuxlink-ewqiy): string-encoded composite
+                // args are normalized BEFORE validation so the validator and
+                // the dispatched call both see the parsed form. Without this,
+                // a stringified object (`def: "{…}"`) is rejected here before
+                // the port layer's per-field absorbers ever run — the exact
+                // wedge that cost GLM-5.2 2/3 P1 attempts and qwen its share
+                // of invalid_action outcomes.
+                for call in &mut calls {
+                    if let Some(spec) = tools.iter().find(|t| t.name == call.name) {
+                        validate::normalize_stringified_composites(
+                            &spec.json_schema,
+                            &mut call.args,
+                        );
+                    }
                 }
 
                 // COR-3: validate the calls. A malformed batch is fed back and

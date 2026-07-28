@@ -245,6 +245,82 @@ fn join(path: &str, key: &str) -> String {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Boundary coercion for string-encoded composite arguments (tuxlink-ewqiy)
+// ---------------------------------------------------------------------------
+
+/// Coerce string-encoded composite arguments in place, schema-driven.
+///
+/// Small and frontier models alike emit object/array-typed tool arguments as
+/// JSON **strings** (`def: "{…}"` — observed on qwen-3.5-122b 2026-07-23 and
+/// GLM-5.2 2026-07-28). The port layer has per-field absorbers, but THIS
+/// validator runs first and would reject the call before they can fire. So
+/// the same kind-exact rule runs at the boundary, driven by the tool's own
+/// schema instead of a per-tool table — every current and future tool is
+/// covered by construction.
+///
+/// Rule, per top-level property of `args`: if the schema declares the
+/// property's `type` as `object` or `array` (at the schema root or uniformly
+/// across `oneOf`/`anyOf` variants) and the supplied value is a string that
+/// parses to EXACTLY that kind, replace it with the parsed composite.
+/// Everything else — scalars, non-JSON strings, wrong-kind parses, properties
+/// with conflicting declarations across variants — passes through untouched,
+/// so this validator's instructive errors still fire verbatim (the
+/// tuxlink-hq3e2 tightening, applied boundary-wide). Top-level properties
+/// only; nested absorption stays with the per-field port absorbers.
+pub fn normalize_stringified_composites(schema: &Value, args: &mut Value) {
+    let Some(map) = args.as_object_mut() else {
+        return;
+    };
+    for (key, val) in map.iter_mut() {
+        let Some(s) = val.as_str() else { continue };
+        let Some(kind) = declared_composite_kind(schema, key) else {
+            continue;
+        };
+        match (serde_json::from_str::<Value>(s), kind) {
+            (Ok(parsed @ Value::Object(_)), "object")
+            | (Ok(parsed @ Value::Array(_)), "array") => *val = parsed,
+            _ => {}
+        }
+    }
+}
+
+/// The declared type of top-level property `key` when it is UNAMBIGUOUSLY a
+/// composite: `Some("object")`/`Some("array")` iff every declaration of the
+/// property (schema root `properties` plus each `oneOf`/`anyOf` variant's)
+/// agrees on that composite kind. Scalar or conflicting declarations return
+/// `None` — the boundary never guesses.
+fn declared_composite_kind(schema: &Value, key: &str) -> Option<&'static str> {
+    let mut nodes: Vec<&Value> = vec![schema];
+    for alt in ["oneOf", "anyOf"] {
+        if let Some(vs) = schema.get(alt).and_then(Value::as_array) {
+            nodes.extend(vs.iter());
+        }
+    }
+    let mut found: Option<&'static str> = None;
+    for node in nodes {
+        let Some(ty) = node
+            .get("properties")
+            .and_then(|p| p.get(key))
+            .and_then(|prop| prop.get("type"))
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        let kind = match ty {
+            "object" => "object",
+            "array" => "array",
+            _ => "scalar",
+        };
+        match found {
+            None => found = Some(kind),
+            Some(prev) if prev != kind => return None,
+            Some(_) => {}
+        }
+    }
+    found.filter(|k| *k != "scalar")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,5 +492,80 @@ mod tests {
         assert!(validate(&schema, &json!("{\"a\": 1}")).is_ok());
         // And a declared string still rejects a genuine object.
         assert!(validate(&schema, &json!({"a": 1})).is_err());
+    }
+
+    // ---- normalize_stringified_composites (tuxlink-ewqiy boundary absorber) --
+
+    fn obj_schema() -> Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "def": { "type": "object" },
+                "tags": { "type": "array" },
+                "name": { "type": "string" }
+            },
+            "required": ["def"]
+        })
+    }
+
+    #[test]
+    fn stringified_object_and_array_coerce_and_then_validate() {
+        let schema = obj_schema();
+        let mut args = json!({
+            "def": "{\"routine\": \"x\", \"steps\": []}",
+            "tags": "[\"a\", \"b\"]",
+            "name": "keep-me"
+        });
+        normalize_stringified_composites(&schema, &mut args);
+        assert!(args["def"].is_object(), "stringified def must parse: {args}");
+        assert_eq!(args["tags"], json!(["a", "b"]));
+        assert_eq!(args["name"], "keep-me", "scalar strings untouched");
+        // The exact GLM-5.2 failure: post-normalize, validation accepts.
+        assert!(validate(&schema, &args).is_ok());
+    }
+
+    #[test]
+    fn wrong_kind_and_non_json_strings_pass_through_for_instructive_errors() {
+        let schema = obj_schema();
+        let mut args = json!({
+            "def": "[1, 2]",          // parses, but to the WRONG kind
+            "tags": "not json at all"
+        });
+        normalize_stringified_composites(&schema, &mut args);
+        assert!(args["def"].is_string(), "wrong-kind parse must not coerce");
+        assert!(args["tags"].is_string(), "non-JSON must not coerce");
+        // And the validator's instructive error still fires verbatim.
+        let err = validate(&schema, &args).unwrap_err();
+        assert!(err.contains("/def"), "error names the offending field: {err}");
+    }
+
+    #[test]
+    fn one_of_variant_declarations_coerce_uniform_and_refuse_conflicting() {
+        // find_stations-shaped schema: properties live under oneOf variants.
+        let schema = json!({
+            "type": "object",
+            "oneOf": [
+                { "properties": { "filters": { "type": "object" }, "mixed": { "type": "object" } } },
+                { "properties": { "filters": { "type": "object" }, "mixed": { "type": "string" } } }
+            ]
+        });
+        let mut args = json!({
+            "filters": "{\"bands\": [\"40m\"]}",
+            "mixed": "{\"x\": 1}"
+        });
+        normalize_stringified_composites(&schema, &mut args);
+        assert!(args["filters"].is_object(), "uniform variant declaration coerces");
+        assert!(args["mixed"].is_string(), "conflicting declarations never guess");
+    }
+
+    #[test]
+    fn undeclared_and_absent_properties_are_left_alone() {
+        let schema = obj_schema();
+        let mut args = json!({ "unknown": "{\"a\": 1}" });
+        normalize_stringified_composites(&schema, &mut args);
+        assert!(args["unknown"].is_string(), "undeclared property never coerces");
+        let mut non_object = json!("just a string");
+        normalize_stringified_composites(&schema, &mut non_object);
+        assert_eq!(non_object, json!("just a string"));
     }
 }
