@@ -3701,7 +3701,7 @@ impl UiHintPort for MonolithUiHintPort {
                 // returns `false`) instead of resolving a stale receiver.
                 pending.forget(id);
                 Err(PortError::Internal(
-                    "point_at timed out — main window did not confirm the hint (window closed/minimized, or overlay unresponsive)".into(),
+                    "point_at timed out - main window did not confirm the hint (window closed/minimized, or overlay unresponsive)".into(),
                 ))
             }
         }
@@ -3878,7 +3878,7 @@ fn ft8_blocked_reason(reason: BlockedReasonDto) -> &'static str {
              when it reappears)"
         }
         BlockedReasonDto::NeedsDeviceSelection => {
-            "no audio capture device has been selected yet — call ft8_list_audio_devices and pick \
+            "no audio capture device has been selected yet - call ft8_list_audio_devices and pick \
              one in Settings"
         }
         BlockedReasonDto::WsjtxAbsent => {
@@ -4147,7 +4147,7 @@ fn save_err_with_catalog_pointer(e: PortError) -> PortError {
         // Path-anchored messages carry their own targeted advice; leave them alone.
         PortError::InvalidInput(m) if is_path_anchored(&m) => PortError::InvalidInput(m),
         PortError::InvalidInput(m) => PortError::InvalidInput(format!(
-            "{m} — copy routines_actions_list's definition_template (the COMPLETE valid \
+            "{m} - copy routines_actions_list's definition_template (the COMPLETE valid \
              envelope) and substitute your steps into it. Note: `routine` is the routine's \
              NAME string, not the definition body; `triggers` is a list; steps live under \
              tracks[].steps. Then resend the corrected def_json"
@@ -4211,7 +4211,7 @@ fn finding_remedy(code: &'static str) -> &'static str {
         // anchored instruction it had pointed mid-track. One placed add ends it.
         NO_TERMINAL_PATH | ARM_FALLTHROUGH_LEAK => {
             " Add the End with routines_step_add, setting after_step_id to the step named \
-             above — placement is an argument, so this needs no remove/re-add cycle. An \
+             above - placement is an argument, so this needs no remove/re-add cycle. An \
              existing End is repositioned with routines_step_move rather than removed and \
              recreated. Both of these findings are WARNINGS: neither blocks save or enable, \
              and the disposition's blocked_by field names what actually does."
@@ -4222,7 +4222,7 @@ fn finding_remedy(code: &'static str) -> &'static str {
         }
         AUTO_TX_UNACKED | AUTO_WRITE_UNACKED => {
             " The acknowledgment is recorded by the operator in the routine designer's \
-             acknowledgment panel — it cannot be granted over MCP and is NOT created by \
+             acknowledgment panel - it cannot be granted over MCP and is NOT created by \
              running the routine. It stays valid until an edit changes the acknowledged \
              consent closure (the transmitting/config-writing steps, or those of a \
              routine it calls); such an edit requires the operator to re-record it. \
@@ -4262,7 +4262,7 @@ fn finding_remedy(code: &'static str) -> &'static str {
         }
         ATTENDED_UNDER_SCHEDULE | ATTENDED_WRITE_UNDER_SCHEDULE => {
             " This is a WARNING, not a block: the routine saves, enables, and fires on \
-             schedule, parking at the consent step until the operator confirms — if \
+             schedule, parking at the consent step until the operator confirms - if \
              nobody is present the run stalls there. For unattended operation use \
              transmit_mode \"automatic\" with the operator's design-time acknowledgment \
              (recorded in the designer, not over MCP)."
@@ -4378,7 +4378,7 @@ fn build_placement(
     .count();
     if families > 1 {
         return Err(PortError::InvalidInput(format!(
-            "{verb}: give ONE placement — track (append to that track), after_step_id \
+            "{verb}: give ONE placement - track (append to that track), after_step_id \
              (splice after that step), or branch_step_id + branch_arm (into a branch arm)"
         )));
     }
@@ -4412,7 +4412,7 @@ fn build_placement(
         return Ok(Placement::Append { track });
     }
     Err(PortError::InvalidInput(format!(
-        "{verb}: a placement is required — track (append to that track), after_step_id, or \
+        "{verb}: a placement is required - track (append to that track), after_step_id, or \
          branch_step_id + branch_arm"
     )))
 }
@@ -4452,7 +4452,7 @@ fn resolve_save_def(
                 Ok(parsed @ serde_json::Value::Object(_)) => absorb_def_into_string(parsed, Some(s)),
                 _ => Err(PortError::InvalidInput(
                     "def must be a JSON OBJECT (a stringified object is tolerated and \
-                     parsed). This string does not parse as one JSON object — rebuild \
+                     parsed). This string does not parse as one JSON object - rebuild \
                      the definition as a single valid object and resend; changing the \
                      parameter name will not fix the JSON"
                         .into(),
@@ -4804,7 +4804,7 @@ fn trigger_kind_docs() -> Vec<TriggerKindDto> {
                 .to_string(),
             fields: serde_json::json!({
                 "every": "interval string like \"30m\", \"2h\", \"45s\" (required)",
-                "align": "optional \"hour\" | \"day\" — align fires to the top of the hour/day",
+                "align": "optional \"hour\" | \"day\" - align fires to the top of the hour/day",
                 "window": "optional local-time window \"HH:MM-HH:MM\"",
                 "if_missed": "optional \"skip\" (default) | \"run_once_on_launch\""
             }),
@@ -5336,7 +5336,7 @@ mod tests {
             assert_eq!(def.tracks.len(), 1);
             assert!(
                 value["routine"].is_string(),
-                "the `routine` field is the NAME string — the exact trap run 5 looped on"
+                "the `routine` field is the NAME string - the exact trap run 5 looped on"
             );
             // tuxlink-6epl8: the template shows a branch IN SITU - flat
             // strict-boolean shape, then/else as step-id lists.
@@ -5608,7 +5608,7 @@ mod tests {
         #[test]
         fn a_path_anchored_rejection_is_left_alone() {
             let nested = save_err_with_catalog_pointer(PortError::InvalidInput(
-                "routine JSON is malformed: tracks[1] is a STEP, not a track — steps \
+                "routine JSON is malformed: tracks[1] is a STEP, not a track - steps \
                  belong in tracks[N].steps"
                     .to_string(),
             ));
@@ -5971,7 +5971,7 @@ mod tests {
             assert_eq!(
                 modem.active_transport_kind(),
                 None,
-                "connect path leaves this None — must not be the source"
+                "connect path leaves this None - must not be the source"
             );
 
             let dto = super::super::gather_modem_status(&modem, &VaraSession::new(), None);

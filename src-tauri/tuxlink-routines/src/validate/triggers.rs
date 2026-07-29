@@ -32,7 +32,7 @@ pub fn check(def: &RoutineDef, findings: &mut Vec<Finding>) {
             def.routine.clone(),
             format!(
                 "routine \"{}\" declares {schedule_count} schedule triggers, but a routine's \
-                 triggers are manual plus at most one schedule — parallel lanes inside one \
+                 triggers are manual plus at most one schedule - parallel lanes inside one \
                  routine share that one cadence by construction. Split multi-cadence work into \
                  separate routines composed via call, or left to coexist in the fleet, each on \
                  its own schedule.",

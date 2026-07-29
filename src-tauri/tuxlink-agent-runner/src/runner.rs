@@ -713,8 +713,8 @@ mod transcript_recording_tests {
                 },
                 Message::Assistant("done".into()),
             ],
-            "runner must record each appended message — tool-call args, tool-result \
-             content, and assistant text — in append order"
+            "runner must record each appended message - tool-call args, tool-result \
+             content, and assistant text - in append order"
         );
     }
 }

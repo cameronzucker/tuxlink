@@ -125,7 +125,7 @@ fn with_edit_protocol(mut body: serde_json::Value) -> serde_json::Value {
             "edit_protocol".to_string(),
             serde_json::json!({
                 "to_modify": "Use the targeted edit tools below with \
-                              expected_revision — do NOT re-save the whole def \
+                              expected_revision - do NOT re-save the whole def \
                               with routines_save (a blind resave overwrites \
                               concurrent edits and is scored as a lost-update \
                               hazard).",
@@ -184,7 +184,7 @@ impl TuxlinkMcp {
     /// into an rmcp tool result.
     #[tool(
         name = "server_info",
-        description = "Report the operator's SEND-AUTHORITY state — whether send authority is currently ARMED (armed=true means you MAY transmit; false means you may only stage), how many seconds of the armed window remain, whether the session is TAINTED (which locks sending), and if tainted, taint_reason (a content-free token like \"message_read\" naming why) — plus the Tuxlink app name/version. IMPORTANT: taint DOMINATES arming — if tainted=true you cannot transmit even if armed=true, and the ONLY unlock is the operator re-arming, which DISCARDS the current conversation (it is a quarantine, not a resume); waiting for the timer does nothing. If not tainted but not armed, ask the operator to ARM (that preserves the conversation and you can continue). Call this to check whether you are authorized to transmit right now, e.g. before deciding whether to connect+send or to stage-and-report. Read-only; does not transmit or change any state."
+        description = "Report the operator's SEND-AUTHORITY state - whether send authority is currently ARMED (armed=true means you MAY transmit; false means you may only stage), how many seconds of the armed window remain, whether the session is TAINTED (which locks sending), and if tainted, taint_reason (a content-free token like \"message_read\" naming why) - plus the Tuxlink app name/version. IMPORTANT: taint DOMINATES arming - if tainted=true you cannot transmit even if armed=true, and the ONLY unlock is the operator re-arming, which DISCARDS the current conversation (it is a quarantine, not a resume); waiting for the timer does nothing. If not tainted but not armed, ask the operator to ARM (that preserves the conversation and you can continue). Call this to check whether you are authorized to transmit right now, e.g. before deciding whether to connect+send or to stage-and-report. Read-only; does not transmit or change any state."
     )]
     pub async fn server_info(&self) -> Result<CallToolResult, ErrorData> {
         let dto = server_info_view(&self.state);
@@ -195,7 +195,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "backend_status",
-        description = "Report the Winlink backend (CMS engine) connection status: connected, transport, and state. Read-only. Does NOT report send authority — call server_info to check whether transmitting is currently armed."
+        description = "Report the Winlink backend (CMS engine) connection status: connected, transport, and state. Read-only. Does NOT report send authority - call server_info to check whether transmitting is currently armed."
     )]
     pub async fn backend_status(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.status.backend_status().await.map_err(port_err)?;
@@ -204,7 +204,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "modem_get_status",
-        description = "Report modem status with BOTH what is actually RUNNING and what the operator has SELECTED. `running` lists every live session (ARDOP and VARA are independent — both can be live); `kind`/`connected`/`state` describe the primary running modem (`kind`=\"idle\" when nothing runs — it never falls back to `selected`); `conflict` is true when more than one modem runs; `selected` is the operator's persisted target connection (`{session_type, protocol}`) regardless of what is live. Read-only."
+        description = "Report modem status with BOTH what is actually RUNNING and what the operator has SELECTED. `running` lists every live session (ARDOP and VARA are independent - both can be live); `kind`/`connected`/`state` describe the primary running modem (`kind`=\"idle\" when nothing runs - it never falls back to `selected`); `conflict` is true when more than one modem runs; `selected` is the operator's persisted target connection (`{session_type, protocol}`) regardless of what is live. Read-only."
     )]
     pub async fn modem_get_status(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.status.modem_status().await.map_err(port_err)?;
@@ -213,7 +213,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "vara_status",
-        description = "Report VARA modem status: connected, bandwidth, and state. Read-only. Also reports `reachable` (true/false/null): command-port (8300) reachability — true = the cmd port answered (or a session is Open), false = no answer, null = unknown (session busy, probe skipped rather than made to wait). cmd-reachable is NOT ready-to-send; use `vara_probe` to confirm a real VARA is answering."
+        description = "Report VARA modem status: connected, bandwidth, and state. Read-only. Also reports `reachable` (true/false/null): command-port (8300) reachability - true = the cmd port answered (or a session is Open), false = no answer, null = unknown (session busy, probe skipped rather than made to wait). cmd-reachable is NOT ready-to-send; use `vara_probe` to confirm a real VARA is answering."
     )]
     pub async fn vara_status(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.status.vara_status().await.map_err(port_err)?;
@@ -231,7 +231,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "position_status",
-        description = "Report THE OPERATOR'S current station location — their Maidenhead grid square (precision-reduced to ~4 chars for privacy) and GPS fix status. Call this to answer 'where am I', 'what's near me', or any location-relative question — do NOT ask the operator for their location; Tuxlink already knows it. Read-only."
+        description = "Report THE OPERATOR'S current station location - their Maidenhead grid square (precision-reduced to ~4 chars for privacy) and GPS fix status. Call this to answer 'where am I', 'what's near me', or any location-relative question - do NOT ask the operator for their location; Tuxlink already knows it. Read-only."
     )]
     pub async fn position_status(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self
@@ -393,8 +393,8 @@ impl TuxlinkMcp {
     #[tool(
         name = "docs_read",
         description = "Read one documentation page IN FULL, given the slug from a docs_search hit. \
-                       This is how you get the actual text — command syntax, connection strings, \
-                       configuration steps — that docs_search's snippet only hints at. Use \
+                       This is how you get the actual text - command syntax, connection strings, \
+                       configuration steps - that docs_search's snippet only hints at. Use \
                        docs_search first to find the slug, then docs_read to read the page, then \
                        answer FROM the page. If the slug is unknown, the result lists the valid \
                        slugs. App-owned content; does not taint. Read-only."
@@ -514,7 +514,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "list_audio_devices",
-        description = "Enumerate the STATION'S audio devices. Station/OS-level and mode-agnostic: the same physical device list serves ARDOP, VARA, FT-8, and packet — use this for ANY mode's audio troubleshooting (the number-one VARA failure is transmit-audio routing: wrong device, or a device another app holds). Read-only. Returns `capture`/`playback` ALSA names AND a richer `cards` list — per USB card: name, ALSA name, card index, `vid_pid` (e.g. 0d8c:013a), `bus_path` (distinguishes two identical-name cards on different ports), and `in_use`. To disambiguate, read tuxlink://playbook/audio-setup — the method (VID:PID + bus path + in-use), never a code-side ranking."
+        description = "Enumerate the STATION'S audio devices. Station/OS-level and mode-agnostic: the same physical device list serves ARDOP, VARA, FT-8, and packet - use this for ANY mode's audio troubleshooting (the number-one VARA failure is transmit-audio routing: wrong device, or a device another app holds). Read-only. Returns `capture`/`playback` ALSA names AND a richer `cards` list - per USB card: name, ALSA name, card index, `vid_pid` (e.g. 0d8c:013a), `bus_path` (distinguishes two identical-name cards on different ports), and `in_use`. To disambiguate, read tuxlink://playbook/audio-setup - the method (VID:PID + bus path + in-use), never a code-side ranking."
     )]
     pub async fn list_audio_devices(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.devices.audio().await.map_err(port_err)?;
@@ -523,7 +523,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "ardop_list_audio_devices",
-        description = "DEPRECATED alias of list_audio_devices — the audio-device list is station-level, not ARDOP-specific (tuxlink-hq9g0). Identical output; prefer list_audio_devices."
+        description = "DEPRECATED alias of list_audio_devices - the audio-device list is station-level, not ARDOP-specific (tuxlink-hq9g0). Identical output; prefer list_audio_devices."
     )]
     pub async fn ardop_list_audio_devices(&self) -> Result<CallToolResult, ErrorData> {
         // Delegates to the same port call as list_audio_devices — one
@@ -534,7 +534,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "printer_list",
-        description = "List CUPS print destinations (lpstat -p -d): each destination's name and whether it is the system default. Read-only. An empty list means no printer / CUPS is available — fall back to export_report."
+        description = "List CUPS print destinations (lpstat -p -d): each destination's name and whether it is the system default. Read-only. An empty list means no printer / CUPS is available - fall back to export_report."
     )]
     pub async fn printer_list(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.devices.printer_list().await.map_err(port_err)?;
@@ -543,7 +543,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "export_report",
-        description = "Write a generated report (`content`, markdown or plain text) to the operator's ~/Documents/Tuxlink/reports/ folder under `filename`. You pick the FILENAME, never the directory; `..`/absolute/traversal paths are rejected. Returns the absolute path written. A local file write — NOT a transmission, ungated."
+        description = "Write a generated report (`content`, markdown or plain text) to the operator's ~/Documents/Tuxlink/reports/ folder under `filename`. You pick the FILENAME, never the directory; `..`/absolute/traversal paths are rejected. Returns the absolute path written. A local file write - NOT a transmission, ungated."
     )]
     pub async fn export_report(
         &self,
@@ -561,7 +561,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "print_document",
-        description = "Print a report you previously wrote with export_report to a CUPS destination (lp -d <printer>). `filename` is resolved INSIDE the reports folder (only files you exported can be printed); `printer` is a name from printer_list. CUPS auto-filters text/markdown. A local action — NOT a transmission, ungated."
+        description = "Print a report you previously wrote with export_report to a CUPS destination (lp -d <printer>). `filename` is resolved INSIDE the reports folder (only files you exported can be printed); `printer` is a name from printer_list. CUPS auto-filters text/markdown. A local action - NOT a transmission, ungated."
     )]
     pub async fn print_document(
         &self,
@@ -599,7 +599,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "find_stations",
-        description = "Find Winlink RMS gateways by stating your INTENT (the tool selects and bounds the answer; it never dumps the whole catalog). Set `intent` to one of: `recommend` (which gateway should I connect to? — a ranked shortlist with one selected connection each), `explore` (narrow a broad space — returns facet counts + suggested filters, not rows, until the set is small), `lookup` (exact callsign(s)), `aggregate` (server-side counts by band/mode/distance/etc. over the whole matched set), or `export` (write the full set to a user file OUTSIDE this conversation). Constraints go NESTED under the `filters` object (e.g. `{\"intent\": \"explore\", \"filters\": {\"bands\": [\"40m\"], \"modes\": [\"vara-hf\"]}}`) — never as top-level arguments; your grid, the time, and connection history are supplied by the app. A broad `explore` returns a `refinement-required` result: zero rows, the exact total, facet counts, and `suggested_refinements` each carrying a ready-to-send `next_call` — send that `next_call.arguments` object VERBATIM as your next call (its `filters` are already fully merged; do not repeat an unchanged call, it returns the same answer). If you already know what you want, `recommend` with `filters` + a `goal` skips the refinement loop entirely. Omit `snapshot_id` on a first call (never pass the string \"null\"). Public directory data, cached. Read-only; does not transmit."
+        description = "Find Winlink RMS gateways by stating your INTENT (the tool selects and bounds the answer; it never dumps the whole catalog). Set `intent` to one of: `recommend` (which gateway should I connect to? - a ranked shortlist with one selected connection each), `explore` (narrow a broad space - returns facet counts + suggested filters, not rows, until the set is small), `lookup` (exact callsign(s)), `aggregate` (server-side counts by band/mode/distance/etc. over the whole matched set), or `export` (write the full set to a user file OUTSIDE this conversation). Constraints go NESTED under the `filters` object (e.g. `{\"intent\": \"explore\", \"filters\": {\"bands\": [\"40m\"], \"modes\": [\"vara-hf\"]}}`) - never as top-level arguments; your grid, the time, and connection history are supplied by the app. A broad `explore` returns a `refinement-required` result: zero rows, the exact total, facet counts, and `suggested_refinements` each carrying a ready-to-send `next_call` - send that `next_call.arguments` object VERBATIM as your next call (its `filters` are already fully merged; do not repeat an unchanged call, it returns the same answer). If you already know what you want, `recommend` with `filters` + a `goal` skips the refinement loop entirely. Omit `snapshot_id` on a first call (never pass the string \"null\"). Public directory data, cached. Read-only; does not transmit."
     )]
     pub async fn find_stations(
         &self,
@@ -617,7 +617,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "find_peers",
-        description = "List the stations this operator talks to directly (contacts with P2P reachability: exact callsign, tier, RF channels). Telnet endpoint addresses are never included — the agent dials radio channels only. Requires the egress arm — the roster is the operator's private station data, not public directory data. Read-only; does not transmit."
+        description = "List the stations this operator talks to directly (contacts with P2P reachability: exact callsign, tier, RF channels). Telnet endpoint addresses are never included - the agent dials radio channels only. Requires the egress arm - the roster is the operator's private station data, not public directory data. Read-only; does not transmit."
     )]
     pub async fn find_peers(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.stations.find_peers().await.map_err(port_err)?;
@@ -652,7 +652,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "solar_conditions",
-        description = "Report the STORED space-weather indices (SFI/A/K) and the sunspot number used for predictions. IMPORTANT: this reads a cached snapshot — it does not fetch anything, and the data may be old. Always check the returned `source` and `updated_at_ms` before presenting these as current. `source` is: \"swpc\" (from the internet), \"rf-wwv\" or \"rf-wwv-voice\" (decoded from the radio), or \"shipped\" (a fallback that shipped with the app and has NEVER been updated — do not present shipped defaults as current conditions). If the data is stale or from shipped defaults, tell the operator and offer wwv_capture_offair, which refreshes it over their own radio with no internet. Read-only; does not taint."
+        description = "Report the STORED space-weather indices (SFI/A/K) and the sunspot number used for predictions. IMPORTANT: this reads a cached snapshot - it does not fetch anything, and the data may be old. Always check the returned `source` and `updated_at_ms` before presenting these as current. `source` is: \"swpc\" (from the internet), \"rf-wwv\" or \"rf-wwv-voice\" (decoded from the radio), or \"shipped\" (a fallback that shipped with the app and has NEVER been updated - do not present shipped defaults as current conditions). If the data is stale or from shipped defaults, tell the operator and offer wwv_capture_offair, which refreshes it over their own radio with no internet. Read-only; does not taint."
     )]
     pub async fn solar_conditions(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.prediction.solar().await.map_err(port_err)?;
@@ -669,7 +669,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "wwv_capture_offair",
-        description = "Capture the current space-weather bulletin from the WWV time station over the operator's OWN RADIO and update the stored indices. This needs NO internet — it is how to refresh space weather when the operator is off-grid. Receive-only: it tunes the radio to WWV and listens, it does not transmit. Takes about a minute (it waits for the next bulletin). Requires rig CAT control (see wwv_offair_available). If it returns no_copy=true, audio was captured but the decode was not confident; the indices were not changed. Does not taint."
+        description = "Capture the current space-weather bulletin from the WWV time station over the operator's OWN RADIO and update the stored indices. This needs NO internet - it is how to refresh space weather when the operator is off-grid. Receive-only: it tunes the radio to WWV and listens, it does not transmit. Takes about a minute (it waits for the next bulletin). Requires rig CAT control (see wwv_offair_available). If it returns no_copy=true, audio was captured but the decode was not confident; the indices were not changed. Does not taint."
     )]
     pub async fn wwv_capture_offair(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.wwv.capture().await.map_err(port_err)?;
@@ -713,7 +713,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "vara_install_status",
-        description = "Probe whether VARA HF is already provisioned under WINE on this host: returns `ready` plus each install-pipeline checkpoint's state (deps -> prefix -> vara -> vb6 -> ocx -> verify -> autostart). Offline and read-only — never launches VARA, never touches the network, never transmits. Read tuxlink://playbook/vara-wine-setup for the full workflow."
+        description = "Probe whether VARA HF is already provisioned under WINE on this host: returns `ready` plus each install-pipeline checkpoint's state (deps -> prefix -> vara -> vb6 -> ocx -> verify -> autostart). Offline and read-only - never launches VARA, never touches the network, never transmits. Read tuxlink://playbook/vara-wine-setup for the full workflow."
     )]
     pub async fn vara_install_status(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self
@@ -727,7 +727,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "vara_ini_read",
-        description = "Read VARA's own VARA.ini (the file VARA itself persists ALL of its config to: [Soundcard] Input/Output Device Name + ALC Drive Level, [PTT] Rig/PTTPort/CATPort/Baud, [Setup] TCP Command Port, [Position], ...). Returns the raw INI text REDACTED: the paid Registration Code and Password encryption values are masked and cannot be read through this tool. Args: prefix (WINE prefix path; absent = the engine default ~/.local/share/wine-vara/prefix), instance (\"primary\" = drive_c/'VARA HF' or drive_c/VARA, \"vara2\" = drive_c/VARA2; absent = primary). Read-only local config — does not launch VARA, does not transmit, does not taint. Use vara_ini_apply to change values."
+        description = "Read VARA's own VARA.ini (the file VARA itself persists ALL of its config to: [Soundcard] Input/Output Device Name + ALC Drive Level, [PTT] Rig/PTTPort/CATPort/Baud, [Setup] TCP Command Port, [Position], ...). Returns the raw INI text REDACTED: the paid Registration Code and Password encryption values are masked and cannot be read through this tool. Args: prefix (WINE prefix path; absent = the engine default ~/.local/share/wine-vara/prefix), instance (\"primary\" = drive_c/'VARA HF' or drive_c/VARA, \"vara2\" = drive_c/VARA2; absent = primary). Read-only local config - does not launch VARA, does not transmit, does not taint. Use vara_ini_apply to change values."
     )]
     pub async fn vara_ini_read(
         &self,
@@ -745,7 +745,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "vara_install_start",
-        description = "Install VARA HF under WINE from a user-supplied installer .exe path (x86_64 Linux only). This runs a PRIVILEGED install: pkexec prompts the OPERATOR for their OS password at the machine — you cannot supply it. NON-TRANSMIT: it provisions software (apt/winetricks/wine) and never keys a radio, so it does NOT require armed send authority. The operator must FIRST download the proprietary VARA .exe themselves (rosmodem / winlink.org) — Tuxlink cannot include it. Read tuxlink://playbook/vara-wine-setup FIRST, then call vara_engine_available + vara_install_status to check state before invoking this. Runs for several minutes and returns the final install summary."
+        description = "Install VARA HF under WINE from a user-supplied installer .exe path (x86_64 Linux only). This runs a PRIVILEGED install: pkexec prompts the OPERATOR for their OS password at the machine - you cannot supply it. NON-TRANSMIT: it provisions software (apt/winetricks/wine) and never keys a radio, so it does NOT require armed send authority. The operator must FIRST download the proprietary VARA .exe themselves (rosmodem / winlink.org) - Tuxlink cannot include it. Read tuxlink://playbook/vara-wine-setup FIRST, then call vara_engine_available + vara_install_status to check state before invoking this. Runs for several minutes and returns the final install summary."
     )]
     pub async fn vara_install_start(
         &self,
@@ -793,7 +793,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "rig_tune",
-        description = "Tune the rig for a Winlink channel over CAT (set VFO + data mode). freq_hz is the channel's audio-CENTER frequency (the value Winlink catalogs publish); the app converts to the sideband dial (center - 1500 Hz on USB) internally — do NOT pre-subtract. EGRESS (commands the radio — same authority class as a transmit): requires armed send-authority and an un-tainted session; denied otherwise."
+        description = "Tune the rig for a Winlink channel over CAT (set VFO + data mode). freq_hz is the channel's audio-CENTER frequency (the value Winlink catalogs publish); the app converts to the sideband dial (center - 1500 Hz on USB) internally - do NOT pre-subtract. EGRESS (commands the radio - same authority class as a transmit): requires armed send-authority and an un-tainted session; denied otherwise."
     )]
     pub async fn rig_tune(
         &self,
@@ -810,7 +810,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "ardop_connect",
-        description = "Connect the ARDOP modem to a target station. Optional freq_hz pre-tunes the rig over CAT for the dial (audio-CENTER frequency, Winlink catalog convention — the app converts to the sideband dial; do NOT pre-subtract); optional qsy_candidates supplies an ordered frequency walk (operator-gated). EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise."
+        description = "Connect the ARDOP modem to a target station. Optional freq_hz pre-tunes the rig over CAT for the dial (audio-CENTER frequency, Winlink catalog convention - the app converts to the sideband dial; do NOT pre-subtract); optional qsy_candidates supplies an ordered frequency walk (operator-gated). EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise."
     )]
     pub async fn ardop_connect(
         &self,
@@ -848,7 +848,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "vara_b2f_exchange",
-        description = "Run a VARA B2F message exchange with a target for the given routing intent (cms/radio-only/post-office/mesh/p2p; defaults to cms). Optional freq_hz (audio-CENTER frequency, Winlink catalog convention — converted to the sideband dial internally on VARA HF; do NOT pre-subtract) / qsy_candidates pre-tune + QSY-walk the dial (VARA connects + tunes + exchanges in one call). Optional engine (vara-hf default, vara-fm for FM peers) selects which VARA engine dials — take it from the target peer channel's transport field. EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise."
+        description = "Run a VARA B2F message exchange with a target for the given routing intent (cms/radio-only/post-office/mesh/p2p; defaults to cms). Optional freq_hz (audio-CENTER frequency, Winlink catalog convention - converted to the sideband dial internally on VARA HF; do NOT pre-subtract) / qsy_candidates pre-tune + QSY-walk the dial (VARA connects + tunes + exchanges in one call). Optional engine (vara-hf default, vara-fm for FM peers) selects which VARA engine dials - take it from the target peer channel's transport field. EGRESS (keys the transmitter): requires armed send-authority and an un-tainted session; denied otherwise."
     )]
     pub async fn vara_b2f_exchange(
         &self,
@@ -871,7 +871,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "vara_open_session",
-        description = "Open the VARA session: connect the TCP transport to the local VARA engine and register the station callsign (MYCALL). Optional engine (vara-hf default, vara-fm for FM peers) selects which VARA engine to open — take it from the target peer channel's transport field. Pre-air by itself (no RF), but it stands up a transmit-capable surface: requires armed send-authority and an un-tainted session; denied otherwise. Required before vara_b2f_exchange; close with vara_stop_session."
+        description = "Open the VARA session: connect the TCP transport to the local VARA engine and register the station callsign (MYCALL). Optional engine (vara-hf default, vara-fm for FM peers) selects which VARA engine to open - take it from the target peer channel's transport field. Pre-air by itself (no RF), but it stands up a transmit-capable surface: requires armed send-authority and an un-tainted session; denied otherwise. Required before vara_b2f_exchange; close with vara_stop_session."
     )]
     pub async fn vara_open_session(
         &self,
@@ -988,7 +988,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "vara_ini_apply",
-        description = "Apply [section] key = value assignments to VARA's own VARA.ini via the stop-edit-start lifecycle (tuxlink-iww9r): stops any VARA this app manages (never one it cannot attribute), backs the file up (timestamped), writes atomically, then relaunches VARA and verifies its TCP command port. WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise. NOT a transmission, but it BOUNCES the modem: refused while a VARA session is open, refused if an unmanaged VARA holds the port, and refused (pre-mutation) for a vara2 instance whose command port is unknown. Args: prefix / instance (as in vara_ini_read), edits (list of {section, key, value}; values are single-line), relaunch (default true; false = edit only). Returns {ini_path, backup_path, created, applied, relaunched, cmd_port}. This is how you set the Soundcard Input/Output Device Name, ALC Drive Level, PTT/CAT config, or ports — read vara_ini_read FIRST to see current values."
+        description = "Apply [section] key = value assignments to VARA's own VARA.ini via the stop-edit-start lifecycle (tuxlink-iww9r): stops any VARA this app manages (never one it cannot attribute), backs the file up (timestamped), writes atomically, then relaunches VARA and verifies its TCP command port. WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise. NOT a transmission, but it BOUNCES the modem: refused while a VARA session is open, refused if an unmanaged VARA holds the port, and refused (pre-mutation) for a vara2 instance whose command port is unknown. Args: prefix / instance (as in vara_ini_read), edits (list of {section, key, value}; values are single-line), relaunch (default true; false = edit only). Returns {ini_path, backup_path, created, applied, relaunched, cmd_port}. This is how you set the Soundcard Input/Output Device Name, ALC Drive Level, PTT/CAT config, or ports - read vara_ini_read FIRST to see current values."
     )]
     pub async fn vara_ini_apply(
         &self,
@@ -1207,7 +1207,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "catalog_send_inquiry",
-        description = "Stage a Winlink Request Center inquiry for one or more catalog item ids (the filename ids from catalog_list) in the local outbox; returns the staged message id. Use this to request ANY catalog product — propagation forecasts, METAR airport weather, satellite keplerian data, bulletins, marine forecasts, etc., not just GRIB weather. The requested products are delivered to the mailbox after the operator next connects (Arm to send). No transmission occurs here."
+        description = "Stage a Winlink Request Center inquiry for one or more catalog item ids (the filename ids from catalog_list) in the local outbox; returns the staged message id. Use this to request ANY catalog product - propagation forecasts, METAR airport weather, satellite keplerian data, bulletins, marine forecasts, etc., not just GRIB weather. The requested products are delivered to the mailbox after the operator next connects (Arm to send). No transmission occurs here."
     )]
     pub async fn catalog_send_inquiry(
         &self,
@@ -1253,7 +1253,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "point_at",
-        description = "Spotlight a UI element in the main window so the operator can see where it is. Never clicks, navigates, or transmits — display only. Errors list valid anchor IDs when the ID is unknown."
+        description = "Spotlight a UI element in the main window so the operator can see where it is. Never clicks, navigates, or transmits - display only. Errors list valid anchor IDs when the ID is unknown."
     )]
     pub async fn point_at(
         &self,
@@ -1282,7 +1282,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "ft8_status",
-        description = "Report the FT-8 listener's state: whether it is listening, on which band and dial frequency, which audio device, and what is blocking it if it cannot start. Call this before ft8_heard_stations if no stations come back — the listener may simply not be running. Receive-only. Does not taint. Read-only."
+        description = "Report the FT-8 listener's state: whether it is listening, on which band and dial frequency, which audio device, and what is blocking it if it cannot start. Call this before ft8_heard_stations if no stations come back - the listener may simply not be running. Receive-only. Does not taint. Read-only."
     )]
     pub async fn ft8_status(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.ft8.status().await.map_err(port_err)?;
@@ -1380,10 +1380,10 @@ impl TuxlinkMcp {
                        (the exact shape routines_save's def accepts; note `routine` is the \
                        routine's NAME string and `triggers` is a list). The recommended authoring \
                        flow: save the template under your routine's name with routines_save, \
-                       then build it one fragment at a time — routines_step_add for each step, \
-                       routines_trigger_set for the schedule — so every piece is validated in \
+                       then build it one fragment at a time - routines_step_add for each step, \
+                       routines_trigger_set for the schedule - so every piece is validated in \
                        isolation and a mistake costs one small call, never the whole document. \
-                       Call this BEFORE writing a routine — action names are a closed set; \
+                       Call this BEFORE writing a routine - action names are a closed set; \
                        invented names (e.g. \"modem.vara.connect\") fail validation with \
                        UNKNOWN_ACTION. Optional narrowing: pass action (one action's full \
                        record) or section (\"actions\" / \"controls\" / \"trigger_kinds\" / \
@@ -1445,7 +1445,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "routines_get",
-        description = "Read one routine: {revision, def, edit_protocol}. def is the full definition exactly as stored — the same JSON shape routines_save's def accepts: routine, schema_version, transmit_mode, transmit_ack (if any), triggers, tracks/steps. To MODIFY the routine, follow edit_protocol: use the targeted edit tools it lists (routines_step_update etc.) passing expected_revision = the returned revision; do NOT re-save the whole def with routines_save (a blind resave overwrites concurrent edits). Read-only."
+        description = "Read one routine: {revision, def, edit_protocol}. def is the full definition exactly as stored - the same JSON shape routines_save's def accepts: routine, schema_version, transmit_mode, transmit_ack (if any), triggers, tracks/steps. To MODIFY the routine, follow edit_protocol: use the targeted edit tools it lists (routines_step_update etc.) passing expected_revision = the returned revision; do NOT re-save the whole def with routines_save (a blind resave overwrites concurrent edits). Read-only."
     )]
     pub async fn routines_get(
         &self,
@@ -1467,7 +1467,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "routines_validate",
-        description = "Validate one routine by name against the live station — the SAME validator routines_save/routines_run use (one validator, no privileged path). Returns every finding: code, severity (error/warning), and a message that names the offending entity verbatim. Does not save or run anything. Read-only."
+        description = "Validate one routine by name against the live station - the SAME validator routines_save/routines_run use (one validator, no privileged path). Returns every finding: code, severity (error/warning), and a message that names the offending entity verbatim. Does not save or run anything. Read-only."
     )]
     pub async fn routines_validate(
         &self,
@@ -1485,7 +1485,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "routines_save",
-        description = "Save a WHOLE routine definition from def (a JSON OBJECT — the same shape routines_get returns in its def field and routines_actions_list's definition_template shows: routine [the NAME string], schema_version, transmit_mode, triggers [a list], tracks[].steps). Give exactly one of def (preferred, a JSON OBJECT — a stringified object is tolerated and parsed) or def_json (deprecated string form); never both. Best for bootstrap: save the definition_template under your routine's name, then build it step-by-step with routines_step_add / routines_step_update / routines_trigger_set — each fragment edit is validated in isolation and a mistake costs one small call, not the whole document. NEVER refused by validation findings — a half-written draft still saves, and the result's findings/blocked say what is wrong so you can iterate. Refused when the definition fails to parse, its routine name is invalid, or expected_revision is stale (REVISION_CONFLICT)."
+        description = "Save a WHOLE routine definition from def (a JSON OBJECT - the same shape routines_get returns in its def field and routines_actions_list's definition_template shows: routine [the NAME string], schema_version, transmit_mode, triggers [a list], tracks[].steps). Give exactly one of def (preferred, a JSON OBJECT - a stringified object is tolerated and parsed) or def_json (deprecated string form); never both. Best for bootstrap: save the definition_template under your routine's name, then build it step-by-step with routines_step_add / routines_step_update / routines_trigger_set - each fragment edit is validated in isolation and a mistake costs one small call, not the whole document. NEVER refused by validation findings - a half-written draft still saves, and the result's findings/blocked say what is wrong so you can iterate. Refused when the definition fails to parse, its routine name is invalid, or expected_revision is stale (REVISION_CONFLICT)."
     )]
     pub async fn routines_save(
         &self,
@@ -1511,7 +1511,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "routines_step_add",
-        description = "Insert ONE step into a saved routine (the fragment-edit path — no whole-document rewrite). step is a JSON OBJECT ({\"action\": ..., \"params\": {...}} or {\"control\": ...}; a branch is FLAT: {\"control\": \"branch\", \"on\": \"s1.connected\", \"then\": [step ids], \"else\": [step ids]} with on a bare path (no $) and an optional op (eq|ne|lt|lte|gt|gte) + value pair); omit its id to have one assigned and returned as step_id. Place with exactly one of: track (append — lands BEFORE the track's trailing end step when one exists, so appended steps always run), after_step_id (splice after), or branch_step_id+branch_arm (into a branch's then/else arm — arm membership and position land atomically). The routine must be DISABLED (ROUTINE_ENABLED otherwise — disable, edit, re-enable). The result is SAVED even with error findings (errors block enable/run, never save); step_findings carries the validator's verdict on YOUR step — fix those before reporting done."
+        description = "Insert ONE step into a saved routine (the fragment-edit path - no whole-document rewrite). step is a JSON OBJECT ({\"action\": ..., \"params\": {...}} or {\"control\": ...}; a branch is FLAT: {\"control\": \"branch\", \"on\": \"s1.connected\", \"then\": [step ids], \"else\": [step ids]} with on a bare path (no $) and an optional op (eq|ne|lt|lte|gt|gte) + value pair); omit its id to have one assigned and returned as step_id. Place with exactly one of: track (append - lands BEFORE the track's trailing end step when one exists, so appended steps always run), after_step_id (splice after), or branch_step_id+branch_arm (into a branch's then/else arm - arm membership and position land atomically). The routine must be DISABLED (ROUTINE_ENABLED otherwise - disable, edit, re-enable). The result is SAVED even with error findings (errors block enable/run, never save); step_findings carries the validator's verdict on YOUR step - fix those before reporting done."
     )]
     pub async fn routines_step_add(
         &self,
@@ -1540,7 +1540,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "routines_step_update",
-        description = "Patch ONE step of a saved routine: patch is a JSON OBJECT shallow-merged onto the step — params replaces wholesale, scalar fields (action, timeout_s, on_radio_busy, a branch's then/else lists, ...) patch individually, null clears an optional field. The step's id and its action-vs-control kind cannot change (remove and re-add instead). The routine must be DISABLED. The result is SAVED even with error findings; step_findings carries the validator's verdict on the touched step — fix those before reporting done."
+        description = "Patch ONE step of a saved routine: patch is a JSON OBJECT shallow-merged onto the step - params replaces wholesale, scalar fields (action, timeout_s, on_radio_busy, a branch's then/else lists, ...) patch individually, null clears an optional field. The step's id and its action-vs-control kind cannot change (remove and re-add instead). The routine must be DISABLED. The result is SAVED even with error findings; step_findings carries the validator's verdict on the touched step - fix those before reporting done."
     )]
     pub async fn routines_step_update(
         &self,
@@ -1565,7 +1565,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "routines_step_remove",
-        description = "Remove ONE step from a saved routine. Branch arms referencing it are scrubbed automatically (reported in scrubbed) so a later step add can never silently inherit stale arm membership; a retry step wrapping it is NOT repaired — the validator's finding tells you to fix or remove the retry. The routine must be DISABLED."
+        description = "Remove ONE step from a saved routine. Branch arms referencing it are scrubbed automatically (reported in scrubbed) so a later step add can never silently inherit stale arm membership; a retry step wrapping it is NOT repaired - the validator's finding tells you to fix or remove the retry. The routine must be DISABLED."
     )]
     pub async fn routines_step_remove(
         &self,
@@ -1587,7 +1587,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "routines_step_move",
-        description = "Reposition ONE existing step in a saved routine — one atomic operation, no remove/re-add dance through broken-reference states. Same placement fields as routines_step_add: exactly one of track (append to that track), after_step_id, or branch_step_id+branch_arm (old arm membership is scrubbed, new membership set). The routine must be DISABLED."
+        description = "Reposition ONE existing step in a saved routine - one atomic operation, no remove/re-add dance through broken-reference states. Same placement fields as routines_step_add: exactly one of track (append to that track), after_step_id, or branch_step_id+branch_arm (old arm membership is scrubbed, new membership set). The routine must be DISABLED."
     )]
     pub async fn routines_step_move(
         &self,
@@ -1660,7 +1660,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "routines_trigger_set",
-        description = "Replace a saved routine's trigger list wholesale: triggers is the FULL new list, e.g. [{\"type\": \"schedule\", \"every\": \"30m\", \"align\": \"hour\", \"window\": \"06:00-22:00\", \"if_missed\": \"skip\"}] or [{\"type\": \"manual\"}]. routines_actions_list documents every trigger kind and field. The routine must be DISABLED — which also means a trigger change can never fire the old steps under a new schedule; the schedule anchors when you re-enable."
+        description = "Replace a saved routine's trigger list wholesale: triggers is the FULL new list, e.g. [{\"type\": \"schedule\", \"every\": \"30m\", \"align\": \"hour\", \"window\": \"06:00-22:00\", \"if_missed\": \"skip\"}] or [{\"type\": \"manual\"}]. routines_actions_list documents every trigger kind and field. The routine must be DISABLED - which also means a trigger change can never fire the old steps under a new schedule; the schedule anchors when you re-enable."
     )]
     pub async fn routines_trigger_set(
         &self,
@@ -1684,7 +1684,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "routines_meta_set",
-        description = "Patch a saved routine's envelope fields: transmit_mode (\"attended\"|\"automatic\"), on_interrupted (\"stay\"|\"resume\"), inputs (declared input list). Setting automatic still requires the operator's design-time acknowledgment in the designer before the routine can run — the patch saves and the unacked state is reported, exactly like a whole-document save; leaving automatic revokes any standing acknowledgment. Renaming is routines_rename, not a field here. The routine must be DISABLED."
+        description = "Patch a saved routine's envelope fields: transmit_mode (\"attended\"|\"automatic\"), on_interrupted (\"stay\"|\"resume\"), inputs (declared input list). Setting automatic still requires the operator's design-time acknowledgment in the designer before the routine can run - the patch saves and the unacked state is reported, exactly like a whole-document save; leaving automatic revokes any standing acknowledgment. Renaming is routines_rename, not a field here. The routine must be DISABLED."
     )]
     pub async fn routines_meta_set(
         &self,
@@ -1706,7 +1706,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "routines_rename",
-        description = "Rename a routine transactionally: the definition, its enabled state, and call steps in OTHER routines that referenced the old name all migrate in one operation (rewritten callers are reported in callers_updated). Works on an enabled routine — the content is unchanged, so its validation state is identical. Refused when the new name is taken or not kebab-case."
+        description = "Rename a routine transactionally: the definition, its enabled state, and call steps in OTHER routines that referenced the old name all migrate in one operation (rewritten callers are reported in callers_updated). Works on an enabled routine - the content is unchanged, so its validation state is identical. Refused when the new name is taken or not kebab-case."
     )]
     pub async fn routines_rename(
         &self,
@@ -1728,7 +1728,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "routines_enable",
-        description = "Enable a routine so its triggers can fire it. Refused (enabled: false, blocked: true, plus the blocking findings — a normal RESULT, not a tool error) when a validation ERROR blocks it; a fleet check runs too, so a schedule collision with an already-enabled routine is reported as a warning without blocking. Enabling an automatic routine that ALREADY carries its design-time transmit acknowledgment (spec §4) succeeds over MCP by design — that acknowledgment covers every invoker, not just the UI."
+        description = "Enable a routine so its triggers can fire it. Refused (enabled: false, blocked: true, plus the blocking findings - a normal RESULT, not a tool error) when a validation ERROR blocks it; a fleet check runs too, so a schedule collision with an already-enabled routine is reported as a warning without blocking. Enabling an automatic routine that ALREADY carries its design-time transmit acknowledgment (spec §4) succeeds over MCP by design - that acknowledgment covers every invoker, not just the UI."
     )]
     pub async fn routines_enable(
         &self,
@@ -1741,7 +1741,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "routines_disable",
-        description = "Disable a routine. Never blocked, however invalid the routine currently is — a routine you could not turn off would be a trap."
+        description = "Disable a routine. Never blocked, however invalid the routine currently is - a routine you could not turn off would be a trap."
     )]
     pub async fn routines_disable(
         &self,
@@ -1754,7 +1754,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "routines_run",
-        description = "Start a REAL run of a routine by name, with optional JSON-object args_json (default \"{}\"). Refused when a validation error blocks it, or when the routine is automatic-transmit and lacks its design-time acknowledgment (spec §4) — that acknowledgment is recorded ONLY by a UI act in the routine's Settings, no parameter here can supply it, so this specific refusal is expected and persists until the OPERATOR acknowledges it; the refusal message is surfaced to you verbatim, do not paraphrase it back. An automatic routine that ALREADY carries the acknowledgment runs over MCP exactly as it would from the UI — this is by design, not a gap: the acknowledgment covers every invoker. Returns the run id; poll routines_run_status / routines_journal_get."
+        description = "Start a REAL run of a routine by name, with optional JSON-object args_json (default \"{}\"). Refused when a validation error blocks it, or when the routine is automatic-transmit and lacks its design-time acknowledgment (spec §4) - that acknowledgment is recorded ONLY by a UI act in the routine's Settings, no parameter here can supply it, so this specific refusal is expected and persists until the OPERATOR acknowledges it; the refusal message is surfaced to you verbatim, do not paraphrase it back. An automatic routine that ALREADY carries the acknowledgment runs over MCP exactly as it would from the UI - this is by design, not a gap: the acknowledgment covers every invoker. Returns the run id; poll routines_run_status / routines_journal_get."
     )]
     pub async fn routines_run(
         &self,
@@ -1772,7 +1772,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "routines_dry_run",
-        description = "Start a DRY run: rehearses a routine with EVERY action swapped for a capability-mirroring fake before anything runs, so nothing real is ever touched — no rig seized, no carrier keyed, no message queued, no gateway dialed. Refused by NOTHING: not a validation error, not a missing automatic-transmit acknowledgment — rehearsing an as-yet-unfit-to-run routine is the whole point. Optional args_json (default \"{}\") and script_json (a JSON object shaping the fake world's per-action outcomes, e.g. {\"outcomes\":{\"radio.connect\":[{\"kind\":\"err\",\"cause\":\"VARA: BUSY\"}]}}; omit for an all-succeeds fake world). Returns the run id (poll routines_run_status / routines_journal_get) plus the validator's findings — informational only, never blocking here."
+        description = "Start a DRY run: rehearses a routine with EVERY action swapped for a capability-mirroring fake before anything runs, so nothing real is ever touched - no rig seized, no carrier keyed, no message queued, no gateway dialed. Refused by NOTHING: not a validation error, not a missing automatic-transmit acknowledgment - rehearsing an as-yet-unfit-to-run routine is the whole point. Optional args_json (default \"{}\") and script_json (a JSON object shaping the fake world's per-action outcomes, e.g. {\"outcomes\":{\"radio.connect\":[{\"kind\":\"err\",\"cause\":\"VARA: BUSY\"}]}}; omit for an all-succeeds fake world). Returns the run id (poll routines_run_status / routines_journal_get) plus the validator's findings - informational only, never blocking here."
     )]
     pub async fn routines_dry_run(
         &self,
@@ -1816,7 +1816,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "routines_journal_get",
-        description = "The full, durable step-by-step journal for a run, every entry VERBATIM — a failed step's cause is the actual VARA/CAT/HTTP failure text the action surfaced, never paraphrased. May contain untrusted wire content, so calling this taints the session. Read-only."
+        description = "The full, durable step-by-step journal for a run, every entry VERBATIM - a failed step's cause is the actual VARA/CAT/HTTP failure text the action surfaced, never paraphrased. May contain untrusted wire content, so calling this taints the session. Read-only."
     )]
     pub async fn routines_journal_get(
         &self,
@@ -2446,13 +2446,13 @@ impl ServerHandler for TuxlinkMcp {
             .build();
         ServerInfo::new(capabilities).with_instructions(
             "Tuxlink MCP server. New here? Read the resource tuxlink://agents/guide \
-             first — it explains the full tool surface by tier and the arm/taint \
+             first - it explains the full tool surface by tier and the arm/taint \
              rules. Read-only tools report app/backend/modem status, \
              mailbox + search content, curated config, devices, and the session log. \
              Tools that return untrusted external content (mailbox_list, message_read, \
              tauri_search_run, session_log_snapshot) taint the session, locking send \
              authority until the operator re-arms. Resources (tuxlink:// URIs) serve \
-             curated operator knowledge — glossary, transport/device guides, and \
+             curated operator knowledge - glossary, transport/device guides, and \
              diagnostic playbooks. Prompts walk common operator workflows.",
         )
     }
@@ -2700,7 +2700,7 @@ impl TuxlinkMcp {
                      3. Stage the message as a local outbox draft using send_form (or \
                      message_send for a plain message). Return the staged message id.\
                      {prefill}\n\n\
-                     Staging only — no transmission occurs. The message stays in the local \
+                     Staging only - no transmission occurs. The message stays in the local \
                      outbox until the operator arms send authority and runs a gated connect."
                 );
                 Ok(
@@ -2742,7 +2742,7 @@ mod tests {
         );
         assert!(
             !taint.contains("CONTINUE the parts of the task"),
-            "taint remedy must NOT promise continued work — re-arm quarantines"
+            "taint remedy must NOT promise continued work - re-arm quarantines"
         );
         // Expiry/not-armed: name ARM + instruct continuing non-transmitting
         // work (tuxlink-shopf: "continue from where you left off" read as
@@ -2821,7 +2821,7 @@ mod tests {
         assert_eq!(
             port_err(PortError::NotFound).code,
             ErrorCode::INTERNAL_ERROR,
-            "NotFound keeps its existing internal-error mapping — M2 narrows nothing else"
+            "NotFound keeps its existing internal-error mapping - M2 narrows nothing else"
         );
     }
 
@@ -2875,7 +2875,7 @@ mod tests {
         .unwrap();
         assert!(
             !h.state.guard.is_tainted(),
-            "vara_ini_read is a redacted local-config read — it must not taint"
+            "vara_ini_read is a redacted local-config read - it must not taint"
         );
     }
 
@@ -3055,7 +3055,7 @@ mod tests {
         assert!(
             camel_case_field_mentions.is_empty(),
             "a tool description names a camelCase field, but the port DTOs serialize \
-             snake_case (no serde rename_all) — the model would look for a key that is \
+             snake_case (no serde rename_all) - the model would look for a key that is \
              not there. Offending description(s): {camel_case_field_mentions:#?}"
         );
     }
@@ -3134,7 +3134,7 @@ mod tests {
             .collect();
         assert!(
             !names.iter().any(|n| n.to_lowercase().contains("consent")),
-            "the MCP surface must not expose a consent-grant tool (spec §13 — \
+            "the MCP surface must not expose a consent-grant tool (spec §13 - \
              the design-time ack is a UI act only): {names:?}"
         );
         for tool in [
@@ -3214,7 +3214,7 @@ mod tests {
             routines_names, expected,
             "the routines-prefixed MCP tool list must be EXACTLY the spec §13 \
              list (10 tools + tuxlink-dngvs's routines_actions_list + \
-             tuxlink-aqy63's 9 edit verbs) — no \
+             tuxlink-aqy63's 9 edit verbs) - no \
              more, no less: {names:?}"
         );
 
@@ -3229,7 +3229,7 @@ mod tests {
         ] {
             assert!(
                 !names.iter().any(|n| n == forbidden),
-                "the MCP surface must never expose {forbidden:?} — it is a \
+                "the MCP surface must never expose {forbidden:?} - it is a \
                  UI-only act with no MCP path (spec §13): {names:?}"
             );
         }
@@ -3248,7 +3248,7 @@ mod tests {
         assert_eq!(
             err.message.to_string(),
             crate::test_support::UNACKED_REFUSAL,
-            "the refusal must reach the agent VERBATIM — no remedy text, no rewrite"
+            "the refusal must reach the agent VERBATIM - no remedy text, no rewrite"
         );
     }
 
@@ -3308,7 +3308,7 @@ mod tests {
                 name: crate::test_support::SEED_ROUTINE.to_string(),
             }))
             .await
-            .expect("enable is Ok even when blocked — blocked is a DTO field, not an Err");
+            .expect("enable is Ok even when blocked - blocked is a DTO field, not an Err");
         let dto: crate::ports::EnableResultDto = json_of(&result);
         assert!(dto.enabled);
         assert!(!dto.blocked);
@@ -3396,7 +3396,7 @@ mod tests {
         assert!(
             action["example_params"]["stations"].is_array(),
             "example_params must be a real JSON OBJECT (paste-ready into a \
-             step's params) — not a string-in-JSON (Codex adrev P2 #1): {json}"
+             step's params) - not a string-in-JSON (Codex adrev P2 #1): {json}"
         );
         assert_eq!(json["trigger_kinds"][0]["type"], "manual");
         assert!(

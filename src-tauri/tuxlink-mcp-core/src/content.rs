@@ -94,7 +94,7 @@ pub static CATALOG: &[KnowledgeResource] = &[
         uri: "tuxlink://reference/local-agent-deployment",
         name: "reference-local-agent-deployment",
         title: "Running a Tuxlink assistant on local hardware",
-        description: "What local/edge hardware (RTX Spark / DGX Spark) runs a Tuxlink assistant offline, which models fit, and how a local assistant compares to a cloud one — safety holds, depth and long-horizon reliability trade off.",
+        description: "What local/edge hardware (RTX Spark / DGX Spark) runs a Tuxlink assistant offline, which models fit, and how a local assistant compares to a cloud one - safety holds, depth and long-horizon reliability trade off.",
         markdown: include_str!("../../../docs/mcp-knowledge/local-agent-deployment.md"),
     },
     // ----- Curated user-guide docs (reused from the in-app guide) -----
@@ -172,7 +172,7 @@ pub static CATALOG: &[KnowledgeResource] = &[
         uri: "tuxlink://playbook/audio-setup",
         name: "playbook-audio-setup",
         title: "Playbook: picking the right audio device for a digital modem",
-        description: "How to read list_audio_devices (station-level; ardop_list_audio_devices is a deprecated alias) and apply the disambiguation METHOD (VID:PID + bus path + in-use) to pick the operator's radio interface — without a code-side ranking. Guides a new user to find THEIR card; never assumes a specific bench's identity.",
+        description: "How to read list_audio_devices (station-level; ardop_list_audio_devices is a deprecated alias) and apply the disambiguation METHOD (VID:PID + bus path + in-use) to pick the operator's radio interface - without a code-side ranking. Guides a new user to find THEIR card; never assumes a specific bench's identity.",
         markdown: include_str!("../../../docs/mcp-knowledge/audio-setup.md"),
     },
     KnowledgeResource {

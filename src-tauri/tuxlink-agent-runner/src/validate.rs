@@ -146,7 +146,7 @@ fn check_type(path: &str, ty: &Value, instance: &Value) -> Result<(), String> {
             }
         });
         let hint = match contained {
-            Some(kind) => format!(" (the string contains {kind} — give the declared composite type directly)"),
+            Some(kind) => format!(" (the string contains {kind} - give the declared composite type directly)"),
             None => String::new(),
         };
         Err(format!(
@@ -223,7 +223,7 @@ fn json_type_name(v: &Value) -> &'static str {
 fn compact(v: &Value) -> String {
     let s = v.to_string();
     if s.len() > 80 {
-        format!("{}…", &s[..80])
+        format!("{}...", &s[..80])
     } else {
         s
     }

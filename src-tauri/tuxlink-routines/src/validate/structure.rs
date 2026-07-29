@@ -134,7 +134,7 @@ fn check_branch_shapes(def: &RoutineDef, track: &Track, findings: &mut Vec<Findi
                     BRANCH_OP_VALUE_PAIR,
                     def.routine.clone(),
                     format!(
-                        "branch \"{}\" has {present} without {missing} — this fails at run \
+                        "branch \"{}\" has {present} without {missing} - this fails at run \
                          time. Supply op AND value together to compare, or neither for the \
                          strict-boolean form (on must then resolve to a boolean)",
                         c.id.0
@@ -152,7 +152,7 @@ fn check_branch_shapes(def: &RoutineDef, track: &Track, findings: &mut Vec<Findi
                     format!(
                         "branch \"{}\" has an empty then AND an empty else: both outcomes \
                          fall through to the same next step, so the branch decides nothing. \
-                         Point at least one arm at a target step — then runs when the \
+                         Point at least one arm at a target step - then runs when the \
                          condition is TRUE, else when it is FALSE",
                         c.id.0
                     ),
@@ -246,10 +246,10 @@ fn check_tx_only_on_failure_arm(
                         def.routine.clone(),
                         format!(
                             "\"{}\" ({tx_action}) transmits and is reachable ONLY through \
-                             branch \"{}\"'s else arm — it runs exclusively when \"{on}\" is \
+                             branch \"{}\"'s else arm - it runs exclusively when \"{on}\" is \
                              FALSE (the connection failed). If it is a failure alert, that \
                              is correct; if it is meant to confirm a successful connection, \
-                             it never will — move it into the then arm (condition TRUE)",
+                             it never will - move it into the then arm (condition TRUE)",
                             tx_id.0, c.id.0
                         ),
                     )
@@ -624,7 +624,7 @@ fn check_retry_controls(def: &RoutineDef, track: &Track, findings: &mut Vec<Find
                     RETRY_ZERO_ATTEMPTS,
                     def.routine.clone(),
                     format!(
-                        "retry step \"{}\" has attempts: 0 — its target \"{}\" can never execute",
+                        "retry step \"{}\" has attempts: 0 - its target \"{}\" can never execute",
                         c.id.0, target.0
                     ),
                 )
@@ -879,7 +879,7 @@ fn check_graph_properties(def: &RoutineDef, track: &Track, findings: &mut Vec<Fi
                 BRANCH_CYCLE,
                 def.routine.clone(),
                 format!(
-                    "step \"{}\" in track \"{}\" jumps back to step \"{}\", forming a cycle — \
+                    "step \"{}\" in track \"{}\" jumps back to step \"{}\", forming a cycle - \
                      routines must terminate (the runtime's {}-step budget is defense-in-depth, \
                      not the primary guard)",
                     track.steps[from].id().0,
@@ -920,7 +920,7 @@ fn check_calls(def: &RoutineDef, ctx: &dyn ValidationContext, findings: &mut Vec
                         def.routine.clone(),
                         format!(
                             "call step \"{}\" invokes \"{callee}\", whose call closure eventually \
-                             calls \"{}\" again — routines must not recurse",
+                             calls \"{}\" again - routines must not recurse",
                             c.id.0, def.routine
                         ),
                     )

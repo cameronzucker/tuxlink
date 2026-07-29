@@ -258,7 +258,7 @@ pub fn check(def: &RoutineDef, ctx: &dyn ValidationContext, findings: &mut Vec<F
                         UNKNOWN_PARAM,
                         &def.routine,
                         format!(
-                            "step \"{}\" (action \"{}\"): param \"{key}\" is not declared by this action and is ignored at runtime — declared params: {}",
+                            "step \"{}\" (action \"{}\"): param \"{key}\" is not declared by this action and is ignored at runtime - declared params: {}",
                             a.id.0,
                             a.action,
                             keys_of(desc.params)
@@ -273,7 +273,7 @@ pub fn check(def: &RoutineDef, ctx: &dyn ValidationContext, findings: &mut Vec<F
                         MISSING_REQUIRED_PARAM,
                         &def.routine,
                         format!(
-                            "step \"{}\" (action \"{}\"): required param \"{}\" is missing — it must be {} (example: {})",
+                            "step \"{}\" (action \"{}\"): required param \"{}\" is missing - it must be {} (example: {})",
                             a.id.0,
                             a.action,
                             spec.key,
@@ -332,7 +332,7 @@ fn check_value(
                     PARAM_TYPE_MISMATCH,
                     routine,
                     format!(
-                        "step \"{}\" (action \"{}\"): required param \"{}\" is null — provide {} (example: {})",
+                        "step \"{}\" (action \"{}\"): required param \"{}\" is null - provide {} (example: {})",
                         a.id.0,
                         a.action,
                         spec.key,
@@ -378,7 +378,7 @@ fn check_value(
                 REF_UNKNOWN_STEP,
                 routine,
                 format!(
-                    "step \"{}\" (action \"{}\"): param \"{}\" references \"{s}\", but no step with that id exists — the run would fail at resolution",
+                    "step \"{}\" (action \"{}\"): param \"{}\" references \"{s}\", but no step with that id exists - the run would fail at resolution",
                     a.id.0, a.action, spec.key
                 ),
             )),
@@ -412,7 +412,7 @@ fn check_value(
                         REF_NULLABLE_SOURCE,
                         routine,
                         format!(
-                            "step \"{}\" (action \"{}\"): required param \"{}\" takes \"{s}\", which can be null or absent depending on the referenced step's path — branch on it first or accept the runtime risk",
+                            "step \"{}\" (action \"{}\"): required param \"{}\" takes \"{s}\", which can be null or absent depending on the referenced step's path - branch on it first or accept the runtime risk",
                             a.id.0, a.action, spec.key
                         ),
                     ));
@@ -433,7 +433,7 @@ fn check_value(
                             EMBEDDED_REF_IGNORED,
                             routine,
                             format!(
-                                "step \"{}\" (action \"{}\"): param \"{}\" embeds \"${path}\" but no step with that id exists — an embedded ref that cannot resolve stays literal text at runtime",
+                                "step \"{}\" (action \"{}\"): param \"{}\" embeds \"${path}\" but no step with that id exists - an embedded ref that cannot resolve stays literal text at runtime",
                                 a.id.0, a.action, spec.key
                             ),
                         )),
@@ -441,7 +441,7 @@ fn check_value(
                             EMBEDDED_REF_IGNORED,
                             routine,
                             format!(
-                                "step \"{}\" (action \"{}\"): param \"{}\" embeds \"${path}\" but the referenced action declares no such output — an embedded ref that cannot resolve stays literal text at runtime",
+                                "step \"{}\" (action \"{}\"): param \"{}\" embeds \"${path}\" but the referenced action declares no such output - an embedded ref that cannot resolve stays literal text at runtime",
                                 a.id.0, a.action, spec.key
                             ),
                         )),
@@ -458,7 +458,7 @@ fn check_value(
                     PARAM_TYPE_MISMATCH,
                     routine,
                     format!(
-                        "step \"{}\" (action \"{}\"): param \"{}\" wants a list of strings — wrap the value in an array: [\"{s}\"]",
+                        "step \"{}\" (action \"{}\"): param \"{}\" wants a list of strings - wrap the value in an array: [\"{s}\"]",
                         a.id.0, a.action, spec.key
                     ),
                 ));
@@ -502,7 +502,7 @@ fn check_value(
                                     REF_TYPE_MISMATCH,
                                     routine,
                                     format!(
-                                        "step \"{}\" (action \"{}\"): [\"{s}\"] puts a list INSIDE the \"{}\" list — substitution replaces the element with the referenced list, producing an array of arrays that fails at runtime. Pass the reference as the whole value instead: \"{}\": \"{s}\"",
+                                        "step \"{}\" (action \"{}\"): [\"{s}\"] puts a list INSIDE the \"{}\" list - substitution replaces the element with the referenced list, producing an array of arrays that fails at runtime. Pass the reference as the whole value instead: \"{}\": \"{s}\"",
                                         a.id.0, a.action, spec.key, spec.key
                                     ),
                                 ));
@@ -532,7 +532,7 @@ fn check_value(
                                     EMBEDDED_REF_IGNORED,
                                     routine,
                                     format!(
-                                        "step \"{}\" (action \"{}\"): param \"{}\" element embeds \"${path}\" but no step with that id exists — an embedded ref that cannot resolve stays literal text at runtime",
+                                        "step \"{}\" (action \"{}\"): param \"{}\" element embeds \"${path}\" but no step with that id exists - an embedded ref that cannot resolve stays literal text at runtime",
                                         a.id.0, a.action, spec.key
                                     ),
                                 )),
@@ -540,7 +540,7 @@ fn check_value(
                                     EMBEDDED_REF_IGNORED,
                                     routine,
                                     format!(
-                                        "step \"{}\" (action \"{}\"): param \"{}\" element embeds \"${path}\" but the referenced action declares no such output — an embedded ref that cannot resolve stays literal text at runtime",
+                                        "step \"{}\" (action \"{}\"): param \"{}\" element embeds \"${path}\" but the referenced action declares no such output - an embedded ref that cannot resolve stays literal text at runtime",
                                         a.id.0, a.action, spec.key
                                     ),
                                 )),
@@ -557,7 +557,7 @@ fn check_value(
                         PARAM_TYPE_MISMATCH,
                         routine,
                         format!(
-                            "step \"{}\" (action \"{}\"): param \"{}\" has {} as a list element — elements must be strings",
+                            "step \"{}\" (action \"{}\"): param \"{}\" has {} as a list element - elements must be strings",
                             a.id.0,
                             a.action,
                             spec.key,

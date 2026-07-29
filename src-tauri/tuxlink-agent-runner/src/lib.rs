@@ -641,7 +641,7 @@ mod acceptance_tests {
     async fn denial_narrates_then_completes() {
         let provider = ScriptedProvider::new(vec![
             ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({"msg": "x"}))]),
-            ModelTurn::Text("send authority lapsed — please re-arm and I'll continue".into()),
+            ModelTurn::Text("send authority lapsed - please re-arm and I'll continue".into()),
         ]);
         let invoker = RecordingInvoker::new(
             vec![echo_tool()],
@@ -667,7 +667,7 @@ mod acceptance_tests {
 
         assert_eq!(
             outcome,
-            RunOutcome::Completed("send authority lapsed — please re-arm and I'll continue".into()),
+            RunOutcome::Completed("send authority lapsed - please re-arm and I'll continue".into()),
         );
         // The denied egress op ran exactly once and was NEVER retried.
         assert_eq!(invoker.call_count(), 1, "the denied egress must not be retried");

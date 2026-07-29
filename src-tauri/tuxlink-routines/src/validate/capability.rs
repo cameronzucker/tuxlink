@@ -240,8 +240,8 @@ fn check_outbox_ordering(
                         "the message staged at \"{}\" ({}) is never sent this run: {hint}, \
                          and a connect only sends what was staged BEFORE it started. Move \
                          the compose ahead of the connect that should carry it (compose -> \
-                         connect, not connect -> compose). If the intent is stage-only — \
-                         send on some future connection — ignore this",
+                         connect, not connect -> compose). If the intent is stage-only - \
+                         send on some future connection - ignore this",
                         a.id.0, a.action
                     ),
                 )
@@ -325,7 +325,7 @@ fn check_wwv_timeout(
             STEP_TIMEOUT_LIKELY_INSUFFICIENT,
             def.routine.clone(),
             format!(
-                "step \"{}\" runs \"{WWV_ACTION}\" with {timeout_clause} — the space-weather \
+                "step \"{}\" runs \"{WWV_ACTION}\" with {timeout_clause} - the space-weather \
                  segment airs twice hourly (WWV :18, WWVH :45) and, worst case, isn't due and \
                  captured for up to {WWV_MIN_TIMEOUT_S}s (~38 min); a shorter timeout will \
                  likely fire before a legitimate capture completes",

@@ -259,7 +259,7 @@ fn check_auto_tx_unacked(
             format!(
                 "routine \"{}\" runs automatically and its transmit closure includes step \"{}\" \
                  (action \"{}\"){}, but transmit_ack is missing, incomplete, or no longer matches \
-                 the acknowledged closure — automatic transmission requires a current recorded \
+                 the acknowledged closure - automatic transmission requires a current recorded \
                  operator acknowledgment",
                 def.routine,
                 hit.step.0,
@@ -297,7 +297,7 @@ fn check_auto_write_unacked(
             format!(
                 "routine \"{}\" runs automatically and its config-write closure includes step \
                  \"{}\" (action \"{}\"){}, but write_ack is missing, incomplete, or no longer \
-                 matches the acknowledged closure — automatic config writes require a current \
+                 matches the acknowledged closure - automatic config writes require a current \
                  recorded operator acknowledgment",
                 def.routine,
                 hit.step.0,
@@ -409,7 +409,7 @@ fn check_mixed_mode_stall(
                         format!(
                             "routine \"{}\" runs automatically and its call step \"{}\" reaches \
                              attended routine \"{}\", whose transmit closure includes step \
-                             \"{}\" (action \"{}\") {} — an unattended scheduled run \
+                             \"{}\" (action \"{}\") {} - an unattended scheduled run \
                              will pause at that step for a consent click nobody is present to give",
                             def.routine,
                             c.id.0,
@@ -472,7 +472,7 @@ fn check_mixed_mode_stall_write(
                         format!(
                             "routine \"{}\" runs automatically and its call step \"{}\" reaches \
                              attended routine \"{}\", whose config-write closure includes step \
-                             \"{}\" (action \"{}\") {} — an unattended scheduled run \
+                             \"{}\" (action \"{}\") {} - an unattended scheduled run \
                              will pause at that step for a consent click nobody is present to give",
                             def.routine,
                             c.id.0,
@@ -517,7 +517,7 @@ fn check_attended_under_schedule(
             def.routine.clone(),
             format!(
                 "routine \"{}\" is attended-mode but has a schedule trigger, and its transmit \
-                 closure includes step \"{}\" (action \"{}\"){} — a scheduled unattended run will \
+                 closure includes step \"{}\" (action \"{}\"){} - a scheduled unattended run will \
                  pause at that step for a consent click nobody is present to give",
                 def.routine,
                 hit.step.0,
@@ -560,7 +560,7 @@ fn check_attended_write_under_schedule(
             def.routine.clone(),
             format!(
                 "routine \"{}\" is attended-mode but has a schedule trigger, and its config-write \
-                 closure includes step \"{}\" (action \"{}\"){} — a scheduled unattended run will \
+                 closure includes step \"{}\" (action \"{}\"){} - a scheduled unattended run will \
                  pause at that step for a consent click nobody is present to give",
                 def.routine,
                 hit.step.0,

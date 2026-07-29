@@ -232,8 +232,8 @@ fn check_unconsumed_outputs(
                         "step \"{}\" ({}) reads data but nothing uses its result: no branch \
                          tests it and no later step references it, so the routine behaves \
                          identically with or without the read. To act on it, add a branch on \
-                         one of its outputs (e.g. on: \"{}.{example_key}\") — remember then \
-                         runs when the condition is TRUE — or reference it in a later step's \
+                         one of its outputs (e.g. on: \"{}.{example_key}\") - remember then \
+                         runs when the condition is TRUE - or reference it in a later step's \
                          params. If the step deliberately just refreshes stored station data, \
                          ignore this",
                         a.id.0, a.action, a.id.0
@@ -303,7 +303,7 @@ fn check_dollar_refs(
                         ctx.def.routine.clone(),
                         format!(
                             "step \"{step_id}\" references \"{token}\", which a step in a different \
-                             track produces — only safe once that track has actually run"
+                             track produces - only safe once that track has actually run"
                         ),
                     )
                     .with_track(ctx.track_name.to_string())
@@ -427,7 +427,7 @@ fn check_branch_on(
                 ctx.def.routine.clone(),
                 format!(
                     "branch step \"{step_id}\" tests \"{on}\", which a step in a different track \
-                     produces — only safe once that track has actually run"
+                     produces - only safe once that track has actually run"
                 ),
             )
             .with_track(ctx.track_name.to_string())
