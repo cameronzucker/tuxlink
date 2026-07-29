@@ -589,15 +589,16 @@ fn check_repeat_connect_no_delay(
                 );
                 continue; // do not walk past the second dial
             }
-            match &track.steps[v] {
-                Step::Action(_) => queue.extend(adj[v].iter().copied()),
-                Step::Control(c) => match &c.control {
-                    Control::Branch { .. } => queue.extend(adj[v].iter().copied()),
-                    // Delay: pacing exists on this path. End: the run is
-                    // over. Retry: its backoff paces the redial. Call: the
-                    // callee's contents are another routine's business.
-                    _ => {}
-                },
+            // Traversal continues through non-flushing actions and Branch
+            // arms only. Delay: pacing exists on this path. End: the run is
+            // over. Retry: its backoff paces the redial. Call: the callee's
+            // contents are another routine's business.
+            let walkable = match &track.steps[v] {
+                Step::Action(_) => true,
+                Step::Control(c) => matches!(&c.control, Control::Branch { .. }),
+            };
+            if walkable {
+                queue.extend(adj[v].iter().copied());
             }
         }
     }
