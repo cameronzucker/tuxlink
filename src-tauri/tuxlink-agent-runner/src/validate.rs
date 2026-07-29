@@ -307,7 +307,7 @@ pub fn stringified_composite_diagnosis(schema: &Value, args: &Value) -> Option<S
             return Some(format!(
                 "`{key}` was sent as a STRING that fails to parse as JSON ({e}). \
                  Re-send `{key}` as a JSON {kind} placed directly in the \
-                 arguments — do not serialize it into a string."
+                 arguments; do not serialize it into a string."
             ));
         }
     }

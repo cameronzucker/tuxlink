@@ -1663,7 +1663,7 @@ pub struct AuthoringDispositionDto {
 fn valid_completion() -> Option<String> {
     Some(
         "The routine is COMPLETE. Any codes in acceptable_warnings are \
-         environmental and cannot be repaired by editing this routine — do \
+         environmental and cannot be repaired by editing this routine; do \
          not make further edits for them. Report completion to the user."
             .to_string(),
     )

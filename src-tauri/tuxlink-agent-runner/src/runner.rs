@@ -48,7 +48,7 @@ pub fn is_deadline_reason(reason: &str) -> bool {
 /// is spent on more tool calls instead of an answer (pf6re). Truthful: a tainted
 /// session only unlocks via a quarantine re-arm, which discards the conversation.
 const TAINT_REARM_MSG: &str =
-    "session tainted — the operator must re-arm to start a fresh authorized session \
+    "session tainted; the operator must re-arm to start a fresh authorized session \
      (this discards the conversation); nothing was sent";
 
 /// Which kind of egress denial occurred, derived from the relayed reason string
@@ -370,7 +370,7 @@ fn annotate_repeats(
     let mut annotated = body.clone();
     let note = format!(
         "this exact call has now returned this exact result {count} times in a \
-         row. Repeating it again will not change anything — act on the \
+         row. Repeating it again will not change anything; act on the \
          information you already have."
     );
     match &mut annotated {
@@ -486,7 +486,7 @@ fn first_validation_error(tools: &[ToolSpec], calls: &[ToolCall]) -> Option<Stri
                     if let Some(diag) =
                         validate::stringified_composite_diagnosis(&spec.json_schema, &call.args)
                     {
-                        msg.push_str(" — ");
+                        msg.push_str(" -- ");
                         msg.push_str(&diag);
                     }
                     return Some(msg);
