@@ -72,17 +72,22 @@ fn egress_err(e: EgressPortError) -> ErrorData {
 /// taint case. Callers keep the `"not authorized to …"` prefix so the message
 /// still classifies as a denial in `classify_call_error`.
 fn denial_remedy(reason: &str) -> &'static str {
+    // ASCII-only on purpose (operator, 2026-07-29): this copy crosses into
+    // arbitrary model harnesses, and a non-UTF8-clean hop turns an em-dash
+    // into mojibake mid-instruction.
     if reason.contains("tainted") {
         "This session read untrusted content, so transmit is locked for the rest \
          of this session as an injection safeguard. The operator can re-arm to \
-         start a FRESH authorized session, but re-arming DISCARDS this conversation \
-         — you will NOT be able to resume it, and waiting for the timer does \
+         start a FRESH authorized session, but re-arming DISCARDS this conversation; \
+         you will NOT be able to resume it, and waiting for the timer does \
          nothing. Nothing was sent; do not claim otherwise."
     } else {
-        "Send authority is armed by the operator only — you cannot arm it yourself. \
+        "Send authority is armed by the operator only; you cannot arm it yourself. \
          Tell the operator what you were about to transmit and ask them to ARM the \
-         Agent-send control, then continue from where you left off. Nothing was \
-         sent; do not claim otherwise."
+         Agent-send control. While you wait, CONTINUE the parts of the task that do \
+         not require send authority: authoring, validating, and saving routines \
+         stays available and is expected of you; only the live transmission itself \
+         is gated. Nothing was sent; do not claim otherwise."
     }
 }
 
@@ -2736,13 +2741,17 @@ mod tests {
             "taint remedy must warn that re-arm discards the conversation"
         );
         assert!(
-            !taint.contains("continue from where you left off"),
-            "taint remedy must NOT promise a resume — re-arm quarantines"
+            !taint.contains("CONTINUE the parts of the task"),
+            "taint remedy must NOT promise continued work — re-arm quarantines"
         );
-        // Expiry/not-armed: name ARM + promise resume; no discard warning.
+        // Expiry/not-armed: name ARM + instruct continuing non-transmitting
+        // work (tuxlink-shopf: "continue from where you left off" read as
+        // stop-and-wait and coached task abandonment on qwen C2 3/3 and
+        // Inkling EU1 2/2); no discard warning.
         let expired = denial_remedy("send authority expired 1195s ago; re-arm to continue");
         assert!(expired.contains("ARM the Agent-send control"));
-        assert!(expired.contains("continue from where you left off"));
+        assert!(expired.contains("CONTINUE the parts of the task"));
+        assert!(expired.contains("authoring, validating, and saving routines"));
         assert!(!expired.contains("DISCARDS"));
     }
 
