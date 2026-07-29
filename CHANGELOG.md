@@ -31,6 +31,23 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.103.0](https://github.com/cameronzucker/tuxlink/compare/v0.102.0...v0.103.0) (2026-07-29)
+
+
+### Features
+
+* **battery:** absorption round — stringify diagnosis, repeat notice, completion signal, deny-text continue (le9h9/shopf/8mofz-scope) ([bac70ae](https://github.com/cameronzucker/tuxlink/commit/bac70ae5bdd99cd8feba54ea40dcbd548ae4af3d))
+* **routines:** validator-depth structural lints + advisory disposition split ([25dba22](https://github.com/cameronzucker/tuxlink/commit/25dba22efc15a43e83bee56f173742d6fe695c06))
+
+
+### Bug Fixes
+
+* **battery:** ASCII-only agent-facing wire strings in the absorption round (operator review) ([0ac0489](https://github.com/cameronzucker/tuxlink/commit/0ac0489702c18e0efb3a0195302927c4ea5b87e6))
+* **battery:** borrow completion via as_ref in the Valid-disposition test ([2bda2d5](https://github.com/cameronzucker/tuxlink/commit/2bda2d50f6caf49ff540764339f37a647487cd17))
+* **lint:** collapse the single-arm traversal match clippy flagged ([b64cbb6](https://github.com/cameronzucker/tuxlink/commit/b64cbb62d7c63dbdc27bc150c085ebcc87df5fb3))
+* **mcp:** ASCII-only sweep of pre-existing agent-facing wire strings ([d876507](https://github.com/cameronzucker/tuxlink/commit/d87650739639246d326e22539a366009566517c6))
+* **routines:** harden the structural lints per the GPT-5.6 adversarial round ([ba5913e](https://github.com/cameronzucker/tuxlink/commit/ba5913ecabd884ac039203723e674dba517e96e8))
+
 ## [0.102.0](https://github.com/cameronzucker/tuxlink/compare/v0.101.0...v0.102.0) (2026-07-28)
 
 
