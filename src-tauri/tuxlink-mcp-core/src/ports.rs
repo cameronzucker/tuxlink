@@ -1713,14 +1713,17 @@ const ADVISORY_CODES: &[&str] = &[
     "BRANCH_BOTH_ARMS_EMPTY",
     "TX_ONLY_ON_FAILURE_ARM",
     "ARM_END_INVERTED",
+    "REPEAT_CONNECT_NO_DELAY",
     // contracts.rs
     "OUTPUT_NEVER_CONSUMED",
     // capability.rs (the outbox and timeout shapes are authored, not
     // station-profile facts)
     "COMPOSE_AFTER_CONNECT",
-    "REPEAT_CONNECT_NO_DELAY",
     "CONNECT_NOTHING_STAGED",
     "STEP_TIMEOUT_LIKELY_INSUFFICIENT",
+    // triggers.rs: the finding's own message instructs a definition edit
+    // (split the cadences into separate routines) — Codex 2026-07-29 P2
+    "MULTIPLE_SCHEDULES",
 ];
 
 /// Dedupe finding codes preserving first-seen order — a routine commonly

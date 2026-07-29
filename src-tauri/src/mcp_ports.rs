@@ -4199,12 +4199,10 @@ fn finding_remedy(code: &'static str) -> &'static str {
         ATTENDED_UNDER_SCHEDULE, ATTENDED_WRITE_UNDER_SCHEDULE, AUTO_TX_UNACKED,
         AUTO_WRITE_UNACKED,
     };
-    use tuxlink_routines::validate::capability::{
-        CONNECT_NOTHING_STAGED, REPEAT_CONNECT_NO_DELAY,
-    };
+    use tuxlink_routines::validate::capability::CONNECT_NOTHING_STAGED;
     use tuxlink_routines::validate::refs::UNKNOWN_ACTION;
     use tuxlink_routines::validate::structure::{
-        ARM_END_INVERTED, ARM_FALLTHROUGH_LEAK, NO_TERMINAL_PATH,
+        ARM_END_INVERTED, ARM_FALLTHROUGH_LEAK, NO_TERMINAL_PATH, REPEAT_CONNECT_NO_DELAY,
     };
     match code {
         // tuxlink-lnctz: the validator names WHICH step falls off; this names
@@ -4240,16 +4238,21 @@ fn finding_remedy(code: &'static str) -> &'static str {
         REPEAT_CONNECT_NO_DELAY => {
             " Insert the delay with routines_step_add (a control step: \
              {\"control\": \"delay\", \"delay\": \"+5m\"}), setting after_step_id to the \
-             FIRST of the two connects named above. To re-dial only the station the first \
-             connect reached, set the second connect's stations param to a step reference \
-             like \"$<first-connect-id>.station\" with routines_step_update. This is a \
-             WARNING: it does not block save or enable."
+             FIRST of the two connects named above; if the redial sits on a branch arm, \
+             place it with branch_step_id + branch_arm instead so the delay lands on that \
+             arm. To re-dial only the station the first connect reached, set the second \
+             connect's stations param to [\"$<first-connect-id>.station\"] with \
+             routines_step_update (stations stays a LIST; a bare string reference is a \
+             type mismatch). This is a WARNING: it does not block save or enable."
         }
         CONNECT_NOTHING_STAGED => {
-            " Add the compose with routines_step_add, placed BEFORE this connect (set \
-             after_step_id to the step just ahead of the connect, or omit it to place \
-             first). A connect carries out only what was staged before it started. This \
-             is a WARNING: a deliberately receive-only poll can ignore it."
+            " Add the compose with routines_step_add, setting after_step_id to the step \
+             just ahead of the connect. If the connect is the track's FIRST step, add the \
+             compose with after_step_id set to the connect, then move the CONNECT after \
+             the compose with routines_step_move (after_step_id = the compose's id); \
+             there is no prepend placement. A connect carries out only what was staged \
+             before it started. This is a WARNING: a connect that deliberately flushes \
+             pre-queued traffic or polls for inbound can ignore it."
         }
         ARM_END_INVERTED => {
             " Fix the end step's failed flag with routines_step_update on the end step \
