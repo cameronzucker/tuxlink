@@ -4199,8 +4199,13 @@ fn finding_remedy(code: &'static str) -> &'static str {
         ATTENDED_UNDER_SCHEDULE, ATTENDED_WRITE_UNDER_SCHEDULE, AUTO_TX_UNACKED,
         AUTO_WRITE_UNACKED,
     };
+    use tuxlink_routines::validate::capability::{
+        CONNECT_NOTHING_STAGED, REPEAT_CONNECT_NO_DELAY,
+    };
     use tuxlink_routines::validate::refs::UNKNOWN_ACTION;
-    use tuxlink_routines::validate::structure::{ARM_FALLTHROUGH_LEAK, NO_TERMINAL_PATH};
+    use tuxlink_routines::validate::structure::{
+        ARM_END_INVERTED, ARM_FALLTHROUGH_LEAK, NO_TERMINAL_PATH,
+    };
     match code {
         // tuxlink-lnctz: the validator names WHICH step falls off; this names
         // the call that places the End there. Ladder-2 base/S4/rev_off spent 14
@@ -4225,6 +4230,32 @@ fn finding_remedy(code: &'static str) -> &'static str {
              routine it calls); such an edit requires the operator to re-record it. \
              Save the definition as-is and ask the operator to acknowledge it in the \
              designer."
+        }
+        // tuxlink-0hjm4 (lift1-base S3/E3/E2 structural evidence): each remedy
+        // names the exact edit verb and placement, because the engine message
+        // teaches the mechanism and models act on validation feedback only
+        // when it says WHICH call fixes it. ASCII-only on purpose (operator,
+        // 2026-07-29): this copy crosses into arbitrary model harnesses, and
+        // a non-UTF8-clean hop turns an em-dash into mojibake mid-instruction.
+        REPEAT_CONNECT_NO_DELAY => {
+            " Insert the delay with routines_step_add (a control step: \
+             {\"control\": \"delay\", \"delay\": \"+5m\"}), setting after_step_id to the \
+             FIRST of the two connects named above. To re-dial only the station the first \
+             connect reached, set the second connect's stations param to a step reference \
+             like \"$<first-connect-id>.station\" with routines_step_update. This is a \
+             WARNING: it does not block save or enable."
+        }
+        CONNECT_NOTHING_STAGED => {
+            " Add the compose with routines_step_add, placed BEFORE this connect (set \
+             after_step_id to the step just ahead of the connect, or omit it to place \
+             first). A connect carries out only what was staged before it started. This \
+             is a WARNING: a deliberately receive-only poll can ignore it."
+        }
+        ARM_END_INVERTED => {
+            " Fix the end step's failed flag with routines_step_update on the end step \
+             named above, or re-point the branch's then/else targets with \
+             routines_step_update on the branch. This is a WARNING: it does not block \
+             save or enable."
         }
         ATTENDED_UNDER_SCHEDULE | ATTENDED_WRITE_UNDER_SCHEDULE => {
             " This is a WARNING, not a block: the routine saves, enables, and fires on \

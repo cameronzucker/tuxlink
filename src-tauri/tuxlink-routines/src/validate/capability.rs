@@ -24,7 +24,7 @@
 //! derivation.
 
 use crate::action::ActionDescriptor;
-use crate::types::{ActionStep, RoutineDef, Step};
+use crate::types::{ActionStep, Control, RoutineDef, Step};
 
 use super::context::{StationProfile, ValidationContext};
 use super::findings::Finding;
@@ -45,6 +45,24 @@ pub const STEP_TIMEOUT_LIKELY_INSUFFICIENT: &str = "STEP_TIMEOUT_LIKELY_INSUFFIC
 /// not error: staging-for-a-future-connection is a legitimate authoring
 /// intent, and the message teaches both readings.
 pub const COMPOSE_AFTER_CONNECT: &str = "COMPOSE_AFTER_CONNECT";
+/// Two outbox-flushing dials on one straight-line path with no Delay control
+/// between them (tuxlink-0hjm4, lift1-base S3 3/3 evidence): models fill the
+/// gap with log lines ("waiting 5 minutes") or a `radio.listen`, neither of
+/// which pauses anything, and the second dial re-walks the same station list
+/// the instant the first returns. Only claimed when every step between the
+/// two dials is an Action or a Delay — a Branch/End/Retry/Call between them
+/// means array adjacency proves nothing about the run path, and any Delay
+/// clears it. Warning: back-to-back dialing is wasteful, not illegal.
+pub const REPEAT_CONNECT_NO_DELAY: &str = "REPEAT_CONNECT_NO_DELAY";
+/// An outbox-flushing dial with NOTHING staged ahead of it, in its own track
+/// or any other (tuxlink-0hjm4, lift1-base E3 3/3 evidence): the routine
+/// "sends traffic" per its author's narration, but no compose ever runs, so
+/// the connection flushes an empty outbox and can only collect inbound
+/// traffic. The mirror image of [`COMPOSE_AFTER_CONNECT`], with the same
+/// cross-track conservatism in reverse: a stage step in ANY other concurrent
+/// track silences it. Warning, not error: a receive-only poll connect is a
+/// legitimate authoring intent, and the message teaches both readings.
+pub const CONNECT_NOTHING_STAGED: &str = "CONNECT_NOTHING_STAGED";
 
 /// The action name [`check_wwv_timeout`] applies to (spec §6 "Update space
 /// weather from WWV": the shipped off-air decode — tune, capture at
@@ -118,6 +136,121 @@ pub fn check(def: &RoutineDef, ctx: &dyn ValidationContext, findings: &mut Vec<F
     }
 
     check_outbox_ordering(def, ctx, findings);
+    check_repeat_connect_no_delay(def, ctx, findings);
+    check_connect_nothing_staged(def, ctx, findings);
+}
+
+/// REPEAT_CONNECT_NO_DELAY: see the const doc. For each CONSECUTIVE pair of
+/// flushing steps in a track, the pair fires iff every step between them is
+/// an Action or a Delay control (a straight-line path) and none is a Delay.
+fn check_repeat_connect_no_delay(
+    def: &RoutineDef,
+    ctx: &dyn ValidationContext,
+    findings: &mut Vec<Finding>,
+) {
+    for track in &def.tracks {
+        let connects: Vec<usize> = track
+            .steps
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| match s {
+                Step::Action(a) if ctx.flushes_outbox(&a.action) => Some(i),
+                _ => None,
+            })
+            .collect();
+        for pair in connects.windows(2) {
+            let (first, second) = (pair[0], pair[1]);
+            let mut straight_line = true;
+            let mut has_delay = false;
+            for step in &track.steps[first + 1..second] {
+                match step {
+                    Step::Action(_) => {}
+                    Step::Control(c) => match &c.control {
+                        Control::Delay { .. } => has_delay = true,
+                        _ => {
+                            straight_line = false;
+                            break;
+                        }
+                    },
+                }
+            }
+            if !straight_line || has_delay {
+                continue;
+            }
+            let first_id = track.steps[first].id();
+            let second_id = track.steps[second].id();
+            findings.push(
+                Finding::warning(
+                    REPEAT_CONNECT_NO_DELAY,
+                    def.routine.clone(),
+                    format!(
+                        "steps \"{first}\" and \"{second}\" both dial a connection and nothing \
+                         between them takes any time: the second dial starts the moment the \
+                         first finishes, giving the band and the remote station no settle time \
+                         between attempts (log lines and listen steps do not pause anything). \
+                         Put a delay control between them. To re-reach the station the FIRST \
+                         dial connected to, reference its output (for example \
+                         \"${first}.station\") instead of re-walking the original station \
+                         list. If back-to-back dials are intended, ignore this",
+                        first = first_id.0,
+                        second = second_id.0,
+                    ),
+                )
+                .with_track(track.name.clone())
+                .with_step(second_id.clone()),
+            );
+        }
+    }
+}
+
+/// CONNECT_NOTHING_STAGED: see the const doc. Lexical (array-position) order
+/// within the track, matching [`COMPOSE_AFTER_CONNECT`]'s v1 rule; a stage
+/// step in any OTHER track silences the whole track's findings (concurrent
+/// tracks share the outbox, so the validator cannot prove emptiness).
+fn check_connect_nothing_staged(
+    def: &RoutineDef,
+    ctx: &dyn ValidationContext,
+    findings: &mut Vec<Finding>,
+) {
+    for (track_idx, track) in def.tracks.iter().enumerate() {
+        let other_track_stages = def.tracks.iter().enumerate().any(|(j, t)| {
+            j != track_idx
+                && t.steps
+                    .iter()
+                    .any(|s| matches!(s, Step::Action(a) if ctx.stages_outbox(&a.action)))
+        });
+        if other_track_stages {
+            continue;
+        }
+        let mut staged_seen = false;
+        for step in &track.steps {
+            let Step::Action(a) = step else { continue };
+            if ctx.stages_outbox(&a.action) {
+                staged_seen = true;
+                continue;
+            }
+            if ctx.flushes_outbox(&a.action) && !staged_seen {
+                findings.push(
+                    Finding::warning(
+                        CONNECT_NOTHING_STAGED,
+                        def.routine.clone(),
+                        format!(
+                            "step \"{}\" ({}) dials with NOTHING staged to send: no compose \
+                             step runs before it in this track or any other, so this \
+                             connection can only collect inbound traffic. A connect carries \
+                             out only what was staged BEFORE it started. If this connect is \
+                             meant to send something, add the compose step ahead of it \
+                             (compose -> connect). If it is deliberately a receive-only \
+                             poll, ignore this",
+                            a.id.0, a.action
+                        ),
+                    )
+                    .with_track(track.name.clone())
+                    .with_step(a.id.clone()),
+                );
+            }
+        }
+    }
 }
 
 /// COMPOSE_AFTER_CONNECT: see the const doc. A per-track positional scan —
@@ -751,6 +884,214 @@ mod tests {
         check(&def, &ctx, &mut findings);
         assert!(
             findings.iter().all(|f| f.code != COMPOSE_AFTER_CONNECT),
+            "{findings:?}"
+        );
+    }
+
+    // --- REPEAT_CONNECT_NO_DELAY (tuxlink-0hjm4) -------------------------
+
+    fn delay_step(id: &str, spec: &str) -> Step {
+        Step::Control(crate::types::ControlStep {
+            id: StepId(id.into()),
+            control: Control::Delay { delay: spec.into() },
+        })
+    }
+
+    fn branch_step(id: &str) -> Step {
+        Step::Control(crate::types::ControlStep {
+            id: StepId(id.into()),
+            control: Control::Branch {
+                on: "s1.connected".into(),
+                op: None,
+                value: None,
+                then: vec![],
+                r#else: vec![],
+            },
+        })
+    }
+
+    #[test]
+    fn back_to_back_connects_warn_and_teach_the_station_output_reference() {
+        // The lift1-base S3 attempt-1 shape: two dials, nothing between.
+        let def = def_with_steps(vec![
+            action_step("s0", "local.compose"),
+            action_step("s1", "radio.connect"),
+            action_step("s2", "radio.connect"),
+        ]);
+        let mut findings = Vec::new();
+        check(&def, &outbox_ctx(), &mut findings);
+        let hits: Vec<_> = findings
+            .iter()
+            .filter(|f| f.code == REPEAT_CONNECT_NO_DELAY)
+            .collect();
+        assert_eq!(hits.len(), 1, "{findings:?}");
+        assert_eq!(hits[0].severity, Severity::Warning);
+        assert_eq!(hits[0].step, Some(StepId("s2".into())));
+        assert!(hits[0].message.contains("$s1.station"), "{}", hits[0].message);
+    }
+
+    #[test]
+    fn instant_steps_between_two_connects_do_not_count_as_a_delay() {
+        // The S3 attempt-2 shape: "waiting 5 minutes" as log theater.
+        let def = def_with_steps(vec![
+            action_step("s0", "local.compose"),
+            action_step("s1", "radio.connect"),
+            action_step("s2", "local.note"),
+            action_step("s3", "local.note"),
+            action_step("s4", "radio.connect"),
+        ]);
+        let mut findings = Vec::new();
+        check(&def, &outbox_ctx(), &mut findings);
+        let hits: Vec<_> = findings
+            .iter()
+            .filter(|f| f.code == REPEAT_CONNECT_NO_DELAY)
+            .collect();
+        assert_eq!(hits.len(), 1, "{findings:?}");
+        assert_eq!(hits[0].step, Some(StepId("s4".into())));
+    }
+
+    #[test]
+    fn a_delay_control_between_the_connects_clears_it() {
+        let def = def_with_steps(vec![
+            action_step("s0", "local.compose"),
+            action_step("s1", "radio.connect"),
+            delay_step("d1", "+5m"),
+            action_step("s2", "radio.connect"),
+        ]);
+        let mut findings = Vec::new();
+        check(&def, &outbox_ctx(), &mut findings);
+        assert!(
+            findings.iter().all(|f| f.code != REPEAT_CONNECT_NO_DELAY),
+            "{findings:?}"
+        );
+    }
+
+    #[test]
+    fn a_branch_between_the_connects_breaks_the_straight_line_claim() {
+        // Array adjacency proves nothing across a decision point; graph-path
+        // analysis is out of v1 scope, so the pair is skipped, not judged.
+        let def = def_with_steps(vec![
+            action_step("s0", "local.compose"),
+            action_step("s1", "radio.connect"),
+            branch_step("b1"),
+            action_step("s2", "radio.connect"),
+        ]);
+        let mut findings = Vec::new();
+        check(&def, &outbox_ctx(), &mut findings);
+        assert!(
+            findings.iter().all(|f| f.code != REPEAT_CONNECT_NO_DELAY),
+            "{findings:?}"
+        );
+    }
+
+    // --- CONNECT_NOTHING_STAGED (tuxlink-0hjm4) --------------------------
+
+    #[test]
+    fn a_connect_with_nothing_staged_warns_with_the_receive_only_reading() {
+        // The lift1-base E3 shape: connect in a "send traffic" routine with
+        // no compose anywhere.
+        let def = def_with_steps(vec![action_step("s1", "radio.connect")]);
+        let mut findings = Vec::new();
+        check(&def, &outbox_ctx(), &mut findings);
+        let hits: Vec<_> = findings
+            .iter()
+            .filter(|f| f.code == CONNECT_NOTHING_STAGED)
+            .collect();
+        assert_eq!(hits.len(), 1, "{findings:?}");
+        assert_eq!(hits[0].severity, Severity::Warning);
+        assert_eq!(hits[0].step, Some(StepId("s1".into())));
+        assert!(hits[0].message.contains("receive-only"), "{}", hits[0].message);
+    }
+
+    #[test]
+    fn a_stage_before_the_connect_stays_silent() {
+        let def = def_with_steps(vec![
+            action_step("s1", "local.compose"),
+            action_step("s2", "radio.connect"),
+        ]);
+        let mut findings = Vec::new();
+        check(&def, &outbox_ctx(), &mut findings);
+        assert!(
+            findings.iter().all(|f| f.code != CONNECT_NOTHING_STAGED),
+            "{findings:?}"
+        );
+    }
+
+    #[test]
+    fn a_stage_in_another_concurrent_track_stays_silent() {
+        // Tracks run concurrently against the shared outbox: a stage in any
+        // other track can feed this connect, so the validator stays quiet.
+        let def = RoutineDef {
+            routine: "r1".into(),
+            schema_version: crate::types::SUPPORTED_SCHEMA_VERSION,
+            transmit_mode: TransmitMode::Attended,
+            transmit_ack: None,
+            write_ack: None,
+            on_interrupted: OnInterrupted::Stay,
+            inputs: vec![],
+            triggers: vec![Trigger::Manual],
+            tracks: vec![
+                Track {
+                    name: "a".into(),
+                    steps: vec![action_step("s1", "local.compose")],
+                },
+                Track {
+                    name: "b".into(),
+                    steps: vec![action_step("s2", "radio.connect")],
+                },
+            ],
+        };
+        let mut findings = Vec::new();
+        check(&def, &outbox_ctx(), &mut findings);
+        assert!(
+            findings.iter().all(|f| f.code != CONNECT_NOTHING_STAGED),
+            "{findings:?}"
+        );
+    }
+
+    #[test]
+    fn connect_then_compose_fires_both_ordering_lints_one_per_side() {
+        // The two lints are mirror images anchored at opposite ends of the
+        // same defect; both prescribe the same single fix (compose ->
+        // connect), so co-firing cross-teaches rather than contradicts.
+        let def = def_with_steps(vec![
+            action_step("s1", "radio.connect"),
+            action_step("s2", "local.compose"),
+        ]);
+        let mut findings = Vec::new();
+        check(&def, &outbox_ctx(), &mut findings);
+        let nothing_staged: Vec<_> = findings
+            .iter()
+            .filter(|f| f.code == CONNECT_NOTHING_STAGED)
+            .collect();
+        let compose_after: Vec<_> = findings
+            .iter()
+            .filter(|f| f.code == COMPOSE_AFTER_CONNECT)
+            .collect();
+        assert_eq!(nothing_staged.len(), 1, "{findings:?}");
+        assert_eq!(nothing_staged[0].step, Some(StepId("s1".into())));
+        assert_eq!(compose_after.len(), 1, "{findings:?}");
+        assert_eq!(compose_after[0].step, Some(StepId("s2".into())));
+    }
+
+    #[test]
+    fn outbox_roleless_contexts_never_fire_the_new_lints_either() {
+        let def = def_with_steps(vec![
+            action_step("s1", "radio.connect"),
+            action_step("s2", "radio.connect"),
+        ]);
+        let ctx = StaticContext::new()
+            .with_action(RADIO_CONNECT)
+            .with_profile(StationProfile {
+                has_internet: true,
+                rigs: vec!["default".into()],
+            });
+        let mut findings = Vec::new();
+        check(&def, &ctx, &mut findings);
+        assert!(
+            findings
+                .iter()
+                .all(|f| f.code != REPEAT_CONNECT_NO_DELAY && f.code != CONNECT_NOTHING_STAGED),
             "{findings:?}"
         );
     }

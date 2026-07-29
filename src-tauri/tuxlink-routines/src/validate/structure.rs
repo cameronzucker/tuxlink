@@ -55,6 +55,21 @@ pub const CALL_TARGET_MISSING: &str = "CALL_TARGET_MISSING";
 pub const BRANCH_OP_VALUE_PAIR: &str = "BRANCH_OP_VALUE_PAIR";
 pub const BRANCH_BOTH_ARMS_EMPTY: &str = "BRANCH_BOTH_ARMS_EMPTY";
 pub const TX_ONLY_ON_FAILURE_ARM: &str = "TX_ONLY_ON_FAILURE_ARM";
+/// An arm of a strict-boolean `<connect>.connected` branch runs straight
+/// into an End whose `failed` flag contradicts the arm's polarity
+/// (tuxlink-0hjm4, lift1-base E3 + E2 evidence, 4 bundles): the observed
+/// modal shape is the ELSE arm (the connect FAILED) terminating
+/// `end { failed: false }`, so a run that never connected reports success
+/// and nobody learns the routine did not do its job; the mirror (then arm
+/// into `failed: true`) indicates swapped arm targets. Scoped exactly like
+/// [`TX_ONLY_ON_FAILURE_ARM`]: the branch must test a same-track connect
+/// attempt's own `.connected` output. The walk follows pure fall-through
+/// (actions, delays) only and gives up at anything that could change the
+/// story — another Branch, a Retry, a Call, or a further connect attempt on
+/// the arm (a recovery dial makes `failed: false` legitimate). Warning: a
+/// best-effort routine may genuinely accept a failed connect, and the
+/// message teaches both readings.
+pub const ARM_END_INVERTED: &str = "ARM_END_INVERTED";
 
 /// Append every structural finding for `def` into `findings`. Retry/graph
 /// checks are pure over `def`; the call checks need `ctx.routine_def` to
@@ -68,6 +83,7 @@ pub fn check(def: &RoutineDef, ctx: &dyn ValidationContext, findings: &mut Vec<F
         cross_reference_terminal_and_leak(&mut findings[before..]);
         check_branch_shapes(def, track, findings);
         check_tx_only_on_failure_arm(def, track, ctx, findings);
+        check_arm_end_inverted(def, track, ctx, findings);
     }
     check_calls(def, ctx, findings);
 }
@@ -186,20 +202,7 @@ fn check_tx_only_on_failure_arm(
         if op.is_some() || !on.ends_with(".connected") || r#else.is_empty() {
             continue;
         }
-        // The branch must test a CONNECT ATTEMPT's own output (Codex
-        // 2026-07-27 P2): `.connected` also appears on status reads (e.g. a
-        // modem_status snapshot), where the else arm means "modem idle", not
-        // "a dial failed" — and dialing WHEN idle is exactly right there.
-        // The producer must be a same-track action the context classifies as
-        // outbox-flushing (a connect); anything else carries no
-        // failed-attempt semantics and is skipped.
-        let producer_is_connect = on.split('.').next().is_some_and(|producer_id| {
-            track.steps.iter().any(|s| match s {
-                Step::Action(a) => a.id.0 == producer_id && ctx.flushes_outbox(&a.action),
-                _ => false,
-            })
-        });
-        if !producer_is_connect {
+        if !branch_tests_connect_attempt(track, on, ctx) {
             continue;
         }
         let Some(else_entry) = r#else.first().and_then(|t| find_index(track, t)) else {
@@ -376,6 +379,120 @@ fn check_arm_fallthrough_leaks(def: &RoutineDef, track: &Track, findings: &mut V
 
 fn find_index(track: &Track, id: &StepId) -> Option<usize> {
     track.steps.iter().position(|s| s.id() == id)
+}
+
+/// Does this branch's `on` path test a CONNECT ATTEMPT's own output? (Codex
+/// 2026-07-27 P2, shared by [`TX_ONLY_ON_FAILURE_ARM`] and
+/// [`ARM_END_INVERTED`]): `.connected` also appears on status reads (e.g. a
+/// modem_status snapshot), where the else arm means "modem idle", not "a
+/// dial failed" — and dialing WHEN idle is exactly right there. The producer
+/// must be a same-track action the context classifies as outbox-flushing (a
+/// connect); anything else carries no failed-attempt semantics.
+fn branch_tests_connect_attempt(track: &Track, on: &str, ctx: &dyn ValidationContext) -> bool {
+    on.split('.').next().is_some_and(|producer_id| {
+        track.steps.iter().any(|s| match s {
+            Step::Action(a) => a.id.0 == producer_id && ctx.flushes_outbox(&a.action),
+            _ => false,
+        })
+    })
+}
+
+/// ARM_END_INVERTED: see the const doc. For each arm of a qualifying branch,
+/// walk pure fall-through (actions and delays) from the arm's entry; if the
+/// walk lands on an End whose `failed` contradicts the arm's polarity, warn
+/// on that End. Anything that could change the outcome on the way — another
+/// Branch, a Retry, a Call, a further connect attempt — aborts the walk.
+fn check_arm_end_inverted(
+    def: &RoutineDef,
+    track: &Track,
+    ctx: &dyn ValidationContext,
+    findings: &mut Vec<Finding>,
+) {
+    let n = track.steps.len();
+    for (i, step) in track.steps.iter().enumerate() {
+        let Step::Control(c) = step else { continue };
+        let Control::Branch {
+            on,
+            op,
+            then,
+            r#else,
+            ..
+        } = &c.control
+        else {
+            continue;
+        };
+        if op.is_some() || !on.ends_with(".connected") {
+            continue;
+        }
+        if !branch_tests_connect_attempt(track, on, ctx) {
+            continue;
+        }
+        let entry = |arm: &[StepId]| -> Option<usize> {
+            match arm.first() {
+                Some(t) => find_index(track, t),
+                None => Some(i + 1),
+            }
+        };
+        let (Some(then_entry), Some(else_entry)) = (entry(then), entry(r#else)) else {
+            continue; // dangling target: BRANCH_TARGET_MISSING's job
+        };
+        if then_entry == else_entry {
+            continue; // both arms converge immediately: no per-arm polarity claimed
+        }
+        for (arm_entry, arm_is_then) in [(then_entry, true), (else_entry, false)] {
+            let mut j = arm_entry;
+            let terminal = loop {
+                if j >= n {
+                    break None; // ran off the track end: NO_TERMINAL_PATH's job
+                }
+                match &track.steps[j] {
+                    Step::Action(a) => {
+                        if ctx.flushes_outbox(&a.action) {
+                            break None; // a recovery dial can legitimately flip the outcome
+                        }
+                        j += 1;
+                    }
+                    Step::Control(c2) => match &c2.control {
+                        Control::End { failed, .. } => break Some((c2.id.clone(), *failed)),
+                        Control::Delay { .. } => j += 1,
+                        // A new decision point, a retry, or a callee can each
+                        // change the story; this arm claims no verdict.
+                        _ => break None,
+                    },
+                }
+            };
+            let Some((end_id, failed)) = terminal else {
+                continue;
+            };
+            let message = if arm_is_then && failed {
+                format!(
+                    "branch \"{}\" tests \"{on}\" and its then arm (the connect SUCCEEDED) \
+                     runs straight into end \"{}\" with failed: true, so a run that \
+                     connected reports failure. If the arms are wired backwards, swap the \
+                     then and else targets on the branch; if the end is simply mislabeled, \
+                     set failed: false on it",
+                    c.id.0, end_id.0
+                )
+            } else if !arm_is_then && !failed {
+                format!(
+                    "branch \"{}\" tests \"{on}\" and its else arm (the connect FAILED) \
+                     runs straight into end \"{}\" with failed: false, so a run where the \
+                     connection never happened reports success and nobody learns the \
+                     routine did not do its job. Set failed: true on that end (with a \
+                     reason), or route the else arm to a recovery step. If a failed \
+                     connect is genuinely acceptable for this routine, ignore this",
+                    c.id.0, end_id.0
+                )
+            } else {
+                continue;
+            };
+            findings.push(
+                Finding::warning(ARM_END_INVERTED, def.routine.clone(), message)
+                    .with_track(track.name.clone())
+                    .with_step(end_id),
+            );
+        }
+    }
 }
 
 // --- Retry wiring (RETRY_ZERO_ATTEMPTS / RETRY_TARGET_MISSING / RETRY_TARGET_NOT_ACTION) ---
@@ -1831,5 +1948,191 @@ mod tests {
             findings2.iter().all(|f| f.code != TX_ONLY_ON_FAILURE_ARM),
             "{findings2:?}"
         );
+    }
+
+    // --- ARM_END_INVERTED (tuxlink-0hjm4) --------------------------------
+
+    fn end_failed(id: &str) -> Step {
+        Step::Control(ControlStep {
+            id: StepId(id.into()),
+            control: Control::End {
+                failed: true,
+                reason: Some("no gateway reachable".into()),
+            },
+        })
+    }
+
+    fn connect_ctx() -> StaticContext {
+        StaticContext::new()
+            .with_action(tx_descriptor("radio.connect"))
+            .with_flushes_outbox("radio.connect")
+    }
+
+    #[test]
+    fn else_arm_ending_failed_false_masks_the_failed_connect() {
+        // The lift1-base E3 shape, all three attempts: connect, branch on
+        // connected, both arms log-and-end with failed:false.
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    tx_action("s1", "radio.connect"),
+                    branch("b1", "s1.connected", vec!["ok"], vec!["bad"]),
+                    action("ok"),
+                    end("e_ok"),
+                    action("bad"),
+                    end("e_bad"), // failed: false on the failure arm
+                ],
+            )],
+        );
+        let mut findings = Vec::new();
+        check(&def, &connect_ctx(), &mut findings);
+        let hits: Vec<_> = findings.iter().filter(|f| f.code == ARM_END_INVERTED).collect();
+        assert_eq!(hits.len(), 1, "{findings:?}");
+        assert_eq!(hits[0].step, Some(StepId("e_bad".into())));
+        assert_eq!(hits[0].severity, crate::validate::findings::Severity::Warning);
+        assert!(hits[0].message.contains("failed: false"), "{}", hits[0].message);
+        assert!(hits[0].message.contains("ignore this"), "{}", hits[0].message);
+    }
+
+    #[test]
+    fn then_arm_ending_failed_true_reads_as_swapped_arms() {
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    tx_action("s1", "radio.connect"),
+                    branch("b1", "s1.connected", vec!["odd"], vec!["bad"]),
+                    action("odd"),
+                    end_failed("e_odd"), // failed: true on the SUCCESS arm
+                    action("bad"),
+                    end_failed("e_bad"), // correct polarity: no finding here
+                ],
+            )],
+        );
+        let mut findings = Vec::new();
+        check(&def, &connect_ctx(), &mut findings);
+        let hits: Vec<_> = findings.iter().filter(|f| f.code == ARM_END_INVERTED).collect();
+        assert_eq!(hits.len(), 1, "{findings:?}");
+        assert_eq!(hits[0].step, Some(StepId("e_odd".into())));
+        assert!(hits[0].message.contains("swap"), "{}", hits[0].message);
+    }
+
+    #[test]
+    fn fully_swapped_arms_fire_once_per_arm() {
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    tx_action("s1", "radio.connect"),
+                    branch("b1", "s1.connected", vec!["odd"], vec!["bad"]),
+                    action("odd"),
+                    end_failed("e_odd"),
+                    action("bad"),
+                    end("e_bad"),
+                ],
+            )],
+        );
+        let mut findings = Vec::new();
+        check(&def, &connect_ctx(), &mut findings);
+        let hits: Vec<_> = findings.iter().filter(|f| f.code == ARM_END_INVERTED).collect();
+        assert_eq!(hits.len(), 2, "{findings:?}");
+    }
+
+    #[test]
+    fn correct_polarity_on_both_arms_stays_silent() {
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    tx_action("s1", "radio.connect"),
+                    branch("b1", "s1.connected", vec!["ok"], vec!["bad"]),
+                    action("ok"),
+                    end("e_ok"),
+                    action("bad"),
+                    end_failed("e_bad"),
+                ],
+            )],
+        );
+        let mut findings = Vec::new();
+        check(&def, &connect_ctx(), &mut findings);
+        assert!(findings.iter().all(|f| f.code != ARM_END_INVERTED), "{findings:?}");
+    }
+
+    #[test]
+    fn a_recovery_dial_on_the_else_arm_makes_failed_false_legitimate() {
+        // else: try a second connect, then end success — the walk must give
+        // up at the recovery dial rather than call the success end masked.
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    tx_action("s1", "radio.connect"),
+                    branch("b1", "s1.connected", vec!["ok"], vec!["s2"]),
+                    action("ok"),
+                    end("e_ok"),
+                    tx_action("s2", "radio.connect"),
+                    end("e_two"),
+                ],
+            )],
+        );
+        let mut findings = Vec::new();
+        check(&def, &connect_ctx(), &mut findings);
+        assert!(findings.iter().all(|f| f.code != ARM_END_INVERTED), "{findings:?}");
+    }
+
+    #[test]
+    fn a_further_branch_retry_or_call_on_the_arm_claims_no_verdict() {
+        // else -> a second decision point: the first branch's arm walk stops.
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    tx_action("s1", "radio.connect"),
+                    branch("b1", "s1.connected", vec!["ok"], vec!["b2"]),
+                    action("ok"),
+                    end("e_ok"),
+                    branch("b2", "s1.connected", vec!["ok"], vec!["r"]),
+                    retry("r", "s1", 2),
+                    end("e_r"),
+                ],
+            )],
+        );
+        let mut findings = Vec::new();
+        check(&def, &connect_ctx(), &mut findings);
+        // b1's else arm stops at b2; b2's else arm stops at the retry. The
+        // only walk reaching an End is b2's then arm (ok -> e_ok, correct
+        // polarity), so nothing fires.
+        assert!(findings.iter().all(|f| f.code != ARM_END_INVERTED), "{findings:?}");
+    }
+
+    #[test]
+    fn status_read_connected_branches_are_out_of_scope_for_inversion_too() {
+        // Same Codex P2 scoping as TX_ONLY_ON_FAILURE_ARM: `.connected` on a
+        // status read has no failed-attempt semantics.
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    action("s1"), // a status read, NOT classified as flushing
+                    branch("b1", "s1.connected", vec!["ok"], vec!["bad"]),
+                    action("ok"),
+                    end("e_ok"),
+                    action("bad"),
+                    end("e_bad"),
+                ],
+            )],
+        );
+        let ctx = StaticContext::new().with_flushes_outbox("radio.connect");
+        let mut findings = Vec::new();
+        check(&def, &ctx, &mut findings);
+        assert!(findings.iter().all(|f| f.code != ARM_END_INVERTED), "{findings:?}");
     }
 }

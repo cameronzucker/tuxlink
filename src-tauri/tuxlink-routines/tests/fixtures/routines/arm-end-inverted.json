@@ -1,0 +1,22 @@
+{
+  "routine": "arm-end-inverted-demo",
+  "schema_version": 1,
+  "transmit_mode": "attended",
+  "on_interrupted": "stay",
+  "inputs": [],
+  "triggers": [{ "type": "manual" }],
+  "tracks": [
+    {
+      "name": "t1",
+      "steps": [
+        { "id": "c1", "action": "compose.message", "params": {} },
+        { "id": "s1", "action": "radio.connect", "params": {} },
+        { "id": "b1", "control": "branch", "on": "s1.connected", "then": ["ok"], "else": ["bad"] },
+        { "id": "ok", "action": "log.entry", "params": {} },
+        { "id": "e_ok", "control": "end", "failed": false },
+        { "id": "bad", "action": "log.entry", "params": {} },
+        { "id": "e_bad", "control": "end", "failed": false }
+      ]
+    }
+  ]
+}

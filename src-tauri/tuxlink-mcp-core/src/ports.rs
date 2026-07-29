@@ -1639,7 +1639,9 @@ pub struct AuthoringDispositionDto {
     /// rewrote control flow it had no reason to touch. Naming the blocker
     /// costs nothing and fabricates no remedy.
     pub blocked_by: Vec<String>,
-    /// Warning codes present that do NOT block, deduped in first-seen order.
+    /// ENVIRONMENTAL warning codes present that do NOT block, deduped in
+    /// first-seen order. Environmental means editing the routine cannot clear
+    /// them (no rig configured, no internet, station-profile facts).
     ///
     /// Withholding a remedy from a warning was meant to signal "acceptable,
     /// stop" (see [`Self::classify`]). Ladder-2 shows silence does not read
@@ -1647,6 +1649,17 @@ pub struct AuthoringDispositionDto {
     /// prose. Listing the warnings as acceptable states it positively, which
     /// silence never did, without offering an edit to apply.
     pub acceptable_warnings: Vec<String>,
+    /// REPAIRABLE structural warning codes, deduped in first-seen order — the
+    /// [`ADVISORY_CODES`] subset of the warnings present. Split out of
+    /// `acceptable_warnings` (tuxlink-0hjm4) because the completion sentence
+    /// declares everything in that list "environmental and cannot be repaired
+    /// by editing this routine", which is FALSE for structural warnings and
+    /// coaches ignoring them: lift1-base E2 left a dead `data.spacewx_swpc`
+    /// read in place with `OUTPUT_NEVER_CONSUMED` on the wire, and the saved
+    /// routine silently dropped its propagation gate. Advisories do not block
+    /// save or enable; each finding's message says what to change.
+    #[serde(default)]
+    pub advisories: Vec<String>,
     /// Plain-prose completion statement, present EXACTLY when `state` is
     /// `Valid`. Listing `acceptable_warnings` positively (above) was meant to
     /// stop warning-driven repair loops; the Laguna P1 probe (2026-07-28, 37
@@ -1669,6 +1682,47 @@ fn valid_completion() -> Option<String> {
     )
 }
 
+/// The completion sentence for `Valid` dispositions that still carry
+/// advisories: the routine saves and enables, but declaring it COMPLETE
+/// would coach ignoring repairable structural defects (the lift1-base E2
+/// evidence on [`AuthoringDispositionDto::advisories`]). ASCII-only on
+/// purpose (operator, 2026-07-29): this copy crosses into arbitrary model
+/// harnesses, and a non-UTF8-clean hop turns an em-dash into mojibake
+/// mid-instruction.
+fn advisory_completion() -> Option<String> {
+    Some(
+        "The routine is saved and can be enabled, but the codes in \
+         advisories are repairable defects in this routine's structure; each \
+         finding's message says what to change. Repair them with the edit \
+         verbs, or tell the user why the flagged shape is intentional. Codes \
+         in acceptable_warnings are environmental and cannot be repaired by \
+         editing this routine; do not make further edits for those."
+            .to_string(),
+    )
+}
+
+/// The warning codes that are REPAIRABLE by editing the routine — the
+/// `advisories` split of [`AuthoringDispositionDto::classify`]. Everything
+/// else stays in `acceptable_warnings` (environmental). String literals, not
+/// imports: mcp-core deliberately does not depend on the validator crate;
+/// the names are pinned by the fixture corpus and the strings-gate.
+const ADVISORY_CODES: &[&str] = &[
+    // structure.rs
+    "NO_TERMINAL_PATH",
+    "ARM_FALLTHROUGH_LEAK",
+    "BRANCH_BOTH_ARMS_EMPTY",
+    "TX_ONLY_ON_FAILURE_ARM",
+    "ARM_END_INVERTED",
+    // contracts.rs
+    "OUTPUT_NEVER_CONSUMED",
+    // capability.rs (the outbox and timeout shapes are authored, not
+    // station-profile facts)
+    "COMPOSE_AFTER_CONNECT",
+    "REPEAT_CONNECT_NO_DELAY",
+    "CONNECT_NOTHING_STAGED",
+    "STEP_TIMEOUT_LIKELY_INSUFFICIENT",
+];
+
 /// Dedupe finding codes preserving first-seen order — a routine commonly
 /// carries the same code on several steps (four `NO_RIG_CONFIGURED` in the
 /// S4 trace) and repeating it adds noise, not information.
@@ -1690,7 +1744,19 @@ impl AuthoringDispositionDto {
         let acceptable_warnings = dedup_codes(
             findings
                 .iter()
-                .filter(|f| f.severity == FindingSeverityDto::Warning)
+                .filter(|f| {
+                    f.severity == FindingSeverityDto::Warning
+                        && !ADVISORY_CODES.contains(&f.code.as_str())
+                })
+                .map(|f| f.code.clone()),
+        );
+        let advisories = dedup_codes(
+            findings
+                .iter()
+                .filter(|f| {
+                    f.severity == FindingSeverityDto::Warning
+                        && ADVISORY_CODES.contains(&f.code.as_str())
+                })
                 .map(|f| f.code.clone()),
         );
         let blocked_by = dedup_codes(blocking.iter().map(|f| f.code.clone()));
@@ -1701,13 +1767,23 @@ impl AuthoringDispositionDto {
             // (Ladder-2 ran a 34-turn warning-driven loop with no remedy ever
             // offered), so `acceptable_warnings` now says so positively instead
             // of leaving the model to infer it from an empty array.
+            // Advisories keep the state Valid (they never block save or
+            // enable) but swap the completion sentence: "COMPLETE, stop"
+            // over a repairable structural defect is exactly the coaching
+            // that let lift1-base E2 ship a dead read (tuxlink-0hjm4).
+            let completion = if advisories.is_empty() {
+                valid_completion()
+            } else {
+                advisory_completion()
+            };
             return Self {
                 state: DispositionState::Valid,
                 agent_terminal: false,
                 remedies: vec![],
                 blocked_by,
                 acceptable_warnings,
-                completion: valid_completion(),
+                advisories,
+                completion,
             };
         }
         // The routine's OWN automatic-unattended transmit/write: only the operator
@@ -1726,6 +1802,7 @@ impl AuthoringDispositionDto {
                 ],
                 blocked_by,
                 acceptable_warnings,
+                advisories,
                 completion: None,
             };
         }
@@ -1740,6 +1817,7 @@ impl AuthoringDispositionDto {
                 remedies: vec![RemedyDto::set_attended(&callee, "")],
                 blocked_by,
                 acceptable_warnings,
+                advisories,
                 completion: None,
             };
         }
@@ -1752,6 +1830,7 @@ impl AuthoringDispositionDto {
             remedies: vec![],
             blocked_by,
             acceptable_warnings,
+            advisories,
             completion: None,
         }
     }
@@ -2260,7 +2339,8 @@ mod authoring_disposition_tests {
             agent_terminal: true,
             remedies: vec![RemedyDto::set_attended("r", "abc123")],
             blocked_by: vec!["UNRESOLVED_REF".into()],
-            acceptable_warnings: vec!["NO_TERMINAL_PATH".into()],
+            acceptable_warnings: vec!["NO_RIG_CONFIGURED".into()],
+            advisories: vec!["NO_TERMINAL_PATH".into()],
             completion: None,
         };
         let j = serde_json::to_value(&d).unwrap();
@@ -2272,7 +2352,8 @@ mod authoring_disposition_tests {
         assert_eq!(j["remedies"][0]["expected_revision"], "abc123");
         assert_eq!(j["remedies"][0]["actor"], "agent");
         assert_eq!(j["blocked_by"][0], "UNRESOLVED_REF");
-        assert_eq!(j["acceptable_warnings"][0], "NO_TERMINAL_PATH");
+        assert_eq!(j["acceptable_warnings"][0], "NO_RIG_CONFIGURED");
+        assert_eq!(j["advisories"][0], "NO_TERMINAL_PATH");
     }
 
     /// The stop signal rides the wire exactly when the state is `Valid`
@@ -2326,15 +2407,94 @@ mod authoring_disposition_tests {
         assert_eq!(d.blocked_by, vec!["UNRESOLVED_REF".to_string()]);
         assert_eq!(
             d.acceptable_warnings,
+            vec!["NO_RIG_CONFIGURED".to_string()],
+            "deduped, environmental warnings only"
+        );
+        assert_eq!(
+            d.advisories,
             vec![
-                "NO_RIG_CONFIGURED".to_string(),
                 "NO_TERMINAL_PATH".to_string(),
                 "ARM_FALLTHROUGH_LEAK".to_string(),
             ],
-            "deduped, first-seen order, warnings only"
+            "repairable structural warnings split out, first-seen order (tuxlink-0hjm4)"
         );
         assert_eq!(d.state, DispositionState::SavedNeedsOperator);
         assert!(d.remedies.is_empty(), "still no fabricated remedy");
+    }
+
+    // --- tuxlink-0hjm4: advisories vs acceptable_warnings ------------------
+
+    #[test]
+    fn structural_warnings_are_advisories_and_swap_the_completion_sentence() {
+        // lift1-base E2: OUTPUT_NEVER_CONSUMED was on the wire and the model
+        // shipped the dead read anyway. Declaring the routine COMPLETE over a
+        // repairable structural warning is the coaching that permits that.
+        let d = AuthoringDispositionDto::classify(
+            &[
+                warn("OUTPUT_NEVER_CONSUMED", "dead read"),
+                warn("NO_RIG_CONFIGURED", "no rig"),
+            ],
+            "r",
+            "rev1",
+        );
+        assert_eq!(d.state, DispositionState::Valid, "advisories never block");
+        assert_eq!(d.advisories, vec!["OUTPUT_NEVER_CONSUMED".to_string()]);
+        assert_eq!(d.acceptable_warnings, vec!["NO_RIG_CONFIGURED".to_string()]);
+        let c = d.completion.as_ref().expect("Valid still carries a sentence");
+        assert!(
+            !c.contains("COMPLETE"),
+            "must NOT declare completion over a repairable defect: {c}"
+        );
+        assert!(c.contains("advisories"), "must point at the advisories list: {c}");
+        assert!(
+            c.contains("repairable"),
+            "must state the defects are repairable by editing: {c}"
+        );
+    }
+
+    #[test]
+    fn environmental_warnings_alone_keep_the_complete_sentence() {
+        let d = AuthoringDispositionDto::classify(
+            &[warn("NO_RIG_CONFIGURED", "no rig")],
+            "r",
+            "rev1",
+        );
+        assert_eq!(d.state, DispositionState::Valid);
+        assert!(d.advisories.is_empty());
+        let c = d.completion.as_ref().unwrap();
+        assert!(c.contains("COMPLETE"), "{c}");
+    }
+
+    #[test]
+    fn new_structural_lints_classify_as_advisories() {
+        let d = AuthoringDispositionDto::classify(
+            &[
+                warn("REPEAT_CONNECT_NO_DELAY", "back to back dials"),
+                warn("CONNECT_NOTHING_STAGED", "empty outbox flush"),
+                warn("ARM_END_INVERTED", "failure masked"),
+            ],
+            "r",
+            "rev1",
+        );
+        assert_eq!(
+            d.advisories,
+            vec![
+                "REPEAT_CONNECT_NO_DELAY".to_string(),
+                "CONNECT_NOTHING_STAGED".to_string(),
+                "ARM_END_INVERTED".to_string(),
+            ]
+        );
+        assert!(d.acceptable_warnings.is_empty());
+    }
+
+    #[test]
+    fn advisory_and_completion_copy_is_ascii_clean() {
+        // Operator ruling 2026-07-29: agent-facing wire strings must survive
+        // non-UTF8-clean harness hops; an em-dash mid-instruction becomes
+        // mojibake. Pin every disposition sentence to ASCII.
+        for s in [valid_completion().unwrap(), advisory_completion().unwrap()] {
+            assert!(s.is_ascii(), "non-ASCII in wire copy: {s}");
+        }
     }
 
     #[test]
