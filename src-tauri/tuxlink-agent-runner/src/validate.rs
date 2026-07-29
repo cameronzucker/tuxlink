@@ -285,6 +285,35 @@ pub fn normalize_stringified_composites(schema: &Value, args: &mut Value) {
     }
 }
 
+/// Diagnose a stringified composite that `normalize_stringified_composites`
+/// could NOT coerce: a declared object/array param whose string value fails
+/// to parse as JSON. The bare schema error ("expected type object, got
+/// string") gives the model nothing to correct with — three models re-sent
+/// the same near-JSON string until the retry budget died (tuxlink-le9h9;
+/// worst case one missing comma at char 1068 of 1132 cost the whole run).
+/// Name the parse failure and the fix so the COR-3 retry round-trips can
+/// actually teach.
+pub fn stringified_composite_diagnosis(schema: &Value, args: &Value) -> Option<String> {
+    let map = args.as_object()?;
+    for (key, val) in map {
+        let Some(s) = val.as_str() else { continue };
+        let Some(kind) = declared_composite_kind(schema, key) else {
+            continue;
+        };
+        if kind == "scalar" {
+            continue;
+        }
+        if let Err(e) = serde_json::from_str::<Value>(s) {
+            return Some(format!(
+                "`{key}` was sent as a STRING that fails to parse as JSON ({e}). \
+                 Re-send `{key}` as a JSON {kind} placed directly in the \
+                 arguments — do not serialize it into a string."
+            ));
+        }
+    }
+    None
+}
+
 /// The declared type of top-level property `key` when it is UNAMBIGUOUSLY a
 /// composite: `Some("object")`/`Some("array")` iff every declaration of the
 /// property (schema root `properties` plus each `oneOf`/`anyOf` variant's)
@@ -325,6 +354,46 @@ fn declared_composite_kind(schema: &Value, key: &str) -> Option<&'static str> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// tuxlink-le9h9: an unparseable stringified composite names the parse
+    /// error and demands the composite form; anything else stays silent.
+    #[test]
+    fn diagnosis_names_parse_failure_for_unparseable_string_composite() {
+        let schema = json!({
+            "type": "object",
+            "properties": { "def": { "type": "object" } }
+        });
+        // The Laguna S3 shape: almost-JSON, one syntax slip.
+        let args = json!({ "def": "{\"routine\": \"x\" \"tracks\": []}" });
+        let diag = stringified_composite_diagnosis(&schema, &args)
+            .expect("unparseable string composite must produce a diagnosis");
+        assert!(diag.contains("`def`"), "must name the parameter: {diag}");
+        assert!(
+            diag.contains("fails to parse as JSON"),
+            "must state the parse failure: {diag}"
+        );
+        assert!(
+            diag.contains("do not serialize it into a string"),
+            "must state the fix: {diag}"
+        );
+    }
+
+    /// A cleanly-parsing string was already coerced upstream; a scalar param
+    /// sent as a string is not this failure class. Both stay silent.
+    #[test]
+    fn diagnosis_is_silent_for_parseable_strings_and_scalars() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "def": { "type": "object" },
+                "name": { "type": "string" }
+            }
+        });
+        let parseable = json!({ "def": "{\"routine\": \"x\"}" });
+        assert!(stringified_composite_diagnosis(&schema, &parseable).is_none());
+        let scalar = json!({ "name": "not json at all {" });
+        assert!(stringified_composite_diagnosis(&schema, &scalar).is_none());
+    }
 
     #[test]
     fn accepts_valid_object() {

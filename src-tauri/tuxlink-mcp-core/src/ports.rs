@@ -1647,6 +1647,26 @@ pub struct AuthoringDispositionDto {
     /// prose. Listing the warnings as acceptable states it positively, which
     /// silence never did, without offering an edit to apply.
     pub acceptable_warnings: Vec<String>,
+    /// Plain-prose completion statement, present EXACTLY when `state` is
+    /// `Valid`. Listing `acceptable_warnings` positively (above) was meant to
+    /// stop warning-driven repair loops; the Laguna P1 probe (2026-07-28, 37
+    /// consecutive polish edits against a green routine) showed a model whose
+    /// learned stop criterion is "validation returns clean" still reads any
+    /// warning as not-done. This sentence states the stop signal explicitly
+    /// on the wire, where the loop actually happens. Absent (not null) for
+    /// every non-`Valid` state per the null-noise discipline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion: Option<String>,
+}
+
+/// The completion sentence for `Valid` dispositions — see the field docs.
+fn valid_completion() -> Option<String> {
+    Some(
+        "The routine is COMPLETE. Any codes in acceptable_warnings are \
+         environmental and cannot be repaired by editing this routine — do \
+         not make further edits for them. Report completion to the user."
+            .to_string(),
+    )
 }
 
 /// Dedupe finding codes preserving first-seen order — a routine commonly
@@ -1687,6 +1707,7 @@ impl AuthoringDispositionDto {
                 remedies: vec![],
                 blocked_by,
                 acceptable_warnings,
+                completion: valid_completion(),
             };
         }
         // The routine's OWN automatic-unattended transmit/write: only the operator
@@ -1705,6 +1726,7 @@ impl AuthoringDispositionDto {
                 ],
                 blocked_by,
                 acceptable_warnings,
+                completion: None,
             };
         }
         // A callee the runtime child-start gate would refuse: the honest agent
@@ -1718,6 +1740,7 @@ impl AuthoringDispositionDto {
                 remedies: vec![RemedyDto::set_attended(&callee, "")],
                 blocked_by,
                 acceptable_warnings,
+                completion: None,
             };
         }
         // Any other blocking finding with no known agent-only edit: an honest
@@ -1729,6 +1752,7 @@ impl AuthoringDispositionDto {
             remedies: vec![],
             blocked_by,
             acceptable_warnings,
+            completion: None,
         }
     }
 }
@@ -2237,8 +2261,11 @@ mod authoring_disposition_tests {
             remedies: vec![RemedyDto::set_attended("r", "abc123")],
             blocked_by: vec!["UNRESOLVED_REF".into()],
             acceptable_warnings: vec!["NO_TERMINAL_PATH".into()],
+            completion: None,
         };
         let j = serde_json::to_value(&d).unwrap();
+        // Null-noise discipline: absent, not null, on non-Valid states.
+        assert!(j.get("completion").is_none());
         assert_eq!(j["state"], "saved-needs-operator");
         assert_eq!(j["agent_terminal"], true);
         assert_eq!(j["remedies"][0]["tool"], "routines_meta_set");
@@ -2246,6 +2273,32 @@ mod authoring_disposition_tests {
         assert_eq!(j["remedies"][0]["actor"], "agent");
         assert_eq!(j["blocked_by"][0], "UNRESOLVED_REF");
         assert_eq!(j["acceptable_warnings"][0], "NO_TERMINAL_PATH");
+    }
+
+    /// The stop signal rides the wire exactly when the state is `Valid`
+    /// (Laguna P1 2026-07-28: 37 polish edits against a green routine because
+    /// nothing ever said "done"). Warnings-only findings still classify Valid
+    /// and still carry it.
+    #[test]
+    fn valid_disposition_carries_completion_sentence() {
+        let warn = FindingDto {
+            code: "ATTENDED_UNDER_SCHEDULE".into(),
+            severity: FindingSeverityDto::Warning,
+            routine: "r".into(),
+            track: None,
+            step: None,
+            message: "attended under schedule".into(),
+        };
+        let d = AuthoringDispositionDto::classify(&[warn], "r", "rev1");
+        assert!(matches!(d.state, DispositionState::Valid));
+        let c = d.completion.expect("Valid must carry the completion sentence");
+        assert!(c.contains("COMPLETE"), "must state completion: {c}");
+        assert!(
+            c.contains("do not make further edits"),
+            "must forbid warning-driven edits: {c}"
+        );
+        let j = serde_json::to_value(&d).unwrap();
+        assert!(j["completion"].as_str().is_some(), "must serialize on Valid");
     }
 
     // --- tuxlink-lnctz: blocked_by / acceptable_warnings -------------------

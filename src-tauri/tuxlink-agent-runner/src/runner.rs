@@ -140,6 +140,9 @@ pub async fn run_with_conversation_with_transcript(
     let tools: Vec<ToolSpec> = invoker.tools().to_vec();
 
     let mut malformed_retries: u32 = 0;
+    // (call signature, result body) of the last dispatched call plus its
+    // consecutive-identical streak — see `annotate_repeats`.
+    let mut repeat_streak: Option<(String, String, u32)> = None;
     // pf6re: one-shot post-denial finalization. Set when an egress call is denied;
     // the model is then granted exactly ONE more turn to narrate the denial. If it
     // answers (Text) the run completes with that narration; if it calls tools again
@@ -325,12 +328,60 @@ pub async fn run_with_conversation_with_transcript(
                         break;
                     }
 
+                    let outcome = annotate_repeats(&mut repeat_streak, call, outcome);
                     conversation.push_outcome(&call.name, &outcome);
                     record_last(transcript, conversation);
                 }
             }
         }
     }
+}
+
+/// Consecutive-identical streak after which the repeat notice is appended.
+const REPEAT_NOTICE_AT: u32 = 3;
+
+/// Append a repeat notice to a successful result when the SAME call (name +
+/// args) has returned the SAME body [`REPEAT_NOTICE_AT`]-or-more times in a
+/// row (absorption round, 2026-07-28). Informationless repetition is the
+/// degenerate-loop class — 40 identical `find_stations` calls at baseline
+/// zero, 31 identical `docs_search` calls on the Laguna E1 probe — and no
+/// per-tool wire-teaching can cover every tool. Legitimate polling survives
+/// by construction: any change in the args OR the result resets the streak,
+/// so a status call awaiting a state change never triggers the notice.
+fn annotate_repeats(
+    streak: &mut Option<(String, String, u32)>,
+    call: &ToolCall,
+    outcome: ToolOutcome,
+) -> ToolOutcome {
+    let ToolOutcome::Ok(body) = &outcome else {
+        *streak = None;
+        return outcome;
+    };
+    let sig = format!("{}\u{0}{}", call.name, call.args);
+    let body_s = body.to_string();
+    let count = match streak {
+        Some((s, b, n)) if *s == sig && *b == body_s => *n + 1,
+        _ => 1,
+    };
+    *streak = Some((sig, body_s, count));
+    if count < REPEAT_NOTICE_AT {
+        return outcome;
+    }
+    let mut annotated = body.clone();
+    let note = format!(
+        "this exact call has now returned this exact result {count} times in a \
+         row. Repeating it again will not change anything — act on the \
+         information you already have."
+    );
+    match &mut annotated {
+        serde_json::Value::Object(map) => {
+            map.insert("repeat_notice".to_string(), serde_json::Value::String(note));
+        }
+        other => {
+            annotated = serde_json::json!({ "result": other, "repeat_notice": note });
+        }
+    }
+    ToolOutcome::Ok(annotated)
 }
 
 /// Back-compat shim: drive the loop with progress events but WITHOUT a durable
@@ -426,7 +477,19 @@ fn first_validation_error(tools: &[ToolSpec], calls: &[ToolCall]) -> Option<Stri
             }
             Some(spec) => {
                 if let Err(detail) = validate::validate(&spec.json_schema, &call.args) {
-                    return Some(format!("arguments for `{}` are invalid: {detail}", call.name));
+                    // tuxlink-le9h9: when the failure is an uncoercible
+                    // stringified composite, the bare type error teaches
+                    // nothing — append the parse diagnosis so the COR-3
+                    // retry can actually correct.
+                    let mut msg =
+                        format!("arguments for `{}` are invalid: {detail}", call.name);
+                    if let Some(diag) =
+                        validate::stringified_composite_diagnosis(&spec.json_schema, &call.args)
+                    {
+                        msg.push_str(" — ");
+                        msg.push_str(&diag);
+                    }
+                    return Some(msg);
                 }
             }
         }
@@ -439,6 +502,69 @@ fn first_validation_error(tools: &[ToolSpec], calls: &[ToolCall]) -> Option<Stri
 // (kept at end-of-file: clippy::items_after_test_module denies production items
 // after a #[cfg(test)] mod, so test modules live below all production items.)
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod annotate_repeats_tests {
+    use super::*;
+
+    fn ok(v: serde_json::Value) -> ToolOutcome {
+        ToolOutcome::Ok(v)
+    }
+
+    /// The third byte-identical (call, result) pair gets the notice; the
+    /// first two pass through untouched.
+    #[test]
+    fn notice_appears_at_third_identical_pair() {
+        let call = ToolCall::new("docs_search", serde_json::json!({"query": "FT-8"}));
+        let body = serde_json::json!({"slugs": ["37-ft8"]});
+        let mut streak = None;
+        for expect_notice in [false, false, true] {
+            let out = annotate_repeats(&mut streak, &call, ok(body.clone()));
+            let ToolOutcome::Ok(v) = out else {
+                panic!("outcome variant must be preserved")
+            };
+            assert_eq!(
+                v.get("repeat_notice").is_some(),
+                expect_notice,
+                "notice presence wrong at streak {streak:?}"
+            );
+        }
+    }
+
+    /// A changed RESULT resets the streak even for identical args — this is
+    /// what keeps legitimate polling (status until a state change) silent.
+    #[test]
+    fn changed_result_resets_streak() {
+        let call = ToolCall::new("modem_get_status", serde_json::json!({}));
+        let mut streak = None;
+        let waiting = serde_json::json!({"state": "connecting"});
+        annotate_repeats(&mut streak, &call, ok(waiting.clone()));
+        annotate_repeats(&mut streak, &call, ok(waiting.clone()));
+        // State changed on the third poll: no notice, streak restarts.
+        let done = annotate_repeats(
+            &mut streak,
+            &call,
+            ok(serde_json::json!({"state": "connected"})),
+        );
+        let ToolOutcome::Ok(v) = done else { panic!("variant") };
+        assert!(v.get("repeat_notice").is_none());
+    }
+
+    /// Non-object results are wrapped rather than dropped so the notice can
+    /// attach to scalar/array bodies too.
+    #[test]
+    fn non_object_result_is_wrapped_with_notice() {
+        let call = ToolCall::new("docs_read", serde_json::json!({"slug": "s"}));
+        let body = serde_json::json!("plain text body");
+        let mut streak = None;
+        annotate_repeats(&mut streak, &call, ok(body.clone()));
+        annotate_repeats(&mut streak, &call, ok(body.clone()));
+        let third = annotate_repeats(&mut streak, &call, ok(body.clone()));
+        let ToolOutcome::Ok(v) = third else { panic!("variant") };
+        assert_eq!(v["result"], "plain text body");
+        assert!(v["repeat_notice"].as_str().unwrap().contains("3 times"));
+    }
+}
 
 #[cfg(test)]
 mod provider_error_outcome_tests {
