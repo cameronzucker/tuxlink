@@ -67,6 +67,16 @@ struct ContextSpec {
     /// just context the caller fixture needs to resolve its closure.
     #[serde(default)]
     sibling_routines: Vec<serde_json::Value>,
+    /// Actions the context classifies as outbox-STAGING (compose), for the
+    /// store-and-forward lints (COMPOSE_AFTER_CONNECT and the tuxlink-0hjm4
+    /// set). Empty by default so pre-existing fixtures keep an outbox-blind
+    /// context and those lints stay silent for them.
+    #[serde(default)]
+    stages_outbox: Vec<String>,
+    /// Actions the context classifies as outbox-FLUSHING (connect). See
+    /// `stages_outbox`.
+    #[serde(default)]
+    flushes_outbox: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -242,6 +252,12 @@ fn build_context(spec: &ContextSpec) -> StaticContext {
         });
         ctx = ctx.with_routine(def);
     }
+    for action_name in &spec.stages_outbox {
+        ctx = ctx.with_stages_outbox(action_name);
+    }
+    for action_name in &spec.flushes_outbox {
+        ctx = ctx.with_flushes_outbox(action_name);
+    }
     ctx.with_profile(StationProfile {
         has_internet: spec.profile.has_internet,
         rigs: spec.profile.rigs.clone(),
@@ -344,6 +360,12 @@ const ALL_FINDING_CODES: &[&str] = &[
     "MULTIPLE_SCHEDULES",
     // capability.rs (plan-4 amendment task 1: WWV timeout heuristic)
     "STEP_TIMEOUT_LIKELY_INSUFFICIENT",
+    // capability.rs + structure.rs (tuxlink-0hjm4: lift1-base structural
+    // lints; contexts opt in via the manifest's stages_outbox /
+    // flushes_outbox keys)
+    "REPEAT_CONNECT_NO_DELAY",
+    "CONNECT_NOTHING_STAGED",
+    "ARM_END_INVERTED",
 ];
 
 #[test]

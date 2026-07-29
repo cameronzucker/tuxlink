@@ -45,6 +45,18 @@ pub const STEP_TIMEOUT_LIKELY_INSUFFICIENT: &str = "STEP_TIMEOUT_LIKELY_INSUFFIC
 /// not error: staging-for-a-future-connection is a legitimate authoring
 /// intent, and the message teaches both readings.
 pub const COMPOSE_AFTER_CONNECT: &str = "COMPOSE_AFTER_CONNECT";
+/// An outbox-flushing dial with nothing staged BY THIS ROUTINE ahead of it,
+/// in its own track or any other (tuxlink-0hjm4, lift1-base E3 3/3
+/// evidence): the routine "sends traffic" per its author's narration, but no
+/// compose ever runs. The mirror image of [`COMPOSE_AFTER_CONNECT`], with
+/// the same cross-track conservatism in reverse: a stage step in ANY other
+/// concurrent track silences it. Warning, not error, and the message names
+/// BOTH legitimate readings (Codex 2026-07-29 P1): the connect still
+/// forwards whatever is ALREADY in the persistent outbox — traffic the
+/// operator or another routine queued earlier — and still collects inbound,
+/// so a flush-the-queue or poll routine is a correct shape the validator
+/// cannot distinguish from the E3 defect by the definition alone.
+pub const CONNECT_NOTHING_STAGED: &str = "CONNECT_NOTHING_STAGED";
 
 /// The action name [`check_wwv_timeout`] applies to (spec §6 "Update space
 /// weather from WWV": the shipped off-air decode — tune, capture at
@@ -118,6 +130,59 @@ pub fn check(def: &RoutineDef, ctx: &dyn ValidationContext, findings: &mut Vec<F
     }
 
     check_outbox_ordering(def, ctx, findings);
+    check_connect_nothing_staged(def, ctx, findings);
+}
+
+/// CONNECT_NOTHING_STAGED: see the const doc. Lexical (array-position) order
+/// within the track, matching [`COMPOSE_AFTER_CONNECT`]'s v1 rule; a stage
+/// step in any OTHER track silences the whole track's findings (concurrent
+/// tracks share the outbox, so the validator cannot prove emptiness).
+fn check_connect_nothing_staged(
+    def: &RoutineDef,
+    ctx: &dyn ValidationContext,
+    findings: &mut Vec<Finding>,
+) {
+    for (track_idx, track) in def.tracks.iter().enumerate() {
+        let other_track_stages = def.tracks.iter().enumerate().any(|(j, t)| {
+            j != track_idx
+                && t.steps
+                    .iter()
+                    .any(|s| matches!(s, Step::Action(a) if ctx.stages_outbox(&a.action)))
+        });
+        if other_track_stages {
+            continue;
+        }
+        let mut staged_seen = false;
+        for step in &track.steps {
+            let Step::Action(a) = step else { continue };
+            if ctx.stages_outbox(&a.action) {
+                staged_seen = true;
+                continue;
+            }
+            if ctx.flushes_outbox(&a.action) && !staged_seen {
+                findings.push(
+                    Finding::warning(
+                        CONNECT_NOTHING_STAGED,
+                        def.routine.clone(),
+                        format!(
+                            "step \"{}\" ({}) dials without this routine staging anything to \
+                             send: no compose step runs before it in this track or any \
+                             other. The connect will still forward whatever is ALREADY in \
+                             the outbox (traffic the operator or another routine queued \
+                             earlier) and will still collect inbound traffic. If this \
+                             routine is meant to compose and send its own message, add the \
+                             compose step ahead of the connect (compose -> connect). If it \
+                             deliberately flushes pre-queued traffic or polls for inbound, \
+                             ignore this",
+                            a.id.0, a.action
+                        ),
+                    )
+                    .with_track(track.name.clone())
+                    .with_step(a.id.clone()),
+                );
+            }
+        }
+    }
 }
 
 /// COMPOSE_AFTER_CONNECT: see the const doc. A per-track positional scan —
@@ -751,6 +816,120 @@ mod tests {
         check(&def, &ctx, &mut findings);
         assert!(
             findings.iter().all(|f| f.code != COMPOSE_AFTER_CONNECT),
+            "{findings:?}"
+        );
+    }
+
+    // --- CONNECT_NOTHING_STAGED (tuxlink-0hjm4) --------------------------
+
+    #[test]
+    fn a_connect_with_nothing_staged_warns_and_names_both_legitimate_readings() {
+        // The lift1-base E3 shape: connect in a "send traffic" routine with
+        // no compose anywhere. The message must NOT claim the outbox is
+        // empty (Codex 2026-07-29 P1: the persistent outbox can hold traffic
+        // queued outside this routine) and must leave the flush-the-queue
+        // and poll readings open.
+        let def = def_with_steps(vec![action_step("s1", "radio.connect")]);
+        let mut findings = Vec::new();
+        check(&def, &outbox_ctx(), &mut findings);
+        let hits: Vec<_> = findings
+            .iter()
+            .filter(|f| f.code == CONNECT_NOTHING_STAGED)
+            .collect();
+        assert_eq!(hits.len(), 1, "{findings:?}");
+        assert_eq!(hits[0].severity, Severity::Warning);
+        assert_eq!(hits[0].step, Some(StepId("s1".into())));
+        assert!(hits[0].message.contains("ALREADY in the outbox"), "{}", hits[0].message);
+        assert!(hits[0].message.contains("ignore this"), "{}", hits[0].message);
+    }
+
+    #[test]
+    fn a_stage_before_the_connect_stays_silent() {
+        let def = def_with_steps(vec![
+            action_step("s1", "local.compose"),
+            action_step("s2", "radio.connect"),
+        ]);
+        let mut findings = Vec::new();
+        check(&def, &outbox_ctx(), &mut findings);
+        assert!(
+            findings.iter().all(|f| f.code != CONNECT_NOTHING_STAGED),
+            "{findings:?}"
+        );
+    }
+
+    #[test]
+    fn a_stage_in_another_concurrent_track_stays_silent() {
+        // Tracks run concurrently against the shared outbox: a stage in any
+        // other track can feed this connect, so the validator stays quiet.
+        let def = RoutineDef {
+            routine: "r1".into(),
+            schema_version: crate::types::SUPPORTED_SCHEMA_VERSION,
+            transmit_mode: TransmitMode::Attended,
+            transmit_ack: None,
+            write_ack: None,
+            on_interrupted: OnInterrupted::Stay,
+            inputs: vec![],
+            triggers: vec![Trigger::Manual],
+            tracks: vec![
+                Track {
+                    name: "a".into(),
+                    steps: vec![action_step("s1", "local.compose")],
+                },
+                Track {
+                    name: "b".into(),
+                    steps: vec![action_step("s2", "radio.connect")],
+                },
+            ],
+        };
+        let mut findings = Vec::new();
+        check(&def, &outbox_ctx(), &mut findings);
+        assert!(
+            findings.iter().all(|f| f.code != CONNECT_NOTHING_STAGED),
+            "{findings:?}"
+        );
+    }
+
+    #[test]
+    fn connect_then_compose_fires_both_ordering_lints_one_per_side() {
+        // The two lints are mirror images anchored at opposite ends of the
+        // same defect; both prescribe the same single fix (compose ->
+        // connect), so co-firing cross-teaches rather than contradicts.
+        let def = def_with_steps(vec![
+            action_step("s1", "radio.connect"),
+            action_step("s2", "local.compose"),
+        ]);
+        let mut findings = Vec::new();
+        check(&def, &outbox_ctx(), &mut findings);
+        let nothing_staged: Vec<_> = findings
+            .iter()
+            .filter(|f| f.code == CONNECT_NOTHING_STAGED)
+            .collect();
+        let compose_after: Vec<_> = findings
+            .iter()
+            .filter(|f| f.code == COMPOSE_AFTER_CONNECT)
+            .collect();
+        assert_eq!(nothing_staged.len(), 1, "{findings:?}");
+        assert_eq!(nothing_staged[0].step, Some(StepId("s1".into())));
+        assert_eq!(compose_after.len(), 1, "{findings:?}");
+        assert_eq!(compose_after[0].step, Some(StepId("s2".into())));
+    }
+
+    #[test]
+    fn outbox_roleless_contexts_never_fire_the_staging_lint_either() {
+        let def = def_with_steps(vec![
+            action_step("s1", "radio.connect"),
+            action_step("s2", "radio.connect"),
+        ]);
+        let ctx = StaticContext::new()
+            .with_action(RADIO_CONNECT)
+            .with_profile(StationProfile {
+                has_internet: true,
+                rigs: vec!["default".into()],
+            });
+        let mut findings = Vec::new();
+        check(&def, &ctx, &mut findings);
+        assert!(
+            findings.iter().all(|f| f.code != CONNECT_NOTHING_STAGED),
             "{findings:?}"
         );
     }

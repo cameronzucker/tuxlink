@@ -55,6 +55,33 @@ pub const CALL_TARGET_MISSING: &str = "CALL_TARGET_MISSING";
 pub const BRANCH_OP_VALUE_PAIR: &str = "BRANCH_OP_VALUE_PAIR";
 pub const BRANCH_BOTH_ARMS_EMPTY: &str = "BRANCH_BOTH_ARMS_EMPTY";
 pub const TX_ONLY_ON_FAILURE_ARM: &str = "TX_ONLY_ON_FAILURE_ARM";
+/// An arm of a strict-boolean `<connect>.connected` branch runs straight
+/// into an End whose `failed` flag contradicts the arm's polarity
+/// (tuxlink-0hjm4, lift1-base E3 + E2 evidence, 4 bundles): the observed
+/// modal shape is the ELSE arm (the connect FAILED) terminating
+/// `end { failed: false }`, so a run that never connected reports success
+/// and nobody learns the routine did not do its job; the mirror (then arm
+/// into `failed: true`) indicates swapped arm targets. Scoped exactly like
+/// [`TX_ONLY_ON_FAILURE_ARM`]: the branch must test a same-track connect
+/// attempt's own `.connected` output. The walk follows pure fall-through
+/// (actions, delays) only and gives up at anything that could change the
+/// story — another Branch, a Retry, a Call, or a further connect attempt on
+/// the arm (a recovery dial makes `failed: false` legitimate). Warning: a
+/// best-effort routine may genuinely accept a failed connect, and the
+/// message teaches both readings.
+pub const ARM_END_INVERTED: &str = "ARM_END_INVERTED";
+/// Two outbox-flushing dials joined by an execution path with no Delay
+/// control on it (tuxlink-0hjm4, lift1-base S3 3/3 evidence): models fill
+/// the gap with log lines ("waiting 5 minutes") — pure theater — and the
+/// second dial re-walks the same station list the moment the first returns.
+/// Graph-walk, not array-position (Codex 2026-07-29 P2): the walk follows
+/// the same edges the executor takes, so `connect -> branch else-arm ->
+/// connect` (the multi-band redial shape) is caught, and a Delay anywhere on
+/// the path clears that path. The walk gives up at Retry (its backoff is a
+/// pacing mechanism) and Call (the callee is another routine). Warning:
+/// intermediate steps may HAPPEN to take time (a listen dwell) — the message
+/// says so honestly — but only a Delay control makes pacing explicit.
+pub const REPEAT_CONNECT_NO_DELAY: &str = "REPEAT_CONNECT_NO_DELAY";
 
 /// Append every structural finding for `def` into `findings`. Retry/graph
 /// checks are pure over `def`; the call checks need `ctx.routine_def` to
@@ -68,6 +95,8 @@ pub fn check(def: &RoutineDef, ctx: &dyn ValidationContext, findings: &mut Vec<F
         cross_reference_terminal_and_leak(&mut findings[before..]);
         check_branch_shapes(def, track, findings);
         check_tx_only_on_failure_arm(def, track, ctx, findings);
+        check_arm_end_inverted(def, track, ctx, findings);
+        check_repeat_connect_no_delay(def, track, ctx, findings);
     }
     check_calls(def, ctx, findings);
 }
@@ -186,20 +215,7 @@ fn check_tx_only_on_failure_arm(
         if op.is_some() || !on.ends_with(".connected") || r#else.is_empty() {
             continue;
         }
-        // The branch must test a CONNECT ATTEMPT's own output (Codex
-        // 2026-07-27 P2): `.connected` also appears on status reads (e.g. a
-        // modem_status snapshot), where the else arm means "modem idle", not
-        // "a dial failed" — and dialing WHEN idle is exactly right there.
-        // The producer must be a same-track action the context classifies as
-        // outbox-flushing (a connect); anything else carries no
-        // failed-attempt semantics and is skipped.
-        let producer_is_connect = on.split('.').next().is_some_and(|producer_id| {
-            track.steps.iter().any(|s| match s {
-                Step::Action(a) => a.id.0 == producer_id && ctx.flushes_outbox(&a.action),
-                _ => false,
-            })
-        });
-        if !producer_is_connect {
+        if !branch_tests_connect_attempt(track, on, ctx) {
             continue;
         }
         let Some(else_entry) = r#else.first().and_then(|t| find_index(track, t)) else {
@@ -376,6 +392,216 @@ fn check_arm_fallthrough_leaks(def: &RoutineDef, track: &Track, findings: &mut V
 
 fn find_index(track: &Track, id: &StepId) -> Option<usize> {
     track.steps.iter().position(|s| s.id() == id)
+}
+
+/// Does this branch's `on` path test a CONNECT ATTEMPT's own output? (Codex
+/// 2026-07-27 P2, shared by [`TX_ONLY_ON_FAILURE_ARM`] and
+/// [`ARM_END_INVERTED`]): `.connected` also appears on status reads (e.g. a
+/// modem_status snapshot), where the else arm means "modem idle", not "a
+/// dial failed" — and dialing WHEN idle is exactly right there. The producer
+/// must be a same-track action the context classifies as outbox-flushing (a
+/// connect); anything else carries no failed-attempt semantics.
+fn branch_tests_connect_attempt(track: &Track, on: &str, ctx: &dyn ValidationContext) -> bool {
+    on.split('.').next().is_some_and(|producer_id| {
+        track.steps.iter().any(|s| match s {
+            Step::Action(a) => a.id.0 == producer_id && ctx.flushes_outbox(&a.action),
+            _ => false,
+        })
+    })
+}
+
+/// ARM_END_INVERTED: see the const doc. For each arm of a qualifying branch,
+/// walk pure fall-through (actions and delays) from the arm's entry; if the
+/// walk lands on an End whose `failed` contradicts the arm's polarity, warn
+/// on that End. Anything that could change the outcome on the way — another
+/// Branch, a Retry, a Call, a further connect attempt — aborts the walk.
+fn check_arm_end_inverted(
+    def: &RoutineDef,
+    track: &Track,
+    ctx: &dyn ValidationContext,
+    findings: &mut Vec<Finding>,
+) {
+    let n = track.steps.len();
+    for (i, step) in track.steps.iter().enumerate() {
+        let Step::Control(c) = step else { continue };
+        let Control::Branch {
+            on,
+            op,
+            then,
+            r#else,
+            ..
+        } = &c.control
+        else {
+            continue;
+        };
+        if op.is_some() || !on.ends_with(".connected") {
+            continue;
+        }
+        if !branch_tests_connect_attempt(track, on, ctx) {
+            continue;
+        }
+        let entry = |arm: &[StepId]| -> Option<usize> {
+            match arm.first() {
+                Some(t) => find_index(track, t),
+                None => Some(i + 1),
+            }
+        };
+        let (Some(then_entry), Some(else_entry)) = (entry(then), entry(r#else)) else {
+            continue; // dangling target: BRANCH_TARGET_MISSING's job
+        };
+        // Converged arms are NOT skipped (Codex 2026-07-29 P2): an empty
+        // else falling through to the same `End { failed: false }` the then
+        // arm targets still masks a failed connect at runtime. A shared End
+        // can only contradict ONE arm's polarity, so this cannot
+        // double-warn contradictorily.
+        for (arm_entry, arm_is_then) in [(then_entry, true), (else_entry, false)] {
+            let mut j = arm_entry;
+            let terminal = loop {
+                if j >= n {
+                    break None; // ran off the track end: NO_TERMINAL_PATH's job
+                }
+                match &track.steps[j] {
+                    Step::Action(a) => {
+                        if ctx.flushes_outbox(&a.action) {
+                            break None; // a recovery dial can legitimately flip the outcome
+                        }
+                        j += 1;
+                    }
+                    Step::Control(c2) => match &c2.control {
+                        Control::End { failed, .. } => break Some((c2.id.clone(), *failed)),
+                        Control::Delay { .. } => j += 1,
+                        // A Retry executes its target and advances on
+                        // success (executor.rs), so the walk continues past
+                        // it UNLESS the target is itself a connect attempt —
+                        // that is a recovery dial through a different door
+                        // (Codex 2026-07-29 P2).
+                        Control::Retry { step: target, .. } => {
+                            let target_is_connect =
+                                find_index(track, target).is_some_and(|t| match &track.steps[t] {
+                                    Step::Action(a) => ctx.flushes_outbox(&a.action),
+                                    _ => false,
+                                });
+                            if target_is_connect {
+                                break None;
+                            }
+                            j += 1;
+                        }
+                        // A new decision point or a callee can change the
+                        // story; this arm claims no verdict.
+                        _ => break None,
+                    },
+                }
+            };
+            let Some((end_id, failed)) = terminal else {
+                continue;
+            };
+            let message = if arm_is_then && failed {
+                format!(
+                    "branch \"{}\" tests \"{on}\" and its then arm (the connect SUCCEEDED) \
+                     runs straight into end \"{}\" with failed: true, so a run that \
+                     connected reports failure. If the arms are wired backwards, swap the \
+                     then and else targets on the branch; if the end is simply mislabeled, \
+                     set failed: false on it",
+                    c.id.0, end_id.0
+                )
+            } else if !arm_is_then && !failed {
+                format!(
+                    "branch \"{}\" tests \"{on}\" and its else arm (the connect FAILED) \
+                     runs straight into end \"{}\" with failed: false, so a run where the \
+                     connection never happened reports success and nobody learns the \
+                     routine did not do its job. Set failed: true on that end (with a \
+                     reason), or route the else arm to a recovery step. If a failed \
+                     connect is genuinely acceptable for this routine, ignore this",
+                    c.id.0, end_id.0
+                )
+            } else {
+                continue;
+            };
+            findings.push(
+                Finding::warning(ARM_END_INVERTED, def.routine.clone(), message)
+                    .with_track(track.name.clone())
+                    .with_step(end_id),
+            );
+        }
+    }
+}
+
+/// REPEAT_CONNECT_NO_DELAY: see the const doc. From each flushing step's
+/// successors, a BFS over the SAME edges the executor takes ([`build_graph`])
+/// looks for another flushing step reachable without crossing a Delay
+/// control. Traversal passes non-flushing actions and Branch arms; it stops
+/// at Delay (the pacing exists), End (run over), Retry (backoff is pacing),
+/// Call (callee unknown), the OUT sentinel, and at the first flushing step
+/// on each path (which fires and anchors the finding). A dial reachable from
+/// itself (a cycle) is not reported here — [`BRANCH_CYCLE`] already errors
+/// on the cycle itself.
+fn check_repeat_connect_no_delay(
+    def: &RoutineDef,
+    track: &Track,
+    ctx: &dyn ValidationContext,
+    findings: &mut Vec<Finding>,
+) {
+    let n = track.steps.len();
+    let is_flush = |idx: usize| match &track.steps[idx] {
+        Step::Action(a) => ctx.flushes_outbox(&a.action),
+        _ => false,
+    };
+    let flush_nodes: Vec<usize> = (0..n).filter(|&i| is_flush(i)).collect();
+    if flush_nodes.len() < 2 {
+        return;
+    }
+    let (adj, _) = build_graph(track);
+
+    for &u in &flush_nodes {
+        let mut visited: HashSet<usize> = HashSet::new();
+        let mut queue: Vec<usize> = adj[u].clone();
+        while let Some(v) = queue.pop() {
+            if v >= n || !visited.insert(v) {
+                continue; // OUT sentinel, or already walked
+            }
+            if v == u {
+                continue; // a self-cycle is BRANCH_CYCLE's job
+            }
+            if is_flush(v) {
+                let first_id = track.steps[u].id();
+                let second_id = track.steps[v].id();
+                findings.push(
+                    Finding::warning(
+                        REPEAT_CONNECT_NO_DELAY,
+                        def.routine.clone(),
+                        format!(
+                            "steps \"{first}\" and \"{second}\" can dial back to back: an \
+                             execution path runs from \"{first}\" into \"{second}\" with no \
+                             delay control on it, so the second dial can start the moment \
+                             the first finishes, giving the band and the remote station no \
+                             settle time. Steps in between may happen to take time, but \
+                             only a delay control makes the pacing explicit. Put a delay \
+                             control on the path between them. To re-reach the station the \
+                             FIRST dial connected to, set the second dial's stations to \
+                             [\"${first}.station\"] instead of re-walking the original \
+                             station list. If an immediate redial is intended, ignore this",
+                            first = first_id.0,
+                            second = second_id.0,
+                        ),
+                    )
+                    .with_track(track.name.clone())
+                    .with_step(second_id.clone()),
+                );
+                continue; // do not walk past the second dial
+            }
+            // Traversal continues through non-flushing actions and Branch
+            // arms only. Delay: pacing exists on this path. End: the run is
+            // over. Retry: its backoff paces the redial. Call: the callee's
+            // contents are another routine's business.
+            let walkable = match &track.steps[v] {
+                Step::Action(_) => true,
+                Step::Control(c) => matches!(&c.control, Control::Branch { .. }),
+            };
+            if walkable {
+                queue.extend(adj[v].iter().copied());
+            }
+        }
+    }
 }
 
 // --- Retry wiring (RETRY_ZERO_ATTEMPTS / RETRY_TARGET_MISSING / RETRY_TARGET_NOT_ACTION) ---
@@ -1830,6 +2056,429 @@ mod tests {
         assert!(
             findings2.iter().all(|f| f.code != TX_ONLY_ON_FAILURE_ARM),
             "{findings2:?}"
+        );
+    }
+
+    // --- ARM_END_INVERTED (tuxlink-0hjm4) --------------------------------
+
+    fn end_failed(id: &str) -> Step {
+        Step::Control(ControlStep {
+            id: StepId(id.into()),
+            control: Control::End {
+                failed: true,
+                reason: Some("no gateway reachable".into()),
+            },
+        })
+    }
+
+    fn connect_ctx() -> StaticContext {
+        StaticContext::new()
+            .with_action(tx_descriptor("radio.connect"))
+            .with_flushes_outbox("radio.connect")
+    }
+
+    #[test]
+    fn else_arm_ending_failed_false_masks_the_failed_connect() {
+        // The lift1-base E3 shape, all three attempts: connect, branch on
+        // connected, both arms log-and-end with failed:false.
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    tx_action("s1", "radio.connect"),
+                    branch("b1", "s1.connected", vec!["ok"], vec!["bad"]),
+                    action("ok"),
+                    end("e_ok"),
+                    action("bad"),
+                    end("e_bad"), // failed: false on the failure arm
+                ],
+            )],
+        );
+        let mut findings = Vec::new();
+        check(&def, &connect_ctx(), &mut findings);
+        let hits: Vec<_> = findings.iter().filter(|f| f.code == ARM_END_INVERTED).collect();
+        assert_eq!(hits.len(), 1, "{findings:?}");
+        assert_eq!(hits[0].step, Some(StepId("e_bad".into())));
+        assert_eq!(hits[0].severity, crate::validate::findings::Severity::Warning);
+        assert!(hits[0].message.contains("failed: false"), "{}", hits[0].message);
+        assert!(hits[0].message.contains("ignore this"), "{}", hits[0].message);
+    }
+
+    #[test]
+    fn then_arm_ending_failed_true_reads_as_swapped_arms() {
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    tx_action("s1", "radio.connect"),
+                    branch("b1", "s1.connected", vec!["odd"], vec!["bad"]),
+                    action("odd"),
+                    end_failed("e_odd"), // failed: true on the SUCCESS arm
+                    action("bad"),
+                    end_failed("e_bad"), // correct polarity: no finding here
+                ],
+            )],
+        );
+        let mut findings = Vec::new();
+        check(&def, &connect_ctx(), &mut findings);
+        let hits: Vec<_> = findings.iter().filter(|f| f.code == ARM_END_INVERTED).collect();
+        assert_eq!(hits.len(), 1, "{findings:?}");
+        assert_eq!(hits[0].step, Some(StepId("e_odd".into())));
+        assert!(hits[0].message.contains("swap"), "{}", hits[0].message);
+    }
+
+    #[test]
+    fn fully_swapped_arms_fire_once_per_arm() {
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    tx_action("s1", "radio.connect"),
+                    branch("b1", "s1.connected", vec!["odd"], vec!["bad"]),
+                    action("odd"),
+                    end_failed("e_odd"),
+                    action("bad"),
+                    end("e_bad"),
+                ],
+            )],
+        );
+        let mut findings = Vec::new();
+        check(&def, &connect_ctx(), &mut findings);
+        let hits: Vec<_> = findings.iter().filter(|f| f.code == ARM_END_INVERTED).collect();
+        assert_eq!(hits.len(), 2, "{findings:?}");
+    }
+
+    #[test]
+    fn correct_polarity_on_both_arms_stays_silent() {
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    tx_action("s1", "radio.connect"),
+                    branch("b1", "s1.connected", vec!["ok"], vec!["bad"]),
+                    action("ok"),
+                    end("e_ok"),
+                    action("bad"),
+                    end_failed("e_bad"),
+                ],
+            )],
+        );
+        let mut findings = Vec::new();
+        check(&def, &connect_ctx(), &mut findings);
+        assert!(findings.iter().all(|f| f.code != ARM_END_INVERTED), "{findings:?}");
+    }
+
+    #[test]
+    fn a_recovery_dial_on_the_else_arm_makes_failed_false_legitimate() {
+        // else: try a second connect, then end success — the walk must give
+        // up at the recovery dial rather than call the success end masked.
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    tx_action("s1", "radio.connect"),
+                    branch("b1", "s1.connected", vec!["ok"], vec!["s2"]),
+                    action("ok"),
+                    end("e_ok"),
+                    tx_action("s2", "radio.connect"),
+                    end("e_two"),
+                ],
+            )],
+        );
+        let mut findings = Vec::new();
+        check(&def, &connect_ctx(), &mut findings);
+        assert!(findings.iter().all(|f| f.code != ARM_END_INVERTED), "{findings:?}");
+    }
+
+    #[test]
+    fn a_further_branch_retry_or_call_on_the_arm_claims_no_verdict() {
+        // else -> a second decision point: the first branch's arm walk stops.
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    tx_action("s1", "radio.connect"),
+                    branch("b1", "s1.connected", vec!["ok"], vec!["b2"]),
+                    action("ok"),
+                    end("e_ok"),
+                    branch("b2", "s1.connected", vec!["ok"], vec!["r"]),
+                    retry("r", "s1", 2),
+                    end("e_r"),
+                ],
+            )],
+        );
+        let mut findings = Vec::new();
+        check(&def, &connect_ctx(), &mut findings);
+        // b1's else arm stops at b2; b2's else arm stops at the retry. The
+        // only walk reaching an End is b2's then arm (ok -> e_ok, correct
+        // polarity), so nothing fires.
+        assert!(findings.iter().all(|f| f.code != ARM_END_INVERTED), "{findings:?}");
+    }
+
+    #[test]
+    fn converged_arms_still_get_a_polarity_verdict() {
+        // Codex 2026-07-29 P2: empty else falls through to the same End the
+        // then arm targets; a failed connect still reaches
+        // End { failed: false } at runtime, so the mask fires even though
+        // the entries converge.
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    tx_action("s1", "radio.connect"),
+                    branch("b1", "s1.connected", vec!["e1"], vec![]),
+                    end("e1"),
+                ],
+            )],
+        );
+        let mut findings = Vec::new();
+        check(&def, &connect_ctx(), &mut findings);
+        let hits: Vec<_> = findings.iter().filter(|f| f.code == ARM_END_INVERTED).collect();
+        assert_eq!(hits.len(), 1, "{findings:?}");
+        assert_eq!(hits[0].step, Some(StepId("e1".into())));
+        assert!(hits[0].message.contains("else arm"), "{}", hits[0].message);
+    }
+
+    #[test]
+    fn a_retry_of_a_non_connect_action_does_not_hide_the_masked_end() {
+        // Codex 2026-07-29 P2: the executor runs a Retry's target and
+        // advances on success, so a retry of a log step cannot recover the
+        // connection — the walk continues through it to the masked End.
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    tx_action("s1", "radio.connect"),
+                    branch("b1", "s1.connected", vec!["ok"], vec!["r"]),
+                    action("ok"),
+                    end("e_ok"),
+                    retry("r", "lg", 2),
+                    end("e_r"), // failed: false on the failure arm
+                    action("lg"),
+                ],
+            )],
+        );
+        let mut findings = Vec::new();
+        check(&def, &connect_ctx(), &mut findings);
+        let hits: Vec<_> = findings.iter().filter(|f| f.code == ARM_END_INVERTED).collect();
+        assert_eq!(hits.len(), 1, "{findings:?}");
+        assert_eq!(hits[0].step, Some(StepId("e_r".into())));
+    }
+
+    #[test]
+    fn status_read_connected_branches_are_out_of_scope_for_inversion_too() {
+        // Same Codex P2 scoping as TX_ONLY_ON_FAILURE_ARM: `.connected` on a
+        // status read has no failed-attempt semantics.
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    action("s1"), // a status read, NOT classified as flushing
+                    branch("b1", "s1.connected", vec!["ok"], vec!["bad"]),
+                    action("ok"),
+                    end("e_ok"),
+                    action("bad"),
+                    end("e_bad"),
+                ],
+            )],
+        );
+        let ctx = StaticContext::new().with_flushes_outbox("radio.connect");
+        let mut findings = Vec::new();
+        check(&def, &ctx, &mut findings);
+        assert!(findings.iter().all(|f| f.code != ARM_END_INVERTED), "{findings:?}");
+    }
+
+    // --- REPEAT_CONNECT_NO_DELAY (tuxlink-0hjm4) -------------------------
+
+    fn delay(id: &str, spec: &str) -> Step {
+        Step::Control(ControlStep {
+            id: StepId(id.into()),
+            control: Control::Delay { delay: spec.into() },
+        })
+    }
+
+    #[test]
+    fn back_to_back_dials_warn_and_teach_the_list_shaped_station_reference() {
+        // The lift1-base S3 attempt-1 shape: two dials, nothing between.
+        // stations is a LIST param, so the taught reference must be
+        // list-shaped (Codex 2026-07-29 P2).
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    tx_action("s1", "radio.connect"),
+                    tx_action("s2", "radio.connect"),
+                    end("e1"),
+                ],
+            )],
+        );
+        let mut findings = Vec::new();
+        check(&def, &connect_ctx(), &mut findings);
+        let hits: Vec<_> = findings
+            .iter()
+            .filter(|f| f.code == REPEAT_CONNECT_NO_DELAY)
+            .collect();
+        assert_eq!(hits.len(), 1, "{findings:?}");
+        assert_eq!(hits[0].step, Some(StepId("s2".into())));
+        assert!(
+            hits[0].message.contains("[\"$s1.station\"]"),
+            "{}",
+            hits[0].message
+        );
+    }
+
+    #[test]
+    fn instant_actions_between_dials_do_not_clear_the_warning() {
+        // The S3 attempt-2 shape: "waiting 5 minutes" as log theater.
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    tx_action("s1", "radio.connect"),
+                    action("lg1"),
+                    action("lg2"),
+                    tx_action("s2", "radio.connect"),
+                    end("e1"),
+                ],
+            )],
+        );
+        let mut findings = Vec::new();
+        check(&def, &connect_ctx(), &mut findings);
+        let hits: Vec<_> = findings
+            .iter()
+            .filter(|f| f.code == REPEAT_CONNECT_NO_DELAY)
+            .collect();
+        assert_eq!(hits.len(), 1, "{findings:?}");
+        assert_eq!(hits[0].step, Some(StepId("s2".into())));
+    }
+
+    #[test]
+    fn a_delay_control_on_the_path_clears_it() {
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    tx_action("s1", "radio.connect"),
+                    delay("d1", "+5m"),
+                    tx_action("s2", "radio.connect"),
+                    end("e1"),
+                ],
+            )],
+        );
+        let mut findings = Vec::new();
+        check(&def, &connect_ctx(), &mut findings);
+        assert!(
+            findings.iter().all(|f| f.code != REPEAT_CONNECT_NO_DELAY),
+            "{findings:?}"
+        );
+    }
+
+    #[test]
+    fn a_redial_through_a_branch_else_arm_is_still_back_to_back() {
+        // Codex 2026-07-29 P2: the executor jumps to the else arm's first id
+        // and redials immediately — the multi-band retry shape must warn.
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    tx_action("s1", "radio.connect"),
+                    branch("b1", "s1.connected", vec!["ok"], vec!["s2"]),
+                    action("ok"),
+                    end("e_ok"),
+                    tx_action("s2", "radio.connect"),
+                    end("e2"),
+                ],
+            )],
+        );
+        let mut findings = Vec::new();
+        check(&def, &connect_ctx(), &mut findings);
+        let hits: Vec<_> = findings
+            .iter()
+            .filter(|f| f.code == REPEAT_CONNECT_NO_DELAY)
+            .collect();
+        assert_eq!(hits.len(), 1, "{findings:?}");
+        assert_eq!(hits[0].step, Some(StepId("s2".into())));
+    }
+
+    #[test]
+    fn a_delay_on_the_redial_arm_clears_that_path() {
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    tx_action("s1", "radio.connect"),
+                    branch("b1", "s1.connected", vec!["ok"], vec!["d1"]),
+                    action("ok"),
+                    end("e_ok"),
+                    delay("d1", "+5m"),
+                    tx_action("s2", "radio.connect"),
+                    end("e2"),
+                ],
+            )],
+        );
+        let mut findings = Vec::new();
+        check(&def, &connect_ctx(), &mut findings);
+        assert!(
+            findings.iter().all(|f| f.code != REPEAT_CONNECT_NO_DELAY),
+            "{findings:?}"
+        );
+    }
+
+    #[test]
+    fn a_retry_wrapped_redial_is_paced_by_its_backoff_and_stays_silent() {
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    tx_action("s1", "radio.connect"),
+                    retry("r1", "s2", 3),
+                    end("e1"),
+                    tx_action("s2", "radio.connect"),
+                ],
+            )],
+        );
+        let mut findings = Vec::new();
+        check(&def, &connect_ctx(), &mut findings);
+        assert!(
+            findings.iter().all(|f| f.code != REPEAT_CONNECT_NO_DELAY),
+            "{findings:?}"
+        );
+    }
+
+    #[test]
+    fn flush_roleless_contexts_never_fire_the_redial_warning() {
+        let def = routine_named(
+            "r1",
+            vec![track(
+                "t1",
+                vec![
+                    tx_action("s1", "radio.connect"),
+                    tx_action("s2", "radio.connect"),
+                    end("e1"),
+                ],
+            )],
+        );
+        let ctx = StaticContext::new().with_action(tx_descriptor("radio.connect"));
+        let mut findings = Vec::new();
+        check(&def, &ctx, &mut findings);
+        assert!(
+            findings.iter().all(|f| f.code != REPEAT_CONNECT_NO_DELAY),
+            "{findings:?}"
         );
     }
 }

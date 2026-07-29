@@ -1,0 +1,19 @@
+{
+  "routine": "repeat-connect-no-delay-demo",
+  "schema_version": 1,
+  "transmit_mode": "attended",
+  "on_interrupted": "stay",
+  "inputs": [],
+  "triggers": [{ "type": "manual" }],
+  "tracks": [
+    {
+      "name": "t1",
+      "steps": [
+        { "id": "c1", "action": "compose.message", "params": {} },
+        { "id": "s1", "action": "radio.connect", "params": {} },
+        { "id": "s2", "action": "radio.connect", "params": {} },
+        { "id": "e1", "control": "end", "failed": false }
+      ]
+    }
+  ]
+}
