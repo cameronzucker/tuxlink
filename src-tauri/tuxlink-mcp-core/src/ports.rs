@@ -2291,7 +2291,10 @@ mod authoring_disposition_tests {
         };
         let d = AuthoringDispositionDto::classify(&[warn], "r", "rev1");
         assert!(matches!(d.state, DispositionState::Valid));
-        let c = d.completion.expect("Valid must carry the completion sentence");
+        let c = d
+            .completion
+            .as_ref()
+            .expect("Valid must carry the completion sentence");
         assert!(c.contains("COMPLETE"), "must state completion: {c}");
         assert!(
             c.contains("do not make further edits"),
