@@ -2400,9 +2400,9 @@ mod authoring_disposition_tests {
             &[
                 warn("NO_RIG_CONFIGURED", "s2"),
                 warn("NO_RIG_CONFIGURED", "s3"),
-                warn("NO_TERMINAL_PATH", "…"),
+                warn("NO_TERMINAL_PATH", "..."),
                 err("UNRESOLVED_REF", "step \"s2\" references @preset:40m-digital"),
-                warn("ARM_FALLTHROUGH_LEAK", "…"),
+                warn("ARM_FALLTHROUGH_LEAK", "..."),
             ],
             "r",
             "rev1",
@@ -2502,7 +2502,7 @@ mod authoring_disposition_tests {
 
     #[test]
     fn a_valid_routine_reports_no_blocker_and_names_its_acceptable_warnings() {
-        let d = AuthoringDispositionDto::classify(&[warn("ATTENDED_UNDER_SCHEDULE", "…")], "r", "rev1");
+        let d = AuthoringDispositionDto::classify(&[warn("ATTENDED_UNDER_SCHEDULE", "...")], "r", "rev1");
         assert_eq!(d.state, DispositionState::Valid);
         assert!(d.blocked_by.is_empty(), "Valid means nothing blocks");
         assert_eq!(d.acceptable_warnings, vec!["ATTENDED_UNDER_SCHEDULE".to_string()]);
@@ -2525,9 +2525,9 @@ mod authoring_disposition_tests {
 
     #[test]
     fn automatic_unacked_transmit_is_saved_needs_operator_with_attended_alternative() {
-        let d = AuthoringDispositionDto::classify(&[err("AUTO_TX_UNACKED", "…")], "r", "rev1");
+        let d = AuthoringDispositionDto::classify(&[err("AUTO_TX_UNACKED", "...")], "r", "rev1");
         assert_eq!(d.state, DispositionState::SavedNeedsOperator);
-        assert!(d.agent_terminal, "operator-gated states are terminal — the agent must stop, not loop");
+        assert!(d.agent_terminal, "operator-gated states are terminal - the agent must stop, not loop");
         assert!(d
             .remedies
             .iter()
@@ -2564,7 +2564,7 @@ mod authoring_disposition_tests {
         let d = AuthoringDispositionDto::classify(
             &[err(
                 "CALLEE_CONSENT_UNREACHABLE",
-                "routine \"parent\" calls \"child\", which runs automatically…",
+                "routine \"parent\" calls \"child\", which runs automatically...",
             )],
             "parent",
             "rev1",

@@ -961,7 +961,7 @@ pub mod test_support {
     /// text" contract; the router/test asserts against this SAME constant
     /// rather than a duplicated literal, so the two cannot drift apart.
     pub const UNACKED_REFUSAL: &str = "routine 'auto-unacked' transmits under automatic control \
-        but has no recorded acknowledgment — open its Settings and acknowledge \
+        but has no recorded acknowledgment - open its Settings and acknowledge \
         automatic-transmission responsibility (Part 97 automatic-control rules) before running it";
 
     /// The one routine [`MockRoutines::list`] seeds.

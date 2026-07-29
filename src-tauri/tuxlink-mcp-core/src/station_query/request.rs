@@ -791,7 +791,7 @@ mod tests {
         let base = StationFilters::default(); // no band constraint
         let narrowed = with_bands(vec![Band::B40m]);
         assert!(narrowed.is_narrowing_of(&base));
-        // Dropping the constraint widens — rejected.
+        // Dropping the constraint widens - rejected.
         assert!(!base.is_narrowing_of(&narrowed));
         // A subset of the base's allowed bands narrows; a superset widens.
         let base_two = with_bands(vec![Band::B40m, Band::B20m]);
@@ -832,7 +832,7 @@ mod tests {
         let json = serde_json::to_value(&sparse).unwrap();
         let obj = json.as_object().unwrap();
         // Exactly the one constrained axis appears; no nulls, no empty arrays,
-        // no default ft8_policy — nothing a model can pattern-copy as "null".
+        // no default ft8_policy - nothing a model can pattern-copy as "null".
         assert_eq!(obj.len(), 1, "unexpected fields: {json}");
         assert_eq!(json["bands"], serde_json::json!(["40m"]));
 
@@ -857,12 +857,12 @@ mod tests {
             ..Default::default()
         };
         let merged = current.overlaid_with(&add);
-        // Patch axis applied…
+        // Patch axis applied...
         assert_eq!(merged.distance, Some(DistanceBucket::Within300mi));
-        // …current constraints retained…
+        // ...current constraints retained...
         assert_eq!(merged.bands, current.bands);
         assert_eq!(merged.operating_now, Some(true));
-        // …and a patch that re-constrains an axis wins over current.
+        // ...and a patch that re-constrains an axis wins over current.
         let re_band = StationFilters {
             bands: BoundedVec::from_capped(vec![Band::B80m]).0,
             ..Default::default()

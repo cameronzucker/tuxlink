@@ -235,7 +235,7 @@ fn check_schedule_collision(
         a.routine.clone(),
         format!(
             "routines \"{}\" and \"{}\" both touch the radio (directly or through a call closure) \
-             and their schedules coincide within the next {HORIZON_DAYS}d — first collision at unix \
+             and their schedules coincide within the next {HORIZON_DAYS}d - first collision at unix \
              time {collision} (T+{}s from now)",
             a.routine,
             b.routine,
@@ -269,7 +269,7 @@ fn check_same_effect_overlap(
             a.routine.clone(),
             format!(
                 "routines \"{}\" and \"{}\" both run action \"{action}\" (directly or through a call \
-                 closure) and are both scheduled within the next {HORIZON_DAYS}d — their effects on \
+                 closure) and are both scheduled within the next {HORIZON_DAYS}d - their effects on \
                  \"{action}\" may overlap",
                 a.routine, b.routine,
             ),
