@@ -36,12 +36,19 @@ use crate::validate;
 pub const RUN_BUDGET_REASON: &str = "Elmer's response exceeded";
 /// See [`RUN_BUDGET_REASON`].
 pub const TURN_TIMEOUT_REASON: &str = "model turn exceeded";
+/// See [`RUN_BUDGET_REASON`]. tuxlink-grc1j: a tool dispatch that never
+/// resolves (a panicked responder, a dead oneshot) is an infrastructure wedge,
+/// not a model verdict, and without its own deadline it stalls the run forever
+/// (the per-turn timeout races `provider.turn()` only).
+pub const TOOL_TIMEOUT_REASON: &str = "tool dispatch exceeded";
 
 /// Did this [`RunOutcome::NeedsOperator`] reason come from a wall-clock deadline
 /// rather than a genuine operator gate? Offline consumers should treat `true` as
 /// censored data: neither pass nor fail, excluded from rate denominators.
 pub fn is_deadline_reason(reason: &str) -> bool {
-    reason.starts_with(RUN_BUDGET_REASON) || reason.starts_with(TURN_TIMEOUT_REASON)
+    reason.starts_with(RUN_BUDGET_REASON)
+        || reason.starts_with(TURN_TIMEOUT_REASON)
+        || reason.starts_with(TOOL_TIMEOUT_REASON)
 }
 
 /// The operator-facing terminal message when a TAINT denial's one narration turn
@@ -317,9 +324,42 @@ pub async fn run_with_conversation_with_transcript(
 
                     // SEC-3: the authority is ALWAYS Agent. There is no code
                     // path here that can construct any other CallAuthority.
-                    let outcome = invoker
-                        .invoke(exec, CallAuthority::Agent, &cancel)
-                        .await;
+                    // tuxlink-grc1j: the dispatch gets the same wall-clock bound
+                    // as a provider turn. Cancellation is propagated INTO the
+                    // tool future (COR-2), but a wedged tool ignores it by
+                    // definition; without this deadline one dead oneshot stalls
+                    // the run until an operator notices idle hardware.
+                    // Codex adrev 2026-07-30: dispatch runs under a CHILD token
+                    // so the deadline arm can signal cooperative abort to the
+                    // in-flight handler (dropping the future does not stop an
+                    // in-process MCP handler) without tripping the caller's
+                    // run-level token semantics. COR-2 is preserved: a child
+                    // token cancels whenever the parent does.
+                    let dispatch_cancel = cancel.child_token();
+                    let outcome = match tokio::time::timeout(
+                        limits.per_turn_timeout,
+                        invoker.invoke(exec, CallAuthority::Agent, &dispatch_cancel),
+                    )
+                    .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(_elapsed) => {
+                            dispatch_cancel.cancel();
+                            let reason = format!(
+                                "{TOOL_TIMEOUT_REASON} the {}s per-turn timeout (tool: {})",
+                                limits.per_turn_timeout.as_secs(),
+                                call.name
+                            );
+                            // Codex adrev 2026-07-30 P1: complete the dangling
+                            // tool call before returning. NeedsOperator keeps
+                            // the saved conversation resumable; a strict
+                            // provider rejects any request whose transcript
+                            // has an unanswered tool call.
+                            conversation.push_tool_error(call.name.as_str(), reason.clone());
+                            record_last(transcript, conversation);
+                            return RunOutcome::NeedsOperator(reason);
+                        }
+                    };
 
                     // A Cancelled outcome is terminal: surface immediately without
                     // pushing into the conversation (the session is being torn down).
