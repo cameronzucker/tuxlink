@@ -3659,19 +3659,22 @@ impl MonolithUiHintPort {
     }
 }
 
-#[async_trait]
-impl UiHintPort for MonolithUiHintPort {
-    async fn point_at(&self, anchor_id: &str) -> Result<(), PortError> {
-        let pending = self
-            .app
-            .state::<std::sync::Arc<crate::onboarding_bridge::PointAtPending>>();
+/// Runtime-generic body of [`MonolithUiHintPort::point_at`], factored out so
+/// the headless-graceful contract (tuxlink-grc1j) is testable against
+/// `tauri::test`'s MockRuntime; the port itself stays pinned to the Wry
+/// `AppHandle` production hands it.
+async fn point_at_via_app<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    anchor_id: &str,
+) -> Result<(), PortError> {
+    {
+        let pending = app.state::<std::sync::Arc<crate::onboarding_bridge::PointAtPending>>();
         let (id, rx) = pending.register();
         let req = crate::onboarding_bridge::PointAtRequest {
             request_id: id,
             anchor_id: anchor_id.to_string(),
         };
-        if self
-            .app
+        if app
             .emit(crate::onboarding_bridge::POINT_AT_EVENT, &req)
             .is_err()
         {
@@ -3705,6 +3708,13 @@ impl UiHintPort for MonolithUiHintPort {
                 ))
             }
         }
+    }
+}
+
+#[async_trait]
+impl UiHintPort for MonolithUiHintPort {
+    async fn point_at(&self, anchor_id: &str) -> Result<(), PortError> {
+        point_at_via_app(&self.app, anchor_id).await
     }
 }
 
@@ -5085,14 +5095,11 @@ mod tests {
     #[tokio::test]
     async fn grc1j_point_at_with_stub_state_and_no_window_is_graceful() {
         use tauri::Manager as _;
-        use tuxlink_mcp_core::ports::UiHintPort as _;
         let app = tauri::test::mock_app();
         app.manage(std::sync::Arc::new(
             crate::onboarding_bridge::PointAtPending::default(),
         ));
-        let port = super::MonolithUiHintPort::new(app.handle().clone());
-        let err = port
-            .point_at("any-anchor")
+        let err = super::point_at_via_app(app.handle(), "any-anchor")
             .await
             .expect_err("headless point_at must time out gracefully");
         let msg = format!("{err:?}");
