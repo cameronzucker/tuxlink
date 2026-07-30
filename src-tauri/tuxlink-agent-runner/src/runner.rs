@@ -143,12 +143,13 @@ pub async fn run_with_conversation_with_transcript(
     // (call signature, result body) of the last dispatched call plus its
     // consecutive-identical streak — see `annotate_repeats`.
     let mut repeat_streak: Option<(String, String, u32)> = None;
-    // pf6re: one-shot post-denial finalization. Set when an egress call is denied;
-    // the model is then granted exactly ONE more turn to narrate the denial. If it
-    // answers (Text) the run completes with that narration; if it calls tools again
-    // it gets NO working window — the run terminates with denial context. This
-    // preserves the "egress never retried" invariant while ending the turn with the
-    // agent's own message instead of a raw error that clobbers output.
+    // pf6re one-shot post-denial finalization, TAINT ONLY since tuxlink-aymi7.
+    // Set when a TAINT denial fires; the model is then granted exactly ONE more
+    // turn to narrate. Text completes the run with that narration; tool calls
+    // get NO working window — a possibly-injected model quarantines. Authority
+    // denials never arm this (see `authority_denied_streak` below): they feed
+    // back as tool results and the run continues, each transmit attempt still
+    // individually denied by the guard.
     let mut denial_final: Option<(String, DenialKind)> = None;
     // tuxlink-aymi7: consecutive model turns whose dispatched calls produced
     // ONLY authority denials (no non-denied outcome). Authority denials no
@@ -159,7 +160,12 @@ pub async fn run_with_conversation_with_transcript(
     // already 2/3 harness kills). Egress stays locked regardless: every
     // individual transmit attempt is denied by the guard while disarmed. This
     // streak is the runaway bound for a model that does NOTHING but hammer
-    // denied calls; any turn containing a non-denied outcome resets it.
+    // denied calls; any turn containing a non-denied outcome resets it. A
+    // MALFORMED turn deliberately does NOT reset it (Codex 2026-07-30 P2,
+    // resolved define-and-test): denied/malformed alternation is still a
+    // no-progress loop, and malformed_retries alone cannot bound it because
+    // each valid denied batch resets that counter. "Consecutive" therefore
+    // means "with no intervening non-denied outcome", per the amended spec.
     let mut authority_denied_streak: u32 = 0;
     // COR-1: bound the WHOLE run by wall-clock, not by an arbitrary tool-call
     // count. `tokio::time::Instant` shares the runtime clock with the per-turn

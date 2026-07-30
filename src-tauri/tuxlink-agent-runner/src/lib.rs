@@ -633,9 +633,11 @@ mod acceptance_tests {
 
     // --- Tool denial (pf6re: narrate-not-kill) ----------------------------
 
-    /// A denied egress call no longer KILLS the turn: the model is granted one
-    /// narration turn and the run ends with the agent's own message. The denied
-    /// op is never retried, and a durable `ToolDenied` event fires even though the
+    /// A denied egress call no longer KILLS the turn: the denial comes back as
+    /// a tool result and the model answers with its own message (here it
+    /// chooses to narrate immediately — continuation is also permitted for
+    /// authority denials per tuxlink-aymi7). The denied op is never retried in
+    /// this scenario, and a durable `ToolDenied` event fires even though the
     /// outcome is `Completed`.
     #[tokio::test]
     async fn denial_narrates_then_completes() {
@@ -802,6 +804,39 @@ mod acceptance_tests {
             "three consecutive denied-only turns must terminate, got {outcome:?}"
         );
         assert_eq!(invoker.call_count(), 3, "each attempt is individually denied");
+    }
+
+    /// tuxlink-aymi7 streak persistence: a MALFORMED turn between denied-only
+    /// turns does not reset the streak — denied/malformed alternation is a
+    /// no-progress loop and still reaches the terminal (spec amendment
+    /// 2026-07-30; malformed_retries can't bound this alone because each
+    /// valid denied batch resets it).
+    #[tokio::test]
+    async fn malformed_turns_between_denials_do_not_reset_the_streak() {
+        let provider = ScriptedProvider::new(vec![
+            ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({"msg": "send 1"}))]),
+            ModelTurn::ToolCalls(vec![ToolCall::new("nonexistent", json!({}))]),
+            ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({"msg": "send 2"}))]),
+            ModelTurn::ToolCalls(vec![ToolCall::new("nonexistent", json!({}))]),
+            ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({"msg": "send 3"}))]),
+        ]);
+        let denied = || ToolOutcome::Denied("send authority is not armed".into());
+        let invoker =
+            RecordingInvoker::new(vec![echo_tool()], vec![denied(), denied(), denied()]);
+        let outcome = run(
+            "go",
+            &provider,
+            &invoker,
+            EgressStatus::default(),
+            fast_limits(),
+            CancellationToken::new(),
+        )
+        .await;
+        assert!(
+            matches!(outcome, RunOutcome::ToolDenied(_)),
+            "denied/malformed alternation must still reach the terminal, got {outcome:?}"
+        );
+        assert_eq!(invoker.call_count(), 3, "malformed calls are never dispatched");
     }
 
     /// tuxlink-aymi7 streak reset: turns that do real work BEFORE bumping into

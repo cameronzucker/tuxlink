@@ -73,6 +73,29 @@ changes is that a denial no longer *kills the turn and clobbers output*.
    egress-locked, just no longer turn-killing. (Bound continued reasoning: the
    model gets a turn to *narrate*, but any further egress call is still gated —
    the injection invariant is unaffected because egress cannot succeed.)
+
+   **Amendment 2026-07-30 (tuxlink-aymi7): post-denial continuation splits by
+   denial kind.** The one-narration-turn-then-terminal rule above proved
+   correct only for taint. For AUTHORITY (not-armed/expiry) denials it
+   contradicted the shipped deny text (PR #1290, operator-approved), which
+   instructs the model to CONTINUE non-transmit work, and the battery C2
+   rubric, which requires that continuation for a pass — control1-base
+   measured C2 10/10 killed on the first post-denial tool call. The contract
+   is now:
+
+   - **Taint**: unchanged. One narration turn; tool calls after it are not
+     dispatched and the run quarantines (`NeedsOperator` re-arm remedy). The
+     injection-defense case this contract was built for.
+   - **Authority**: the run continues, and post-denial tool calls dispatch
+     normally. The egress lock (item 1) is untouched: every transmit attempt
+     while disarmed is individually denied by the guard, so continuation can
+     author/validate/save but can never send. The only authority terminal is
+     the runaway bound: `AUTHORITY_DENIED_TURN_LIMIT` (3) turns of
+     nothing-but-denied calls with no intervening non-denied outcome (a
+     malformed turn does NOT reset this — denied/malformed alternation is
+     still a no-progress loop). "Never retried" in item 1 means a denied call
+     never *succeeds* and its batch is not resumed; the model MAY re-attempt
+     and be re-denied, bounded by the streak and the run budget.
 3. **Perception surface** — an agent-readable arm/taint status
    `{armed, seconds_remaining, tainted, taint_reason}` (the runner already carries
    an informational `EgressStatus` snapshot, `runner.rs:186`, and there is an
