@@ -31,6 +31,14 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.103.1](https://github.com/cameronzucker/tuxlink/compare/v0.103.0...v0.103.1) (2026-07-30)
+
+
+### Bug Fixes
+
+* **runner:** align the canonical denial contract + pin streak semantics (Codex round) ([3a3af83](https://github.com/cameronzucker/tuxlink/commit/3a3af8329358ebfe23730b979e0a4c4e25fa1adb))
+* **runner:** authority denials permit continued work; one-shot quarantine is taint-only ([c83ff79](https://github.com/cameronzucker/tuxlink/commit/c83ff793a03e074a41059cf365c3e133b21c54db))
+
 ## [0.103.0](https://github.com/cameronzucker/tuxlink/compare/v0.102.0...v0.103.0) (2026-07-29)
 
 
