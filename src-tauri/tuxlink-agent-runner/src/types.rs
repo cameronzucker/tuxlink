@@ -98,10 +98,13 @@ impl ToolCall {
 /// `Denied` is the relay of an authority/taint refusal from below the MCP
 /// boundary (the runner does not decide it — the security layer does). Egress
 /// stays absolutely locked: a `Denied` is NEVER retried into a successful
-/// transmit. The loop no longer KILLS the turn on a denial (pf6re) — it feeds the
-/// denial back so the model can narrate it, grants ONE bounded narration turn,
-/// then terminates: [`RunOutcome::ToolDenied`] for an authority/expiry denial, or
-/// a re-arm-quarantine [`RunOutcome::NeedsOperator`] for a taint denial.
+/// transmit. The loop feeds the denial back as a tool result (pf6re) and then
+/// splits by kind (tuxlink-aymi7): a TAINT denial grants ONE bounded narration
+/// turn and quarantines (`RunOutcome::NeedsOperator` re-arm remedy) if the
+/// model emits tool calls instead; an AUTHORITY (not-armed/expiry) denial lets
+/// the run CONTINUE — each further transmit attempt is individually denied by
+/// the guard — terminating [`RunOutcome::ToolDenied`] only after consecutive
+/// nothing-but-denied turns (the runaway bound).
 ///
 /// `Cancelled` signals that the invoker observed cooperative cancellation mid-call
 /// (e.g. the CancellationToken fired before or during dispatch). The runner treats

@@ -633,9 +633,11 @@ mod acceptance_tests {
 
     // --- Tool denial (pf6re: narrate-not-kill) ----------------------------
 
-    /// A denied egress call no longer KILLS the turn: the model is granted one
-    /// narration turn and the run ends with the agent's own message. The denied
-    /// op is never retried, and a durable `ToolDenied` event fires even though the
+    /// A denied egress call no longer KILLS the turn: the denial comes back as
+    /// a tool result and the model answers with its own message (here it
+    /// chooses to narrate immediately — continuation is also permitted for
+    /// authority denials per tuxlink-aymi7). The denied op is never retried in
+    /// this scenario, and a durable `ToolDenied` event fires even though the
     /// outcome is `Completed`.
     #[tokio::test]
     async fn denial_narrates_then_completes() {
@@ -728,19 +730,66 @@ mod acceptance_tests {
         );
     }
 
-    /// An authority (not-armed/expired) denial retains the `ToolDenied` terminal
-    /// when the model retries tools rather than answering — keeping the variant
-    /// live for its consumers.
+    /// tuxlink-aymi7: an authority denial does NOT end the run. The deny text
+    /// instructs continued non-transmit work and the C2 rubric requires it —
+    /// control1-base showed the old one-shot rule killing 10/10 attempts the
+    /// moment the model obeyed. The model continues authoring after the denial
+    /// and completes; the durable ToolDenied event still fires.
     #[tokio::test]
-    async fn authority_denial_terminal_is_tool_denied_on_retry() {
+    async fn authority_denial_permits_continued_work_to_completion() {
         let provider = ScriptedProvider::new(vec![
-            ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({"msg": "x"}))]),
-            ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({"msg": "again"}))]),
+            ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({"msg": "send it"}))]),
+            // The model obeys "CONTINUE the parts of the task": more tool work.
+            ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({"msg": "authoring"}))]),
+            ModelTurn::Text("routine saved; ask the operator to arm send".into()),
         ]);
         let invoker = RecordingInvoker::new(
             vec![echo_tool()],
             vec![ToolOutcome::Denied("send authority is not armed".into())],
         );
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::<RunEvent>::new()));
+        let ev = std::sync::Arc::clone(&events);
+        let sink = move |e: RunEvent| ev.lock().unwrap().push(e);
+        let mut convo = Conversation::new("go");
+        let outcome = run_with_conversation(
+            &mut convo,
+            &provider,
+            &invoker,
+            EgressStatus::default(),
+            fast_limits(),
+            CancellationToken::new(),
+            &sink,
+        )
+        .await;
+        assert_eq!(
+            outcome,
+            RunOutcome::Completed("routine saved; ask the operator to arm send".into()),
+            "post-denial tool work must be dispatched, not terminal"
+        );
+        // Denied call once, then the authoring call actually dispatched.
+        assert_eq!(invoker.call_count(), 2);
+        let saw_denied = events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, RunEvent::ToolDenied { .. }));
+        assert!(saw_denied, "the durable denial event must still fire");
+    }
+
+    /// tuxlink-aymi7 runaway bound: a model that does NOTHING but hammer the
+    /// locked gate — consecutive turns whose only dispatched call is denied —
+    /// terminates `ToolDenied` at the limit, keeping the variant live for its
+    /// consumers and bounding the no-progress loop.
+    #[tokio::test]
+    async fn authority_denial_hammering_terminates_at_the_turn_limit() {
+        let provider = ScriptedProvider::new(vec![
+            ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({"msg": "send 1"}))]),
+            ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({"msg": "send 2"}))]),
+            ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({"msg": "send 3"}))]),
+        ]);
+        let denied = || ToolOutcome::Denied("send authority is not armed".into());
+        let invoker =
+            RecordingInvoker::new(vec![echo_tool()], vec![denied(), denied(), denied()]);
         let outcome = run(
             "go",
             &provider,
@@ -752,9 +801,84 @@ mod acceptance_tests {
         .await;
         assert!(
             matches!(outcome, RunOutcome::ToolDenied(_)),
-            "authority denial retains the ToolDenied terminal, got {outcome:?}"
+            "three consecutive denied-only turns must terminate, got {outcome:?}"
         );
-        assert_eq!(invoker.call_count(), 1);
+        assert_eq!(invoker.call_count(), 3, "each attempt is individually denied");
+    }
+
+    /// tuxlink-aymi7 streak persistence: a MALFORMED turn between denied-only
+    /// turns does not reset the streak — denied/malformed alternation is a
+    /// no-progress loop and still reaches the terminal (spec amendment
+    /// 2026-07-30; malformed_retries can't bound this alone because each
+    /// valid denied batch resets it).
+    #[tokio::test]
+    async fn malformed_turns_between_denials_do_not_reset_the_streak() {
+        let provider = ScriptedProvider::new(vec![
+            ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({"msg": "send 1"}))]),
+            ModelTurn::ToolCalls(vec![ToolCall::new("nonexistent", json!({}))]),
+            ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({"msg": "send 2"}))]),
+            ModelTurn::ToolCalls(vec![ToolCall::new("nonexistent", json!({}))]),
+            ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({"msg": "send 3"}))]),
+        ]);
+        let denied = || ToolOutcome::Denied("send authority is not armed".into());
+        let invoker =
+            RecordingInvoker::new(vec![echo_tool()], vec![denied(), denied(), denied()]);
+        let outcome = run(
+            "go",
+            &provider,
+            &invoker,
+            EgressStatus::default(),
+            fast_limits(),
+            CancellationToken::new(),
+        )
+        .await;
+        assert!(
+            matches!(outcome, RunOutcome::ToolDenied(_)),
+            "denied/malformed alternation must still reach the terminal, got {outcome:?}"
+        );
+        assert_eq!(invoker.call_count(), 3, "malformed calls are never dispatched");
+    }
+
+    /// tuxlink-aymi7 streak reset: turns that do real work BEFORE bumping into
+    /// a denial are not runaway hammering — the streak resets and the run can
+    /// keep alternating work-plus-denied-reminder indefinitely (bounded by the
+    /// run budget, not the denial limit).
+    #[tokio::test]
+    async fn mixed_work_and_denial_turns_never_hit_the_denial_terminal() {
+        let mixed_turn = |n: u32| {
+            ModelTurn::ToolCalls(vec![
+                ToolCall::new("echo", json!({ "msg": format!("work {n}") })),
+                ToolCall::new("echo", json!({ "msg": format!("send {n}") })),
+            ])
+        };
+        let provider = ScriptedProvider::new(vec![
+            mixed_turn(1),
+            mixed_turn(2),
+            mixed_turn(3),
+            mixed_turn(4),
+            ModelTurn::Text("done what I can; send needs arming".into()),
+        ]);
+        let ok = || ToolOutcome::Ok(json!({}));
+        let denied = || ToolOutcome::Denied("send authority is not armed".into());
+        let invoker = RecordingInvoker::new(
+            vec![echo_tool()],
+            vec![ok(), denied(), ok(), denied(), ok(), denied(), ok(), denied()],
+        );
+        let outcome = run(
+            "go",
+            &provider,
+            &invoker,
+            EgressStatus::default(),
+            fast_limits(),
+            CancellationToken::new(),
+        )
+        .await;
+        assert_eq!(
+            outcome,
+            RunOutcome::Completed("done what I can; send needs arming".into()),
+            "work-then-denied turns must never accumulate to the terminal"
+        );
+        assert_eq!(invoker.call_count(), 8);
     }
 
     #[tokio::test]

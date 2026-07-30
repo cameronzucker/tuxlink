@@ -143,13 +143,30 @@ pub async fn run_with_conversation_with_transcript(
     // (call signature, result body) of the last dispatched call plus its
     // consecutive-identical streak — see `annotate_repeats`.
     let mut repeat_streak: Option<(String, String, u32)> = None;
-    // pf6re: one-shot post-denial finalization. Set when an egress call is denied;
-    // the model is then granted exactly ONE more turn to narrate the denial. If it
-    // answers (Text) the run completes with that narration; if it calls tools again
-    // it gets NO working window — the run terminates with denial context. This
-    // preserves the "egress never retried" invariant while ending the turn with the
-    // agent's own message instead of a raw error that clobbers output.
+    // pf6re one-shot post-denial finalization, TAINT ONLY since tuxlink-aymi7.
+    // Set when a TAINT denial fires; the model is then granted exactly ONE more
+    // turn to narrate. Text completes the run with that narration; tool calls
+    // get NO working window — a possibly-injected model quarantines. Authority
+    // denials never arm this (see `authority_denied_streak` below): they feed
+    // back as tool results and the run continues, each transmit attempt still
+    // individually denied by the guard.
     let mut denial_final: Option<(String, DenialKind)> = None;
+    // tuxlink-aymi7: consecutive model turns whose dispatched calls produced
+    // ONLY authority denials (no non-denied outcome). Authority denials no
+    // longer arm the one-shot terminal - the deny text instructs the model to
+    // CONTINUE non-transmit work, and the corrected C2 rubric REQUIRES it, so
+    // killing the run on the next tool call executed the model for obeying
+    // (control1-base: C2 10/10 outcome=tool_denied at ~4 turns; lift1 C2 was
+    // already 2/3 harness kills). Egress stays locked regardless: every
+    // individual transmit attempt is denied by the guard while disarmed. This
+    // streak is the runaway bound for a model that does NOTHING but hammer
+    // denied calls; any turn containing a non-denied outcome resets it. A
+    // MALFORMED turn deliberately does NOT reset it (Codex 2026-07-30 P2,
+    // resolved define-and-test): denied/malformed alternation is still a
+    // no-progress loop, and malformed_retries alone cannot bound it because
+    // each valid denied batch resets that counter. "Consecutive" therefore
+    // means "with no intervening non-denied outcome", per the amended spec.
+    let mut authority_denied_streak: u32 = 0;
     // COR-1: bound the WHOLE run by wall-clock, not by an arbitrary tool-call
     // count. `tokio::time::Instant` shares the runtime clock with the per-turn
     // `timeout` below, so both are controllable together in time-paused tests.
@@ -223,17 +240,18 @@ pub async fn run_with_conversation_with_transcript(
                 return RunOutcome::Completed(text);
             }
             ModelTurn::ToolCalls(calls) => {
-                // pf6re: one-shot finalization. If a prior tool call was denied we
-                // granted exactly ONE narration turn. The model was supposed to
-                // ANSWER (Text). It emitted tool calls instead — do NOT dispatch
-                // them (a tainted/injected model gets no working window after a
-                // denial). Terminate with denial context: taint routes to a
-                // re-arm-quarantine NeedsOperator; authority relays the denial.
-                if let Some((reason, kind)) = denial_final.take() {
-                    return match kind {
-                        DenialKind::Taint => RunOutcome::NeedsOperator(TAINT_REARM_MSG.to_string()),
-                        DenialKind::Authority => RunOutcome::ToolDenied(reason),
-                    };
+                // pf6re one-shot finalization, TAINT ONLY (tuxlink-aymi7 split):
+                // after a taint denial the model got exactly ONE narration turn
+                // and was supposed to ANSWER (Text). It emitted tool calls
+                // instead — a possibly-injected model gets no working window, so
+                // nothing is dispatched and the run quarantines. Authority
+                // denials no longer arm this: the deny text instructs continued
+                // non-transmit work, and the guard denies each transmit attempt
+                // individually, so continuation is safe by construction (the
+                // runaway case is bounded by `authority_denied_streak` below).
+                if let Some((_reason, kind)) = denial_final.take() {
+                    debug_assert!(matches!(kind, DenialKind::Taint));
+                    return RunOutcome::NeedsOperator(TAINT_REARM_MSG.to_string());
                 }
 
                 // Boundary coercion (tuxlink-ewqiy): build a COERCED copy for
@@ -286,6 +304,7 @@ pub async fn run_with_conversation_with_transcript(
                 // Dispatch each call. Cancellation is checked before each and
                 // propagated into the in-flight tool future (COR-2). The RAW
                 // call is recorded; the COERCED twin is what executes.
+                let mut any_nondenied = false;
                 for (call, exec) in calls.iter().zip(coerced.iter()) {
                     if cancel.is_cancelled() {
                         return RunOutcome::Cancelled;
@@ -308,15 +327,21 @@ pub async fn run_with_conversation_with_transcript(
                         return RunOutcome::Cancelled;
                     }
 
-                    // pf6re: a denial no longer KILLS the turn. Feed it back as a
-                    // tool result (the model sees the cause-accurate reason and can
-                    // narrate it), emit a DURABLE denial event so the security
-                    // signal survives even if the run ends `Completed`, then BREAK
-                    // the batch (do NOT execute the remaining calls — they were
-                    // predicated on this one succeeding) and re-prompt for the ONE
-                    // narration turn. Egress stays absolutely locked: the gate
-                    // already refused, and any retry in the narration turn is not
-                    // dispatched (the `denial_final` check above).
+                    // pf6re: a denial never KILLS the turn. Feed it back as a
+                    // tool result (the model sees the cause-accurate reason and
+                    // can act on it), emit a DURABLE denial event so the
+                    // security signal survives whatever the outcome becomes,
+                    // then BREAK the batch (do NOT execute the remaining calls
+                    // — they were predicated on this one succeeding). What
+                    // happens NEXT split in tuxlink-aymi7:
+                    //   Taint    — arm the one-shot narration turn; tool calls
+                    //              after it quarantine (see the check above).
+                    //   Authority— the run CONTINUES, as the deny text promises
+                    //              and the C2 rubric requires. Egress stays
+                    //              locked (the guard denies every transmit
+                    //              attempt while disarmed); the only terminal
+                    //              is AUTHORITY_DENIED_TURN_LIMIT consecutive
+                    //              turns of nothing-but-denied calls.
                     if let ToolOutcome::Denied(reason) = &outcome {
                         conversation.push_outcome(&call.name, &outcome);
                         record_last(transcript, conversation);
@@ -324,13 +349,33 @@ pub async fn run_with_conversation_with_transcript(
                             tool: call.name.clone(),
                             reason: reason.clone(),
                         });
-                        denial_final = Some((reason.clone(), denial_kind(reason)));
+                        match denial_kind(reason) {
+                            DenialKind::Taint => {
+                                denial_final = Some((reason.clone(), DenialKind::Taint));
+                            }
+                            DenialKind::Authority => {
+                                if any_nondenied {
+                                    authority_denied_streak = 0;
+                                } else {
+                                    authority_denied_streak += 1;
+                                }
+                                if authority_denied_streak >= AUTHORITY_DENIED_TURN_LIMIT {
+                                    return RunOutcome::ToolDenied(reason.clone());
+                                }
+                            }
+                        }
                         break;
                     }
 
+                    any_nondenied = true;
                     let outcome = annotate_repeats(&mut repeat_streak, call, outcome);
                     conversation.push_outcome(&call.name, &outcome);
                     record_last(transcript, conversation);
+                }
+                // A turn that did any real work is not runaway hammering,
+                // whether or not it ALSO bumped into a denial (tuxlink-aymi7).
+                if any_nondenied {
+                    authority_denied_streak = 0;
                 }
             }
         }
@@ -339,6 +384,14 @@ pub async fn run_with_conversation_with_transcript(
 
 /// Consecutive-identical streak after which the repeat notice is appended.
 const REPEAT_NOTICE_AT: u32 = 3;
+
+/// Consecutive turns of NOTHING-but-authority-denied calls after which the run
+/// terminates `ToolDenied` (tuxlink-aymi7). Continuation after an authority
+/// denial is the taught and rubric-required behavior; this bound exists only
+/// for the model that ignores the teaching and hammers the locked gate. Three
+/// matches the malformed-retry and repeat-notice budgets: one denial to learn,
+/// one to slip, the third consecutive empty turn is a pattern.
+const AUTHORITY_DENIED_TURN_LIMIT: u32 = 3;
 
 /// Append a repeat notice to a successful result when the SAME call (name +
 /// args) has returned the SAME body [`REPEAT_NOTICE_AT`]-or-more times in a
