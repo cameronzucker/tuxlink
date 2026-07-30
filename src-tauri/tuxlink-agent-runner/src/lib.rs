@@ -377,10 +377,17 @@ mod acceptance_tests {
         // control1-base EU2 attempt-10: a tool future that never resolved (its
         // responding worker panicked) stalled the run 2h+ because only the
         // provider turn carried a deadline. Dispatch now shares the per-turn
-        // bound; the reason string names the tool and classifies as censored
-        // deadline data, never as a model verdict.
+        // bound. Pinned here (Codex adrev 2026-07-30):
+        //   1. the reason names the tool and classifies as censored deadline
+        //      data, never as a model verdict;
+        //   2. the dangling tool call is completed in the conversation, so a
+        //      saved NeedsOperator session stays resumable against strict
+        //      providers;
+        //   3. the dispatch child token is cancelled, signalling cooperative
+        //      abort to a laggard in-process handler.
         struct WedgedInvoker {
             specs: Vec<ToolSpec>,
+            seen_token: std::sync::Mutex<Option<CancellationToken>>,
         }
         #[async_trait::async_trait]
         impl ToolInvoker for WedgedInvoker {
@@ -391,8 +398,9 @@ mod acceptance_tests {
                 &self,
                 _call: &ToolCall,
                 _authority: CallAuthority,
-                _cancel: &CancellationToken,
+                cancel: &CancellationToken,
             ) -> ToolOutcome {
+                *self.seen_token.lock().unwrap() = Some(cancel.clone());
                 // Ignores cancellation and never resolves: the wedge class.
                 std::future::pending::<()>().await;
                 unreachable!()
@@ -404,18 +412,23 @@ mod acceptance_tests {
         )])]);
         let invoker = WedgedInvoker {
             specs: vec![echo_tool()],
+            seen_token: std::sync::Mutex::new(None),
         };
         let limits = Limits {
             per_turn_timeout: Duration::from_millis(20),
             ..fast_limits()
         };
-        let outcome = run(
-            "go",
+        let run_token = CancellationToken::new();
+        let mut conversation = Conversation::default();
+        conversation.push_user("go");
+        let outcome = run_with_conversation(
+            &mut conversation,
             &provider,
             &invoker,
             EgressStatus::default(),
             limits,
-            CancellationToken::new(),
+            run_token.clone(),
+            &|_| {},
         )
         .await;
         match outcome {
@@ -432,6 +445,30 @@ mod acceptance_tests {
             }
             other => panic!("expected NeedsOperator(tool dispatch deadline), got {other:?}"),
         }
+        // 2. Resumability: the transcript's final entry answers the tool call
+        // (no dangling tool_call for a strict provider to reject).
+        let last = conversation
+            .messages()
+            .last()
+            .expect("conversation records the synthetic outcome");
+        let rendered = format!("{last:?}");
+        assert!(
+            rendered.contains(TOOL_TIMEOUT_REASON),
+            "the dangling tool call must be completed with the deadline error, got: {rendered}"
+        );
+        // 3. Cooperative abort: the token the tool observed was cancelled by
+        // the deadline arm, while the caller's run token was NOT.
+        let seen = invoker
+            .seen_token
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("invoke observed a token");
+        assert!(seen.is_cancelled(), "dispatch child token must be cancelled");
+        assert!(
+            !run_token.is_cancelled(),
+            "the caller's run token must stay untouched"
+        );
     }
 
     // --- COR-2 ------------------------------------------------------------

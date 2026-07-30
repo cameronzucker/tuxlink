@@ -329,19 +329,35 @@ pub async fn run_with_conversation_with_transcript(
                     // tool future (COR-2), but a wedged tool ignores it by
                     // definition; without this deadline one dead oneshot stalls
                     // the run until an operator notices idle hardware.
+                    // Codex adrev 2026-07-30: dispatch runs under a CHILD token
+                    // so the deadline arm can signal cooperative abort to the
+                    // in-flight handler (dropping the future does not stop an
+                    // in-process MCP handler) without tripping the caller's
+                    // run-level token semantics. COR-2 is preserved: a child
+                    // token cancels whenever the parent does.
+                    let dispatch_cancel = cancel.child_token();
                     let outcome = match tokio::time::timeout(
                         limits.per_turn_timeout,
-                        invoker.invoke(exec, CallAuthority::Agent, &cancel),
+                        invoker.invoke(exec, CallAuthority::Agent, &dispatch_cancel),
                     )
                     .await
                     {
                         Ok(outcome) => outcome,
                         Err(_elapsed) => {
-                            return RunOutcome::NeedsOperator(format!(
+                            dispatch_cancel.cancel();
+                            let reason = format!(
                                 "{TOOL_TIMEOUT_REASON} the {}s per-turn timeout (tool: {})",
                                 limits.per_turn_timeout.as_secs(),
                                 call.name
-                            ));
+                            );
+                            // Codex adrev 2026-07-30 P1: complete the dangling
+                            // tool call before returning. NeedsOperator keeps
+                            // the saved conversation resumable; a strict
+                            // provider rejects any request whose transcript
+                            // has an unanswered tool call.
+                            conversation.push_tool_error(call.name.as_str(), reason.clone());
+                            record_last(transcript, conversation);
+                            return RunOutcome::NeedsOperator(reason);
                         }
                     };
 

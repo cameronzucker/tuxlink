@@ -623,7 +623,52 @@ impl ToolInvoker for ObservedInvoker {
         let ts = now_rfc3339();
         self.meters.tool_calls.fetch_add(1, Ordering::SeqCst);
 
+        // Codex adrev 2026-07-30 P2 (tuxlink-grc1j): the runner's dispatch
+        // deadline DROPS this future on timeout, which would otherwise lose
+        // the call's log row entirely and break the file's one-record-per-call
+        // contract. The guard writes a "dispatch_dropped" row from Drop unless
+        // the normal completion path disarms it.
+        struct RowGuard {
+            log: Arc<ToolCallLog>,
+            seq: u64,
+            ts: String,
+            tool: String,
+            args: serde_json::Value,
+            started: Instant,
+            armed: bool,
+        }
+        impl Drop for RowGuard {
+            fn drop(&mut self) {
+                if !self.armed {
+                    return;
+                }
+                self.log.append(&serde_json::json!({
+                    "seq": self.seq,
+                    "ts": self.ts,
+                    "tool": self.tool,
+                    "args": self.args,
+                    "status": "dispatch_dropped",
+                    "denied": false,
+                    "denied_by": serde_json::Value::Null,
+                    "detail": "runner tool-dispatch deadline dropped this call mid-flight (tuxlink-grc1j)",
+                    "result_preview": serde_json::Value::Null,
+                    "result_chars": serde_json::Value::Null,
+                    "elapsed_ms": self.started.elapsed().as_millis() as u64,
+                }));
+            }
+        }
+        let mut row_guard = RowGuard {
+            log: Arc::clone(&self.log),
+            seq,
+            ts: ts.clone(),
+            tool: call.name.clone(),
+            args: call.args.clone(),
+            started,
+            armed: true,
+        };
+
         let outcome = self.inner.invoke(call, authority, cancel).await;
+        row_guard.armed = false;
         let elapsed_ms = started.elapsed().as_millis() as u64;
 
         let (status, denied, detail, preview, result_chars) = match &outcome {
