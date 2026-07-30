@@ -51,7 +51,7 @@ pub use conversation::{Conversation, Message};
 pub use fakes::{RecordedCall, RecordingInvoker, ScriptedProvider, ScriptedTurn};
 pub use runner::{
     is_deadline_reason, run, run_with_conversation, run_with_conversation_with_transcript,
-    RUN_BUDGET_REASON, TURN_TIMEOUT_REASON,
+    RUN_BUDGET_REASON, TOOL_TIMEOUT_REASON, TURN_TIMEOUT_REASON,
 };
 pub use traits::{EgressStatus, Provider, ProviderError, ToolInvoker};
 pub use transcript::{NullTranscript, TranscriptSink};
@@ -370,6 +370,68 @@ mod acceptance_tests {
         )
         .await;
         assert!(matches!(outcome, RunOutcome::NeedsOperator(_)));
+    }
+
+    #[tokio::test]
+    async fn grc1j_wedged_tool_dispatch_is_bounded_and_classifies_as_a_deadline() {
+        // control1-base EU2 attempt-10: a tool future that never resolved (its
+        // responding worker panicked) stalled the run 2h+ because only the
+        // provider turn carried a deadline. Dispatch now shares the per-turn
+        // bound; the reason string names the tool and classifies as censored
+        // deadline data, never as a model verdict.
+        struct WedgedInvoker {
+            specs: Vec<ToolSpec>,
+        }
+        #[async_trait::async_trait]
+        impl ToolInvoker for WedgedInvoker {
+            fn tools(&self) -> &[ToolSpec] {
+                &self.specs
+            }
+            async fn invoke(
+                &self,
+                _call: &ToolCall,
+                _authority: CallAuthority,
+                _cancel: &CancellationToken,
+            ) -> ToolOutcome {
+                // Ignores cancellation and never resolves: the wedge class.
+                std::future::pending::<()>().await;
+                unreachable!()
+            }
+        }
+        let provider = ScriptedProvider::new(vec![ModelTurn::ToolCalls(vec![ToolCall::new(
+            "echo",
+            json!({"msg": "hi"}),
+        )])]);
+        let invoker = WedgedInvoker {
+            specs: vec![echo_tool()],
+        };
+        let limits = Limits {
+            per_turn_timeout: Duration::from_millis(20),
+            ..fast_limits()
+        };
+        let outcome = run(
+            "go",
+            &provider,
+            &invoker,
+            EgressStatus::default(),
+            limits,
+            CancellationToken::new(),
+        )
+        .await;
+        match outcome {
+            RunOutcome::NeedsOperator(reason) => {
+                assert!(
+                    reason.starts_with(TOOL_TIMEOUT_REASON),
+                    "expected tool-dispatch deadline reason, got: {reason}"
+                );
+                assert!(
+                    is_deadline_reason(&reason),
+                    "dispatch timeout must classify as censored deadline data: {reason}"
+                );
+                assert!(reason.contains("echo"), "reason names the tool: {reason}");
+            }
+            other => panic!("expected NeedsOperator(tool dispatch deadline), got {other:?}"),
+        }
     }
 
     // --- COR-2 ------------------------------------------------------------

@@ -1220,6 +1220,16 @@ fn real_main() -> Result<(), String> {
     app.manage(Arc::new(
         tuxlink_lib::station_query::snapshot::SnapshotStore::new(300_000),
     ));
+    // point_at pending-ack map (tuxlink-grc1j): production manages this
+    // unconditionally (lib.rs). Unmanaged, control1-base EU2 attempt-10's
+    // point_at call panicked a worker (state() before manage()) and the dead
+    // future wedged the run 2h+. With the stub managed, headless point_at
+    // emits to zero windows and times out at ACK_TIMEOUT into a cause-accurate
+    // "window did not confirm" error: parity-honest (the tool exists) and
+    // bounded.
+    app.manage(Arc::new(
+        tuxlink_lib::onboarding_bridge::PointAtPending::default(),
+    ));
     // Search service (docs_search / docs_read / catalog_list).
     {
         let search_root = data_dir.join("native-mbox");

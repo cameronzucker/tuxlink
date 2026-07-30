@@ -36,12 +36,19 @@ use crate::validate;
 pub const RUN_BUDGET_REASON: &str = "Elmer's response exceeded";
 /// See [`RUN_BUDGET_REASON`].
 pub const TURN_TIMEOUT_REASON: &str = "model turn exceeded";
+/// See [`RUN_BUDGET_REASON`]. tuxlink-grc1j: a tool dispatch that never
+/// resolves (a panicked responder, a dead oneshot) is an infrastructure wedge,
+/// not a model verdict, and without its own deadline it stalls the run forever
+/// (the per-turn timeout races `provider.turn()` only).
+pub const TOOL_TIMEOUT_REASON: &str = "tool dispatch exceeded";
 
 /// Did this [`RunOutcome::NeedsOperator`] reason come from a wall-clock deadline
 /// rather than a genuine operator gate? Offline consumers should treat `true` as
 /// censored data: neither pass nor fail, excluded from rate denominators.
 pub fn is_deadline_reason(reason: &str) -> bool {
-    reason.starts_with(RUN_BUDGET_REASON) || reason.starts_with(TURN_TIMEOUT_REASON)
+    reason.starts_with(RUN_BUDGET_REASON)
+        || reason.starts_with(TURN_TIMEOUT_REASON)
+        || reason.starts_with(TOOL_TIMEOUT_REASON)
 }
 
 /// The operator-facing terminal message when a TAINT denial's one narration turn
@@ -317,9 +324,26 @@ pub async fn run_with_conversation_with_transcript(
 
                     // SEC-3: the authority is ALWAYS Agent. There is no code
                     // path here that can construct any other CallAuthority.
-                    let outcome = invoker
-                        .invoke(exec, CallAuthority::Agent, &cancel)
-                        .await;
+                    // tuxlink-grc1j: the dispatch gets the same wall-clock bound
+                    // as a provider turn. Cancellation is propagated INTO the
+                    // tool future (COR-2), but a wedged tool ignores it by
+                    // definition; without this deadline one dead oneshot stalls
+                    // the run until an operator notices idle hardware.
+                    let outcome = match tokio::time::timeout(
+                        limits.per_turn_timeout,
+                        invoker.invoke(exec, CallAuthority::Agent, &cancel),
+                    )
+                    .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(_elapsed) => {
+                            return RunOutcome::NeedsOperator(format!(
+                                "{TOOL_TIMEOUT_REASON} the {}s per-turn timeout (tool: {})",
+                                limits.per_turn_timeout.as_secs(),
+                                call.name
+                            ));
+                        }
+                    };
 
                     // A Cancelled outcome is terminal: surface immediately without
                     // pushing into the conversation (the session is being torn down).

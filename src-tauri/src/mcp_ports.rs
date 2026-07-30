@@ -5078,6 +5078,30 @@ mod tests {
         map_edit_op, resolve_save_def, sanitize_channel, sort_gateways_by_distance,
     };
 
+    /// tuxlink-grc1j: with `PointAtPending` managed but NO window to ack (the
+    /// battery harness's windowless environment, which now manages exactly this
+    /// stub), `point_at` must resolve to a graceful cause-accurate error:
+    /// never an unmanaged-state panic, never an unbounded hang.
+    #[tokio::test]
+    async fn grc1j_point_at_with_stub_state_and_no_window_is_graceful() {
+        use tauri::Manager as _;
+        use tuxlink_mcp_core::ports::UiHintPort as _;
+        let app = tauri::test::mock_app();
+        app.manage(std::sync::Arc::new(
+            crate::onboarding_bridge::PointAtPending::default(),
+        ));
+        let port = super::MonolithUiHintPort::new(app.handle().clone());
+        let err = port
+            .point_at("any-anchor")
+            .await
+            .expect_err("headless point_at must time out gracefully");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("did not confirm"),
+            "expected the ack-timeout error, got: {msg}"
+        );
+    }
+
     /// tuxlink-8fcbh: the routines_save def-resolution matrix, including the
     /// A7 amendment — a stringified JSON OBJECT in `def` is accepted (the
     /// 122b exam's nine-retry loop class), everything the rule ever rejected
