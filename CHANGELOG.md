@@ -31,6 +31,20 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.104.0](https://github.com/cameronzucker/tuxlink/compare/v0.103.1...v0.104.0) (2026-07-31)
+
+
+### Features
+
+* **battery:** cross-model comparison artifact; one self-contained HTML mirroring the run-dashboard badge grammar (tuxlink-bssvw) ([35d40bb](https://github.com/cameronzucker/tuxlink/commit/35d40bb7e97bc4565a42f4ebfb06c950871bc66d))
+
+
+### Bug Fixes
+
+* **agent-frontend:** mint 9-char alphanumeric synthetic tool-call ids; Mistral serving rejects the call_N form ([c543316](https://github.com/cameronzucker/tuxlink/commit/c543316af28c6f138be5b73fc6242f2a3dacb96d))
+* **agent-runner:** bound tool dispatch by the per-turn deadline; manage the point_at stub in the battery harness (tuxlink-grc1j) ([6de55c6](https://github.com/cameronzucker/tuxlink/commit/6de55c6c2b29609cbdfd221f729f6ba0e770caa2))
+* **agent-runner:** harden the dispatch deadline per Codex adrev (child-token abort, conversation completion, battery log drop-guard) ([d7841ee](https://github.com/cameronzucker/tuxlink/commit/d7841ee71e17d64c98882cd2bf40339c160a9ffa))
+
 ## [0.103.1](https://github.com/cameronzucker/tuxlink/compare/v0.103.0...v0.103.1) (2026-07-30)
 
 
