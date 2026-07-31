@@ -1424,16 +1424,23 @@ pub fn build_request_body(
     // OpenAI, ...) reject a `tool` message with no matching `tool_call_id` with an
     // opaque HTTP 400 INVALID_ARGUMENT; only permissive local servers (Ollama)
     // tolerated the old lenient text form. The transcript does not carry the
-    // model's original ids, so we mint stable synthetic ones (`call_0`, `call_1`,
-    // …) and pair each result to its call FIFO — the runner appends a ToolCall
-    // immediately followed by its ToolResult, so FIFO order is the call order.
+    // model's original ids, so we mint stable synthetic ones and pair each
+    // result to its call FIFO — the runner appends a ToolCall immediately
+    // followed by its ToolResult, so FIFO order is the call order.
+    //
+    // Id SHAPE is provider-constrained: Mistral serving stacks (vllm
+    // --tokenizer-mode mistral, mistral-common validation) reject any id that
+    // is not EXACTLY 9 alphanumeric chars — the old `call_0` form 400s every
+    // replayed tool call (2026-07-31 mistral1 battery false start). `call` +
+    // zero-padded 5-digit counter = 9 chars of [a-z0-9], stable and FIFO-safe,
+    // and every other OpenAI-compat destination accepts it unchanged.
     let mut next_tool_id: usize = 0;
     let mut pending_tool_ids: std::collections::VecDeque<String> =
         std::collections::VecDeque::new();
     for msg in conversation.messages() {
         match msg {
             Message::ToolCall(call) => {
-                let id = format!("call_{next_tool_id}");
+                let id = format!("call{next_tool_id:05}");
                 next_tool_id += 1;
                 pending_tool_ids.push_back(id.clone());
                 // OpenAI requires `arguments` to be a JSON STRING, not an object.
@@ -1473,7 +1480,7 @@ pub fn build_request_body(
                 // (a result with no preceding call — not produced by the runner,
                 // but keep the message well-formed), mint a standalone id.
                 let id = pending_tool_ids.pop_front().unwrap_or_else(|| {
-                    let orphan = format!("call_{next_tool_id}");
+                    let orphan = format!("call{next_tool_id:05}");
                     next_tool_id += 1;
                     orphan
                 });
@@ -2314,6 +2321,31 @@ mod tests {
         assert_eq!(tc["function"]["name"], json!("find_stations"), "wrong message indexed");
         assert_eq!(tc["extra_content"], extra,
             "provider_meta must be echoed back verbatim as tool_calls[].extra_content");
+    }
+
+    #[test]
+    fn synthetic_tool_call_ids_are_nine_char_alphanumeric() {
+        // Mistral serving stacks (vllm --tokenizer-mode mistral) validate tool
+        // call ids as EXACTLY 9 chars of [a-zA-Z0-9]; the old `call_0` form
+        // 400'd every replayed tool call (2026-07-31 mistral1 false start).
+        // Pin the shape AND that the tool result echoes the same id.
+        let mut convo = Conversation::new("go");
+        convo.push_tool_call(ToolCall::new("find_stations", json!({})));
+        convo.push_tool_result("find_stations", "{\"count\":3}");
+        let body = build_request_body("m", &convo, &[], None, ELMER_SYSTEM_PROMPT);
+        let call_id = body["messages"][2]["tool_calls"][0]["id"]
+            .as_str()
+            .expect("assistant tool_call carries an id");
+        assert_eq!(call_id.len(), 9, "id must be exactly 9 chars: {call_id}");
+        assert!(
+            call_id.chars().all(|c| c.is_ascii_alphanumeric()),
+            "id must be alphanumeric only: {call_id}"
+        );
+        assert_eq!(
+            body["messages"][3]["tool_call_id"].as_str(),
+            Some(call_id),
+            "tool result must reference the same synthetic id"
+        );
     }
 
     #[test]
