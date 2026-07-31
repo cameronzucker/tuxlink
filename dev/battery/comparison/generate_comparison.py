@@ -56,6 +56,15 @@ RUNS = [
         "date": "2026-07-31",
         "caveats": "42% context-censored by the 32k full-KV host ceiling",
     },
+    {
+        "file": "control2_joined.json",
+        "key": "control2",
+        "label": "Qwen3.5 122B (gen 2)",
+        "sub": "control2-base &middot; temp 0.2 &middot; ctx 262k",
+        "generation": "40fd9b7e",
+        "date": "2026-07-31",
+        "caveats": "bridge control on the aymi7+grc1j+idfix generation; first valid C2/EU2",
+    },
 ]
 
 CELLS = ["P1", "P2", "P3", "S1", "S2", "S3", "S4", "A1", "A2",
