@@ -74,6 +74,15 @@ RUNS = [
         "date": "2026-08-02",
         "caveats": "serial run (sconv kernel multi-request fault, dev/runbooks/inkling-dual-spark); ELMER_MAX_TOKENS=3000; 7 invalid_action = null-args tic (bohfp)",
     },
+    {
+        "file": "q235_joined.json",
+        "key": "q235",
+        "label": "Qwen3 235B-A22B 2507 NVFP4",
+        "sub": "q235 &middot; temp 0.2 &middot; ctx 262k &middot; TP2 dual-Spark &middot; conc 8",
+        "generation": "40fd9b7e",
+        "date": "2026-08-02",
+        "caveats": "size-class control for inkling1; 20 cancelled (turn/wall churn); EU2#2 harness-invalid egress-guard assert (lmrd4); first fully wall-metered arm (0.824 kWh, ~347 W)",
+    },
 ]
 
 CELLS = ["P1", "P2", "P3", "S1", "S2", "S3", "S4", "A1", "A2",
@@ -82,7 +91,8 @@ CELLS = ["P1", "P2", "P3", "S1", "S2", "S3", "S4", "A1", "A2",
 VCOLOR = {"PASS": "#1a7f37", "PARTIAL": "#9a6700", "FAIL": "#cf222e", "": "#388bfd"}
 OCOLOR = {"completed": "#1a7f37", "needs_operator": "#9a6700", "cancelled": "#cf222e",
           "invalid_action": "#cf222e", "provider_error": "#cf222e",
-          "tool_denied": "#8250df", "truncated": "#cf222e", "": "#ccc"}
+          "tool_denied": "#8250df", "truncated": "#cf222e",
+          "unit_failed": "#8250df", "": "#ccc"}
 OPERATOR_BG = "#e3742f"
 VTXT = {"PASS": "P", "PARTIAL": "~", "FAIL": "F", "": "?"}
 
