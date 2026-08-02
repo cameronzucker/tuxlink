@@ -83,6 +83,15 @@ RUNS = [
         "date": "2026-08-02",
         "caveats": "size-class control for inkling1; 20 cancelled (turn/wall churn); EU2#2 harness-invalid egress-guard assert (lmrd4); first fully wall-metered arm (0.824 kWh, ~347 W)",
     },
+    {
+        "file": "mistral2_joined.json",
+        "key": "mistral2",
+        "label": "Mistral Small 4 119B (262k rerun)",
+        "sub": "mistral2 &middot; temp 0.15 &middot; ctx 262k &middot; TP2 dual-Spark &middot; conc 8",
+        "generation": "40fd9b7e",
+        "date": "2026-08-02",
+        "caveats": "mistral1 rerun without the 32k ceiling — uncensored ctx does not rescue it; 11 provider_error = strict tekken-encoder 400s (5uwnj), judged FAIL; 0.618 kWh, ~308 W",
+    },
 ]
 
 CELLS = ["P1", "P2", "P3", "S1", "S2", "S3", "S4", "A1", "A2",
