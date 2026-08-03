@@ -11,8 +11,11 @@ dashboard (dev-side dashboard.py) so the artifact reads the same way:
                       was needs_operator (a truncation is not a verdict)
     border            raw harness outcome
     subscript         deterministic harness check (sg / s / x)
-    strikethrough     harness-invalid (aymi7 denial-kill class), excluded from
-                      all rates
+    strikethrough     harness-invalid (excluded from all rates)
+
+2026-08-03 additions: cell-scenario hover on row headers (mirrors the live
+dashboard), run-selection checkboxes for side-by-side comparison, and the
+capability-bucket rollup (Task Rabbit / Assistant / Collaborator / Elmer).
 
 Add a run: drop its *_joined.json in data/, add a RUNS entry, re-run this
 script, commit both. Runs are columns; corpus cells are rows.
@@ -25,6 +28,24 @@ from collections import Counter
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "data")
 OUT = os.path.join(HERE, "battery-comparison.html")
+
+# Cell scenarios (id -> {title, prompt}) for row-header hover, mirroring the
+# live dashboard. Source: the frozen judge corpus (data/corpus_scenarios.json).
+try:
+    with open(os.path.join(DATA, "corpus_scenarios.json")) as _f:
+        SCENARIOS = json.load(_f)
+except OSError:
+    SCENARIOS = {}
+
+# Capability buckets (operator taxonomy 2026-08-03). Cell-letter scheme:
+# P/S = explicit stepwise builds (Task Rabbit), A = Assistant,
+# C = Collaborator, E + EU = Elmer / end-user realism. Edit here to re-bucket.
+BUCKETS = [
+    ("Task Rabbit",  ["P1", "P2", "P3", "S1", "S2", "S3", "S4"]),
+    ("Assistant",    ["A1", "A2"]),
+    ("Collaborator", ["C1", "C2", "C3"]),
+    ("Elmer / E-U",  ["E1", "E2", "E3", "EU1", "EU2", "EU3"]),
+]
 
 # Ordered run manifest: newest knowledge about each arm lives here, not in the
 # data files. `caveats` render under the column header; keep them short.
@@ -45,7 +66,7 @@ RUNS = [
         "sub": "laguna1-t07 &middot; temp 0.7 &middot; ctx 262k",
         "generation": "bc9bc648",
         "date": "2026-07-30",
-        "caveats": "21% turn-cap exhaustion (fast churn)",
+        "caveats": "21% turn-cap exhaustion (fast churn); HF revision 07614121 (256K build, since superseded upstream)",
     },
     {
         "file": "mistral1_joined.json",
@@ -65,6 +86,60 @@ RUNS = [
         "date": "2026-07-31",
         "caveats": "bridge control on the aymi7+grc1j+idfix generation; first valid C2/EU2",
     },
+    {
+        "file": "inkling1_joined.json",
+        "key": "inkling1",
+        "label": "Inkling-Small NVFP4 276B-A12B",
+        "sub": "inkling1 &middot; temp 0.2 &middot; ctx 262k &middot; TP2 dual-Spark &middot; conc 1",
+        "generation": "40fd9b7e",
+        "date": "2026-08-02",
+        "caveats": "serial run (sconv kernel multi-request fault, dev/runbooks/inkling-dual-spark); ELMER_MAX_TOKENS=3000; 7 invalid_action = null-args tic (bohfp)",
+    },
+    {
+        "file": "q235_joined.json",
+        "key": "q235",
+        "label": "Qwen3 235B-A22B 2507 NVFP4",
+        "sub": "q235 &middot; temp 0.2 &middot; ctx 262k &middot; TP2 dual-Spark &middot; conc 8",
+        "generation": "40fd9b7e",
+        "date": "2026-08-02",
+        "caveats": "size-class control for inkling1; 20 cancelled (turn/wall churn); EU2#2 harness-invalid egress-guard assert (lmrd4); first fully wall-metered arm (0.824 kWh, ~347 W)",
+    },
+    {
+        "file": "mistral2_joined.json",
+        "key": "mistral2",
+        "label": "Mistral Small 4 119B (262k rerun)",
+        "sub": "mistral2 &middot; temp 0.15 &middot; ctx 262k &middot; TP2 dual-Spark &middot; conc 8",
+        "generation": "40fd9b7e",
+        "date": "2026-08-02",
+        "caveats": "mistral1 rerun without the 32k ceiling — uncensored ctx does not rescue it; 11 provider_error = strict tekken-encoder 400s (5uwnj), judged FAIL; 0.618 kWh, ~308 W",
+    },
+    {
+        "file": "dsv4_joined.json",
+        "key": "dsv4",
+        "label": "DeepSeek-V4-Flash-0731 NVFP4 304B",
+        "sub": "dsv4 &middot; temp 1.0 top_p 0.95 &middot; ctx 262k &middot; TP2 dual-Spark &middot; conc 8",
+        "generation": "40fd9b7e",
+        "date": "2026-08-03",
+        "caveats": "first frontier-competitive arm (community MJPansa quant); record 82 PARTIALs + fewest FAILs; first to crack C1/C2 graveyard; 6 egress-assert kills (lmrd4 worst rate, S4 n=7); 0.886 kWh, ~303 W",
+    },
+    {
+        "file": "laguna2_joined.json",
+        "key": "laguna2",
+        "label": "Laguna-S 2.1 (Aug build rerun)",
+        "sub": "laguna2 &middot; temp 0.7 &middot; ctx 131k + fp8 KV &middot; dual-solo &middot; conc 16",
+        "generation": "40fd9b7e",
+        "date": "2026-08-03",
+        "caveats": "reruns the CURRENT shipping Laguna (Aug-1 1M-context promotion, +28GB weights) — different HF revision AND ctx than laguna1; see bd tuxlink-jwdsa",
+    },
+    {
+        "file": "opus1_joined.json",
+        "key": "opus1",
+        "label": "Claude Opus 5 (ceiling check)",
+        "sub": "opus1 &middot; subscription shim &middot; prompt-encoded tools &middot; conc 2",
+        "generation": "40fd9b7e",
+        "date": "2026-08-03",
+        "caveats": "NOT interface-comparable (prompt-encoded tool bridge; no temp control); instrument-validation arm; 30 slots xvfb-collision-killed (A1/S3/S4 wiped); 49 null-args invalid_action = suspected shim/SSE infra, non-signal",
+    },
 ]
 
 CELLS = ["P1", "P2", "P3", "S1", "S2", "S3", "S4", "A1", "A2",
@@ -73,7 +148,8 @@ CELLS = ["P1", "P2", "P3", "S1", "S2", "S3", "S4", "A1", "A2",
 VCOLOR = {"PASS": "#1a7f37", "PARTIAL": "#9a6700", "FAIL": "#cf222e", "": "#388bfd"}
 OCOLOR = {"completed": "#1a7f37", "needs_operator": "#9a6700", "cancelled": "#cf222e",
           "invalid_action": "#cf222e", "provider_error": "#cf222e",
-          "tool_denied": "#8250df", "truncated": "#cf222e", "": "#ccc"}
+          "tool_denied": "#8250df", "truncated": "#cf222e",
+          "unit_failed": "#8250df", "": "#ccc"}
 OPERATOR_BG = "#e3742f"
 VTXT = {"PASS": "P", "PARTIAL": "~", "FAIL": "F", "": "?"}
 
@@ -108,7 +184,10 @@ def badge(row):
 def load_runs():
     out = []
     for spec in RUNS:
-        with open(os.path.join(DATA, spec["file"])) as f:
+        path = os.path.join(DATA, spec["file"])
+        if not os.path.exists(path):
+            continue
+        with open(path) as f:
             d = json.load(f)
         rows = d["rows"]
         by_cell = {}
@@ -120,8 +199,18 @@ def load_runs():
         censored = [r for r in valid if r.get("outcome") == "needs_operator"]
         nc = [r for r in valid if r.get("outcome") != "needs_operator"]
         t = Counter(r.get("overall") for r in valid)
+        buckets = {}
+        for bname, bcells in BUCKETS:
+            bv = [r for r in valid if r["cell"] in bcells]
+            bt = Counter(r.get("overall") for r in bv)
+            n = len(bv)
+            buckets[bname] = {
+                "n": n,
+                "strict": (100.0 * bt.get("PASS", 0) / n) if n else None,
+                "lenient": (100.0 * (bt.get("PASS", 0) + 0.5 * bt.get("PARTIAL", 0)) / n) if n else None,
+            }
         out.append({
-            **spec, "by_cell": by_cell,
+            **spec, "by_cell": by_cell, "buckets": buckets,
             "stats": {
                 "bundles": len(rows),
                 "valid": len(valid),
@@ -129,6 +218,7 @@ def load_runs():
                 "pass": t.get("PASS", 0), "partial": t.get("PARTIAL", 0),
                 "fail": t.get("FAIL", 0),
                 "rate": (100.0 * t.get("PASS", 0) / len(valid)) if valid else 0.0,
+                "lenient": (100.0 * (t.get("PASS", 0) + 0.5 * t.get("PARTIAL", 0)) / len(valid)) if valid else 0.0,
                 "censored": len(censored),
                 "nc_rate": (100.0 * sum(1 for r in nc if r.get("overall") == "PASS")
                             / len(nc)) if nc else 0.0,
@@ -138,55 +228,100 @@ def load_runs():
     return out
 
 
-def bar(pct, color):
-    return (f'<div style="background:#21262d;border-radius:3px;height:10px;width:160px">'
+def bar(pct, color, w=160):
+    return (f'<div style="background:#21262d;border-radius:3px;height:10px;width:{w}px">'
             f'<div style="background:{color};border-radius:3px;height:10px;'
-            f'width:{max(1, round(1.6 * pct))}px"></div></div>')
+            f'width:{max(1, round(pct * w / 100))}px"></div></div>')
+
+
+def bucket_color(pct):
+    if pct is None:
+        return "#484f58"
+    if pct >= 60:
+        return "#1a7f37"
+    if pct >= 30:
+        return "#9a6700"
+    return "#cf222e"
 
 
 def page(runs):
+    # Run-selector control bar (side-by-side comparison).
+    sel = "".join(
+        f'<label style="margin-right:14px;white-space:nowrap"><input type="checkbox" '
+        f'checked data-toggle="{r["key"]}" onchange="tg(this)"> {r["label"]}</label>'
+        for r in runs)
+    selector = (f'<div style="position:sticky;top:0;background:#0d1117ee;padding:8px 4px;'
+                f'border-bottom:1px solid #30363d;z-index:5"><b>Compare:</b> {sel} '
+                f'<a href="#" onclick="allr(true);return false">all</a> / '
+                f'<a href="#" onclick="allr(false);return false">none</a>'
+                f'<span class=sub style="margin-left:10px">untick runs to put any two side by side</span></div>')
+
     # Topline summary table.
     srows = ""
     for r in runs:
         s = r["stats"]
         srows += (
-            f'<tr><td><b>{r["label"]}</b><br><span class=sub>{r["sub"]}</span></td>'
+            f'<tr data-run="{r["key"]}"><td><b>{r["label"]}</b><br><span class=sub>{r["sub"]}</span></td>'
             f'<td>{r["generation"]}</td>'
             f'<td style="text-align:right">{s["valid"]}/{s["bundles"]}</td>'
             f'<td style="text-align:right"><b>{s["rate"]:.1f}%</b><br>'
             f'{bar(s["rate"], "#1a7f37")}</td>'
-            f'<td style="text-align:right">{s["nc_rate"]:.1f}%<br>'
-            f'{bar(s["nc_rate"], "#2da44e")}</td>'
+            f'<td style="text-align:right">{s["lenient"]:.1f}%<br>'
+            f'{bar(s["lenient"], "#2da44e")}</td>'
             f'<td style="text-align:right">{s["pass"]} / {s["partial"]} / {s["fail"]}</td>'
             f'<td style="text-align:right">{s["censored"]}</td>'
             f'<td style="text-align:right">{s["invalid"]}</td>'
             f'<td class=sub>{r["caveats"]}</td></tr>')
 
-    # Per-cell grid: rows = cells, columns = runs.
+    # Capability-bucket rollup: rows = buckets, columns = runs.
+    bhdr = "".join(f'<th data-run="{r["key"]}">{r["label"]}</th>' for r in runs)
+    brows = ""
+    for bname, bcells in BUCKETS:
+        tds = ""
+        for r in runs:
+            b = r["buckets"].get(bname, {})
+            st, le, n = b.get("strict"), b.get("lenient"), b.get("n", 0)
+            if st is None:
+                tds += f'<td data-run="{r["key"]}" style="text-align:center;color:#484f58">no data</td>'
+            else:
+                c = bucket_color(st)
+                tds += (f'<td data-run="{r["key"]}" style="text-align:center">'
+                        f'<b style="color:{c};font-size:15px">{st:.0f}%</b>'
+                        f'<span class=sub> / {le:.0f}%</span><br>{bar(st, c, 90)}'
+                        f'<span class=sub>n={n}</span></td>')
+        cells_list = " ".join(bcells)
+        brows += (f'<tr><th class=rung title="cells: {cells_list}" style="cursor:help">{bname}'
+                  f'<br><span class=sub>{cells_list}</span></th>{tds}</tr>')
+
+    # Per-cell grid: rows = cells, columns = runs. Row header hovers carry the
+    # cell's scenario title + full prompt (live-dashboard parity).
     hdr = "".join(
-        f'<th>{r["label"]}<br><span class=sub>{r["sub"]}</span></th>' for r in runs)
+        f'<th data-run="{r["key"]}">{r["label"]}<br><span class=sub>{r["sub"]}</span></th>' for r in runs)
     rows_html = ""
     for cell in CELLS:
         tds = ""
         for r in runs:
             atts = r["by_cell"].get(cell, [])
             if not atts:
-                tds += '<td style="text-align:center;color:#484f58">&middot;</td>'
+                tds += f'<td data-run="{r["key"]}" style="text-align:center;color:#484f58">&middot;</td>'
                 continue
-            tds += ('<td style="text-align:center;white-space:nowrap">'
+            tds += (f'<td data-run="{r["key"]}" style="text-align:center;white-space:nowrap">'
                     + "".join(badge(a) for a in atts) + "</td>")
-        rows_html += f'<tr><th class=rung>{cell}</th>{tds}</tr>'
+        sc = SCENARIOS.get(cell, {})
+        tip = (sc.get("title", "") + "\n\n" + sc.get("prompt", "")).replace('"', "&quot;")
+        rows_html += (f'<tr><th class=rung title="{tip}" style="cursor:help">{cell}'
+                      f'<br><span class=sub>{sc.get("title", "")[:28]}</span></th>{tds}</tr>')
 
     # Outcome-class breakdown per run.
-    all_outcomes = sorted({o for r in runs for o in r["stats"]["outcomes"]})
+    all_outcomes = sorted({o for r in runs for o in r["stats"]["outcomes"] if o})
     orows = ""
     for o in all_outcomes:
         cells = "".join(
-            f'<td style="text-align:right">{r["stats"]["outcomes"].get(o, 0)}</td>'
+            f'<td data-run="{r["key"]}" style="text-align:right">{r["stats"]["outcomes"].get(o, 0)}</td>'
             for r in runs)
         oc = OCOLOR.get(o, "#888")
         orows += (f'<tr><th class=rung style="color:{oc}">{o}</th>{cells}</tr>')
-    ohdr = "".join(f'<th>{r["label"]}</th>' for r in runs)
+    ohdr = "".join(f'<th data-run="{r["key"]}">{r["label"]}</th>' for r in runs)
 
     legend = (
         '<span class=sub>badge grammar (mirrors the live run dashboard): '
@@ -195,8 +330,18 @@ def page(runs):
         'needs_operator &middot; border = raw harness outcome &middot; '
         'subscript = deterministic check (s saved, g validates-green, x neither) '
         '&middot; strikethrough = harness-invalid, excluded from every rate. '
-        'Hover any badge for the exact facts. Temperatures are per-vendor '
-        'recommendations; cross-model comparisons are directional.</span>')
+        'Hover any badge for the exact facts; hover a row header for the '
+        'cell scenario. Temperatures are per-vendor recommendations; '
+        'cross-model comparisons are directional. Opus rides a different '
+        'tool interface (see its caveats) — treat as instrument validation, '
+        'not a ranking row.</span>')
+
+    js = """<script>
+function tg(cb){document.querySelectorAll('[data-run="'+cb.dataset.toggle+'"]')
+  .forEach(function(e){e.style.display=cb.checked?'':'none'});}
+function allr(on){document.querySelectorAll('[data-toggle]').forEach(function(cb){
+  cb.checked=on;tg(cb);});}
+</script>"""
 
     return f'''<!doctype html><html><head><meta charset=utf-8>
 <title>Elmer battery: cross-model comparison</title>
@@ -207,16 +352,21 @@ def page(runs):
  th,td{{border:1px solid #30363d;padding:5px 9px;vertical-align:top;text-align:left}}
  th{{background:#161b22}} th.rung{{background:#161b22;text-align:left}}
  .sub{{color:#8b949e;font-weight:400;font-size:12px}}
- sub{{font-size:9px}}
+ sub{{font-size:9px}} a{{color:#58a6ff}}
 </style></head><body>
+{selector}
 <h1>Elmer battery: cross-model comparison</h1>
 <div class=sub>18 corpus cells &times; 10 attempts per model, dual-Spark GB10 cluster,
 fingerprint-joined judge verdicts (sonnet-5 daemon). Regenerated by
-generate_comparison.py; data embedded, no external fetches.</div>
+generate_comparison.py; data embedded, no external fetches. The battery
+continues as the standalone <b>tuxlink-bench</b> project — this artifact is
+the v1-era record (see dev/battery/README.md).</div>
+<h2>Capability buckets <span class=sub>strict% / lenient% of valid attempts</span></h2>
+<table><tr><th class=rung>bucket</th>{bhdr}</tr>{brows}</table>
 <h2>Topline</h2>
 <table><tr><th>model / run</th><th>generation</th><th>valid</th>
-<th>PASS rate<br><span class=sub>(of valid)</span></th>
-<th>non-censored<br><span class=sub>PASS rate</span></th>
+<th>PASS rate<br><span class=sub>(strict)</span></th>
+<th>lenient<br><span class=sub>(P+0.5&middot;PT)</span></th>
 <th>P / ~ / F</th><th>ctx-censored</th><th>invalid</th><th>caveats</th></tr>
 {srows}</table>
 <h2>Per-cell, per-attempt</h2>
@@ -224,6 +374,7 @@ generate_comparison.py; data embedded, no external fetches.</div>
 <table><tr><th class=rung>cell</th>{hdr}</tr>{rows_html}</table>
 <h2>Harness outcome classes</h2>
 <table><tr><th class=rung>outcome</th>{ohdr}</tr>{orows}</table>
+{js}
 </body></html>'''
 
 

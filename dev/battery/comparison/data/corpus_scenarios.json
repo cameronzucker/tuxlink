@@ -1,0 +1,74 @@
+{
+ "P2": {
+  "title": "hourly closest-gateway connect",
+  "prompt": "Build a routine which connects to the closest 20m VARA CMS Gateway station every hour at the top of the hour."
+ },
+ "P1": {
+  "title": "nearest-5 dial with winner recording",
+  "prompt": "1. Find the closest 5 VARA stations to me operating on the 40m band.\n2. Based on distance, created a routine which dials them in nearest-farthest order, stopping when it successfully connects to one.\n3. The routine should run every 30 minutes.\n4. The routine should record which station it successfully connected to."
+ },
+ "S1": {
+  "title": "dial with fallback alert (Branch rung)",
+  "prompt": "Every 4 hours, call the 3 closest 20m VARA gateways until one connects. If none connect, send an APRS message on the main channel saying no gateway was reachable this cycle. Log the outcome either way."
+ },
+ "S2": {
+  "title": "edit an existing routine",
+  "prompt": "Modify my nearest-40m-dial routine: run every 15 minutes instead of 30, add 80m as a fallback band after 40m, and also record which band succeeded, not just the station."
+ },
+ "S4": {
+  "title": "daily check-in: rig setup + dual Winlink/APRS",
+  "prompt": "Build a daily check-in routine: apply my 40m-digital rig preset and tune the ATU, compose a Winlink check-in message to W7EOC with my current grid square, call the closest 40m gateway to send it, then send an APRS message confirming the check-in went out."
+ },
+ "S3": {
+  "title": "catalog request round-trip + APRS notify (operator example)",
+  "prompt": "Build a routine which does the following:\n* Every 6 hours, call the closest 5 VARA gateway stations operating on 20m with a catalog request for local NWS tabulars.\n* Wait 5 minutes, then call that same station again to receive the catalog request response.\n* Send a message over APRS stating that updated weather is available and to call EOC-1 on phone if details are required."
+ },
+ "P3": {
+  "title": "full fallback chain with propagation prediction",
+  "prompt": "Please create a routine which does the following:\n* Updates space weather using WWV.\n* Calls the closest 20 VARA CMS gateway stations on 20, 40, and 80m every 2 hour at the top of the hour until one is successful.\n* If no stations calls are successful, predict the 20 most likely candidate stations using FT-8 station intelligence and current propagation prediction overlaps, then call those stations in descending order of probability of connection on 20, 40, and 80m until all stations are exhausted.\n* Logs which station is successful, if any, and which were dialed in total, along with their connection estimates and which stations were in the closest group and which were in the prediction group.\n* If no station is successful, sends an APRS message stating a CMS gateway connection window was missed on the main channel to all stations."
+ },
+ "A1": {
+  "title": "weather for current location, alert success/fail over tac chat",
+  "prompt": "Build a routine which gets the weather for my current location and alerts whether it succeeds/fails over tac chat."
+ },
+ "A2": {
+  "title": "send outbound traffic several times/day via best VARA gateway",
+  "prompt": "Build a routine which sends out outbound traffic several times per day using the best VARA gateway."
+ },
+ "C1": {
+  "title": "check weather; confirmations + alerts if issues flagged",
+  "prompt": "Check the weather for our location and send out both appropriate confirmations and alerts if issues are flagged."
+ },
+ "C2": {
+  "title": "find best VARA gateway, test it, configure recurring send/receive",
+  "prompt": "Find the best VARA gateway for my location and test it to ensure it works, then configure a recurring send/receive."
+ },
+ "C3": {
+  "title": "NVIS, connect over VARA 20/40/80m per time of day, log, recurring",
+  "prompt": "I'm using an NVIS antenna. Get the station connected over VARA using 20/40/80m as appropriate depending on the time of day, then log the results and make it regularly recurring."
+ },
+ "E1": {
+  "title": "San Diego deploy, round-the-clock 20/40/80m, must work with FT-701",
+  "prompt": "I'm deploying to San Diego this weekend. I want to be connected the entire time once the station is setup. Build an anticipatory routine which ensures we can have round-the-clock connectivity on 20/40/80m. Ensure it works with the FT-701."
+ },
+ "E2": {
+  "title": "regular winlink send/receive any mode; verify prediction data before sending",
+  "prompt": "I want the radio to regularly connect to winlink to send/receive a few times a day using any available mode. Make sure our prediction data is good before sending."
+ },
+ "E3": {
+  "title": "SF Great Shake Out, reliable East-Coast traffic on a regular basis",
+  "prompt": "I'm in San Francisco preparing for a Great Shake Out drill. Make something to help me ensure we can send traffic to the East Coast on a regular basis reliably."
+ },
+ "EU1": {
+  "title": "VARA setup uncertain + FT-710 config + recurring send + soft band pref + prediction gating",
+  "prompt": "I need to setup this station for VARA but I'm not sure how. Make sure that's working, then configure my FT-710. I want to send messages a few times a day, but make sure the radio's good before sending. I like 20m but 40m or 15m could also be good."
+ },
+ "EU2": {
+  "title": "password troubleshooting + setup test + msg to N0RNG + conditional image on fast mode",
+  "prompt": "I'm not sure if my password is right. Help me with that, then test whether we're setup correctly. I want to send messages to my friend Sam at N0RNG. Some of them are just text but I'd also like to send images if a fast enough mode is working."
+ },
+ "EU3": {
+  "title": "why can't I get out on VARA (pure troubleshooting, not a routine)",
+  "prompt": "I'm not sure how all this new-fangled Tuxlink stuff with AI works. I'm trying to send messages but it's not working! Why can't I get out on VARA? N0DAJ is in the next city over it should be working."
+ }
+}
