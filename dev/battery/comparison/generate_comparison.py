@@ -138,7 +138,7 @@ RUNS = [
         "sub": "laguna2 &middot; temp 0.7 &middot; ctx 131k + fp8 KV &middot; dual-solo &middot; conc 16",
         "generation": "40fd9b7e",
         "date": "2026-08-03",
-        "caveats": "reruns the CURRENT shipping Laguna (Aug-1 1M-context promotion, +28GB weights) — different HF revision AND ctx than laguna1; see bd tuxlink-jwdsa",
+        "caveats": "OPERATOR-TERMINATED at 84/180 (Sparks reassigned to tuxlink-bench) — partial, uneven cell coverage; CURRENT shipping Laguna (Aug-1 1M promotion, +28GB, rev f8fdfcdc) at 131k+fp8 vs laguna1 retired 256K build; churn persists (14 cancelled); see bd tuxlink-jwdsa",
     },
     {
         "file": "opus1_joined.json",
