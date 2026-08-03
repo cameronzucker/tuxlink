@@ -101,6 +101,15 @@ RUNS = [
         "date": "2026-08-02",
         "caveats": "cross-vendor arm; widest PARTIAL band in the set; 21 cancelled = temp-1.0 reasoning churn (6 on P1 alone); 2 egress-assert harness-invalid (lmrd4); 1.244 kWh, ~258 W",
     },
+    {
+        "file": "dsv4_joined.json",
+        "key": "dsv4",
+        "label": "DeepSeek-V4-Flash-0731 NVFP4 304B",
+        "sub": "dsv4 &middot; temp 1.0 top_p 0.95 &middot; ctx 262k &middot; TP2 dual-Spark &middot; conc 8",
+        "generation": "40fd9b7e",
+        "date": "2026-08-03",
+        "caveats": "first frontier-competitive arm (community MJPansa quant); record 82 PARTIALs + fewest FAILs; first to crack C1/C2 graveyard; 6 egress-assert kills (lmrd4 worst rate, S4 n=7); 0.886 kWh, ~303 W",
+    },
 ]
 
 CELLS = ["P1", "P2", "P3", "S1", "S2", "S3", "S4", "A1", "A2",
