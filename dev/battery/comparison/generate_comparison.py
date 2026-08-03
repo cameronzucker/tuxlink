@@ -163,6 +163,26 @@ OPERATOR_BG = "#e3742f"
 VTXT = {"PASS": "P", "PARTIAL": "~", "FAIL": "F", "": "?"}
 
 
+
+import html as _html
+
+def rung_th(cell):
+    """Row label; hovering reveals what the rung asks + how it is graded —
+    markup and classes mirror the live run dashboard exactly."""
+    c = SCENARIOS.get(cell)
+    if not c:
+        return f'<th class="rung">{_html.escape(cell)}</th>'
+    title = _html.escape(c.get("title") or "")
+    prompt = _html.escape(c.get("prompt") or "(no prompt)")
+    preds = c.get("predicates") or []
+    plist = "".join(f"<li>{_html.escape(str(x))}</li>" for x in preds)
+    return (f'<th class="rung">{_html.escape(cell)}<span class="hint">&#9432;</span>'
+            f'<div class="card"><div class="ct">{_html.escape(cell)}'
+            f'{" &mdash; " + title if title else ""}</div>'
+            f'<div class="cl">PROMPT</div><pre class="cp">{prompt}</pre>'
+            f'<div class="cl">PREDICATES ({len(preds)})</div><ol class="cq">{plist}</ol>'
+            f'</div></th>')
+
 def det_code(det):
     """Compact deterministic-check code, mirroring the dashboard subscript."""
     if not det:
@@ -299,8 +319,7 @@ def page(runs):
                         f'<span class=sub> / {le:.0f}%</span><br>{bar(st, c, 90)}'
                         f'<span class=sub>n={n}</span></td>')
         cells_list = " ".join(bcells)
-        brows += (f'<tr><th class=rung title="cells: {cells_list}" style="cursor:help">{bname}'
-                  f'<br><span class=sub>{cells_list}</span></th>{tds}</tr>')
+        brows += (f'<tr><th class=rung title="cells: {cells_list}">{bname}</th>{tds}</tr>')
 
     # Per-cell grid: rows = cells, columns = runs. Row header hovers carry the
     # cell's scenario title + full prompt (live-dashboard parity).
@@ -316,10 +335,7 @@ def page(runs):
                 continue
             tds += (f'<td data-run="{r["key"]}" style="text-align:center;white-space:nowrap">'
                     + "".join(badge(a) for a in atts) + "</td>")
-        sc = SCENARIOS.get(cell, {})
-        tip = (sc.get("title", "") + "\n\n" + sc.get("prompt", "")).replace('"', "&quot;")
-        rows_html += (f'<tr><th class=rung title="{tip}" style="cursor:help">{cell}'
-                      f'<br><span class=sub>{sc.get("title", "")[:28]}</span></th>{tds}</tr>')
+        rows_html += f'<tr>{rung_th(cell)}{tds}</tr>' 
 
     # Outcome-class breakdown per run.
     all_outcomes = sorted({o for r in runs for o in r["stats"]["outcomes"] if o})
@@ -362,6 +378,20 @@ function allr(on){document.querySelectorAll('[data-toggle]').forEach(function(cb
  th{{background:#161b22}} th.rung{{background:#161b22;text-align:left}}
  .sub{{color:#8b949e;font-weight:400;font-size:12px}}
  sub{{font-size:9px}} a{{color:#58a6ff}}
+ th.rung{{text-align:left;padding-right:8px;position:relative;cursor:help}}
+ th.rung .hint{{color:#6e7681;margin-left:4px;font-weight:400}}
+ th.rung:hover .hint{{color:#58a6ff}}
+ th.rung .card{{display:none;position:absolute;left:100%;top:0;z-index:50;width:520px;
+  max-height:60vh;overflow:auto;background:#161b22;border:1px solid #58a6ff;border-radius:6px;
+  padding:10px 12px;box-shadow:0 8px 24px #010409cc;white-space:normal;font-weight:400;text-align:left}}
+ th.rung:hover .card{{display:block}}
+ th.rung .ct{{color:#58a6ff;font-weight:700;margin-bottom:6px}}
+ th.rung .cl{{color:#8b949e;font-size:.78em;letter-spacing:.08em;margin:8px 0 3px}}
+ th.rung .cp{{margin:0;padding:8px;background:#0d1117;border:1px solid #30363d;border-radius:4px;
+  font:12px ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word;color:#c9d1d9}}
+ th.rung .cq{{margin:0;padding-left:20px}}
+ th.rung .cq li{{margin:3px 0;color:#c9d1d9}}
+ tr:nth-last-child(-n+5) th.rung .card{{top:auto;bottom:0}}
 </style></head><body>
 {selector}
 <h1>Elmer battery: cross-model comparison</h1>
