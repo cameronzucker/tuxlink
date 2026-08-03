@@ -114,6 +114,15 @@ RUNS = [
         "caveats": "mistral1 rerun without the 32k ceiling — uncensored ctx does not rescue it; 11 provider_error = strict tekken-encoder 400s (5uwnj), judged FAIL; 0.618 kWh, ~308 W",
     },
     {
+        "file": "gptoss1_joined.json",
+        "key": "gptoss1",
+        "label": "gpt-oss-120b MXFP4",
+        "sub": "gptoss1-t10 &middot; temp 1.0 &middot; ctx 131k &middot; dual-solo &middot; conc 4",
+        "generation": "40fd9b7e",
+        "date": "2026-08-02",
+        "caveats": "cross-vendor arm; widest PARTIAL band in the set; 21 cancelled = temp-1.0 reasoning churn (6 on P1 alone); 2 egress-assert harness-invalid (lmrd4); 1.244 kWh, ~258 W",
+    },
+    {
         "file": "dsv4_joined.json",
         "key": "dsv4",
         "label": "DeepSeek-V4-Flash-0731 NVFP4 304B",
