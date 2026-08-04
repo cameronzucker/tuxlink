@@ -31,6 +31,19 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.105.0](https://github.com/cameronzucker/tuxlink/compare/v0.104.0...v0.105.0) (2026-08-03)
+
+
+### Features
+
+* **battery:** comparison artifact v2 — scenario hover, side-by-side run selection, capability-bucket rollup ([69f58a1](https://github.com/cameronzucker/tuxlink/commit/69f58a1b53e1e75c4a129aaff5ae655c33104f0f))
+* **battery:** dashboard-parity scenario hover cards; compact matrix headers ([1f7ac2e](https://github.com/cameronzucker/tuxlink/commit/1f7ac2ebdc8ef188a54666d1eee668b98b66b0c1))
+
+
+### Bug Fixes
+
+* **battery:** restore gptoss1 column dropped in the comparison v2 rewrite ([4ec8fa9](https://github.com/cameronzucker/tuxlink/commit/4ec8fa935e564d90f3a549ffb5ac76b30ad110fc))
+
 ## [0.104.0](https://github.com/cameronzucker/tuxlink/compare/v0.103.1...v0.104.0) (2026-07-31)
 
 
