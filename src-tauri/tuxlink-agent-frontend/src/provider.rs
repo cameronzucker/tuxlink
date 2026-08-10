@@ -14,9 +14,21 @@
 //!   Each call's `function.arguments` is a JSON *string* per the OpenAI wire
 //!   format; we parse it to a `Value`. A non-object / unparseable arguments
 //!   string becomes `Value::Null` (the runner's COR-3 schema check then treats
-//!   it as a malformed call and re-prompts — we do NOT silently drop it).
-//! * Otherwise `choices[0].message.content` → [`ModelTurn::Text`] (empty string
-//!   if the model returned a null content with no tool calls).
+//!   it as a malformed call and re-prompts — we do NOT silently drop it). This
+//!   takes precedence even when `reasoning` is also present (a thinking model
+//!   that finished thinking and called a tool).
+//! * Otherwise a present, non-null `choices[0].message.content` → [`ModelTurn::Text`]
+//!   (an empty string is a genuine, if unhelpful, completion; unchanged
+//!   whether or not `reasoning` also came back).
+//! * `content` null/absent with a non-empty `reasoning` (or `reasoning_content`)
+//!   → [`ModelTurn::Reasoning`], NOT an empty `Text` turn. A reasoning model
+//!   that burns its whole per-turn output budget mid-thought (`finish_reason:
+//!   "length"`) lands here; coercing it to `Text(String::new())` would
+//!   silently COMPLETE the run with nothing authored (tuxlink-nyyr2). The
+//!   runner retries this as a bounded, non-terminal turn (COR-4 in
+//!   `tuxlink-agent-runner`).
+//! * `content` null/absent AND no usable `reasoning` → [`ModelTurn::Text`]
+//!   (empty string): unchanged fallback for a genuinely empty response.
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
@@ -364,12 +376,16 @@ impl Provider for OpenAiProvider {
         // Explicit output-budget override (OPT-IN via env). When an endpoint's
         // context window can't be probed (some OpenRouter routes report nothing
         // usable), `max_tokens` is omitted above and the serving provider falls
-        // back to its OWN default output cap (e.g. StreamLake's ~4096). A
-        // reasoning-heavy model then truncates mid-thought BEFORE it emits a tool
-        // call, ending the turn with no action ("completed" but empty)
-        // (experimentally derived, 2026-07-24 GLM-5.2 battery run). ELMER_MAX_TOKENS
-        // forces an explicit output budget so reasoning + the tool call fit. Unset
-        // = unchanged (window-derived or provider default).
+        // back to its OWN default output cap (e.g. StreamLake's ~4096) --
+        // `RESPONSE_RESERVE_TOKENS` cannot help here, since that constant only
+        // applies once a window IS known. A reasoning-heavy model can still
+        // truncate mid-thought in this path (experimentally derived, 2026-07-24
+        // GLM-5.2 battery run); the runner now retries a reasoning-only turn
+        // instead of silently completing empty (tuxlink-nyyr2), but a
+        // truncation that repeats past that retry budget still fails the run.
+        // ELMER_MAX_TOKENS forces an explicit output budget so reasoning + the
+        // tool call fit on the FIRST attempt. Unset = unchanged (window-derived
+        // or provider default).
         if let Ok(v) = std::env::var("ELMER_MAX_TOKENS") {
             if let Ok(n) = v.trim().parse::<u64>() {
                 if n > 0 {
@@ -562,13 +578,11 @@ struct SseAccumulator {
     /// Accumulated answer content (concatenated `delta.content`).
     content: String,
     /// Accumulated reasoning (concatenated `delta.reasoning` / `reasoning_content`).
-    /// Reasoning is emitted to the caller delta-by-delta as it streams; no
-    /// `ModelTurn` variant carries the assembled trace, so in non-test builds this
-    /// field is write-only (read only by the `#[cfg(test)]` `reasoning()` accessor
-    /// that asserts the concatenation). Kept because the streaming contract
-    /// specifies accumulating reasoning alongside emitting it, and a future caller
-    /// may want the full trace.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Streamed to the caller delta-by-delta as it arrives, AND consulted by
+    /// [`SseAccumulator::into_turn`]: a turn that ends with no answer content
+    /// and no tool calls but non-empty reasoning finalizes as
+    /// [`ModelTurn::Reasoning`] rather than a silently-empty `Text` turn
+    /// (tuxlink-nyyr2); see `into_turn`.
     reasoning: String,
     /// Tool calls keyed by their stream `index`, assembled across fragments.
     /// `BTreeMap` so the final `ModelTurn::ToolCalls` is ordered by index.
@@ -843,8 +857,14 @@ impl SseAccumulator {
     /// (mirroring `parse_completion`'s precedence): each accumulated `arguments`
     /// string is parsed to a `Value`, with an unparseable/empty string becoming
     /// `Value::Null` so the runner's COR-3 re-prompts (identical to the
-    /// non-stream contract). Otherwise the concatenated content becomes a `Text`
-    /// turn.
+    /// non-stream contract). Otherwise, non-empty `content` becomes a `Text`
+    /// turn. Otherwise (no tool calls, no content) a non-empty accumulated
+    /// `reasoning` becomes [`ModelTurn::Reasoning`] rather than an empty `Text`
+    /// turn, symmetric with `parse_completion`'s non-streaming handling of the
+    /// same case (tuxlink-nyyr2): a reasoning model that streamed only its
+    /// thinking channel before hitting `max_tokens` must not silently COMPLETE
+    /// the run empty. An empty/absent reasoning trace falls through to the
+    /// pre-existing empty-text fallback.
     fn into_turn(self) -> ModelTurn {
         if !self.tool_calls.is_empty() {
             let calls = self
@@ -858,13 +878,16 @@ impl SseAccumulator {
                 .collect();
             return ModelTurn::ToolCalls(calls);
         }
+        if self.content.is_empty() && !self.reasoning.is_empty() {
+            return ModelTurn::Reasoning(self.reasoning);
+        }
         ModelTurn::Text(self.content)
     }
 
-    /// The reasoning text accumulated across `ReasoningDelta` fragments. The
-    /// finalized [`ModelTurn`] never carries reasoning (it streams delta-only via
-    /// the sink), but the concatenated trace is retained so a test can assert the
-    /// fragments were concatenated in order.
+    /// The reasoning text accumulated across `ReasoningDelta` fragments.
+    /// Exposed under `#[cfg(test)]` so a test can assert the fragments were
+    /// concatenated in order; production code reads it through `into_turn`
+    /// instead (which consumes `self`).
     #[cfg(test)]
     fn reasoning(&self) -> &str {
         &self.reasoning
@@ -1206,7 +1229,23 @@ mod prompt_carveout_tests {
     }
 }
 
-const RESPONSE_RESERVE_TOKENS: usize = 4096;
+/// Output budget (tokens) requested via `max_tokens` when a context window is
+/// known ([`OutputBudget::Reserve`]'s cap), and the per-turn reserve subtracted
+/// from that window when sizing the transcript trim ([`transcript_budget`]);
+/// the two intentionally share one constant so a trimmed transcript always
+/// leaves room for the output this same constant caps.
+///
+/// 16384, not the original 4096: a REASONING model's `reasoning` channel
+/// counts against this same per-turn output budget on OpenAI-compat servers
+/// (vLLM and others), and 4096 was not enough room for a thinking model to
+/// finish thinking AND still emit an answer or tool call in one turn. It
+/// burned the whole budget mid-thought (`finish_reason: "length"`,
+/// `content: null`) and the turn produced nothing to act on (tuxlink-nyyr2).
+/// Matches the precedent set for Claude reasoning models by
+/// `anthropic_provider`'s `anthropic_max_tokens` (its non-Haiku case).
+/// Harmless for a non-reasoning model: `max_tokens` is a ceiling, not a
+/// target, so a model that stops earlier at its own EOS is unaffected.
+const RESPONSE_RESERVE_TOKENS: usize = 16384;
 
 /// Conservative token estimate for a byte string. Real BPE is ~4 chars/token for
 /// English and ~3 for dense JSON; dividing by 3 OVER-estimates on purpose so the
@@ -1319,7 +1358,7 @@ const MIN_OUTPUT_TOKENS: usize = 256;
 /// UNDER-count dense content (code / CJK / base64); this margin absorbs that
 /// approximation error so the requested output cannot push the REAL prompt+output
 /// total past the window. 2048 fits comfortably inside the transcript trim's
-/// [`RESPONSE_RESERVE_TOKENS`] (4096) reserve, so a normally-trimmed conversation
+/// [`RESPONSE_RESERVE_TOKENS`] (16384) reserve, so a normally-trimmed conversation
 /// never trips the [`OutputBudget::Exceeded`] guard.
 const CONTEXT_SAFETY_MARGIN_TOKENS: usize = 2048;
 
@@ -1551,7 +1590,9 @@ fn render_message(msg: &Message) -> Value {
 ///
 /// Returns `Err(detail)` only when the response is structurally unusable (no
 /// `choices`); a present-but-empty content with no tool calls maps to an empty
-/// `Text` turn rather than an error, so the loop can surface it.
+/// `Text` turn rather than an error, so the loop can surface it. See the
+/// module-level "Response mapping" docs for the full precedence (tool_calls →
+/// content → reasoning → empty text).
 pub fn parse_completion(value: &Value) -> Result<ModelTurn, String> {
     let choice = value
         .get("choices")
@@ -1563,7 +1604,7 @@ pub fn parse_completion(value: &Value) -> Result<ModelTurn, String> {
         .get("message")
         .ok_or_else(|| "choices[0] had no message".to_string())?;
 
-    // Tool calls take precedence over content.
+    // Tool calls take precedence over content/reasoning.
     if let Some(tool_calls) = message.get("tool_calls").and_then(Value::as_array) {
         if !tool_calls.is_empty() {
             let calls: Vec<ToolCall> = tool_calls.iter().map(parse_tool_call).collect();
@@ -1571,12 +1612,31 @@ pub fn parse_completion(value: &Value) -> Result<ModelTurn, String> {
         }
     }
 
-    let content = message
-        .get("content")
+    // A present, non-null `content` string is the model's answer -- even an
+    // empty string is a genuine (if unhelpful) completion, unchanged from
+    // before this fix.
+    if let Some(content) = message.get("content").and_then(Value::as_str) {
+        return Ok(ModelTurn::Text(content.to_string()));
+    }
+
+    // `content` is null or absent. A reasoning model (Inkling-Small and other
+    // vLLM-served thinkers) that burns its whole output budget mid-thought
+    // lands here: `finish_reason: "length"`, no tool_calls, `content: null`,
+    // but `reasoning` (or gpt-oss-style `reasoning_content`) carries what it
+    // was thinking. Carry it as `ModelTurn::Reasoning` rather than coercing to
+    // an empty `Text` turn -- an empty `Text` turn silently COMPLETES the run
+    // (tuxlink-nyyr2). An empty/absent `reasoning` falls through to the
+    // pre-existing empty-text fallback: there is nothing to carry.
+    let reasoning = message
+        .get("reasoning")
         .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_string();
-    Ok(ModelTurn::Text(content))
+        .or_else(|| message.get("reasoning_content").and_then(Value::as_str))
+        .unwrap_or("");
+    if !reasoning.is_empty() {
+        return Ok(ModelTurn::Reasoning(reasoning.to_string()));
+    }
+
+    Ok(ModelTurn::Text(String::new()))
 }
 
 /// Extract `(prompt_tokens, eval_tokens)` from an OpenAI-compat `usage` object.
@@ -1999,6 +2059,27 @@ mod tests {
             }
             other => panic!("expected Reserve, got {other:?}"),
         }
+    }
+
+    /// tuxlink-nyyr2 budget policy: the reserved output budget must be large
+    /// enough for a reasoning model to BOTH finish thinking and still emit an
+    /// answer or tool call in the same turn. That is the exact failure this
+    /// constant exists to prevent (fixture: inkling-small-nvfp4 burned a
+    /// 4096-token budget on reasoning alone, `finish_reason: "length"`, no
+    /// tool call). Pinned as an explicit floor so a future edit cannot
+    /// silently shrink the constant back below what a thinking model needs.
+    #[test]
+    // Both sides are const-evaluable, so clippy sees this as an assertion on a
+    // constant. That is the point: this test exists to fail loudly (with a
+    // named-floor message) the moment a future edit shrinks the constant, not
+    // to check anything at runtime.
+    #[allow(clippy::assertions_on_constants)]
+    fn response_reserve_budget_is_large_enough_for_reasoning_plus_action() {
+        assert!(
+            RESPONSE_RESERVE_TOKENS >= 16_384,
+            "RESPONSE_RESERVE_TOKENS ({RESPONSE_RESERVE_TOKENS}) regressed below the \
+             reasoning+action floor established for tuxlink-nyyr2"
+        );
     }
 
     /// F2 regression: a single oversized user message (the trim cannot drop it —
@@ -2468,6 +2549,97 @@ mod tests {
     fn null_content_no_tools_is_empty_text() {
         let recorded = json!({
             "choices": [{ "message": { "role": "assistant", "content": null } }]
+        });
+        assert_eq!(parse_completion(&recorded).unwrap(), ModelTurn::Text(String::new()));
+    }
+
+    // --- tuxlink-nyyr2: reasoning-model turns (Inkling-Small / vLLM 0.26) ----
+
+    /// Non-streaming loop-killer fixture (real capture, vLLM 0.26 serving
+    /// inkling-small-nvfp4, 2026-08-09): `content: null`, no `tool_calls`,
+    /// reasoning burned the whole output budget (`finish_reason: "length"`).
+    /// This must carry as `ModelTurn::Reasoning`, NOT coerce to an empty
+    /// `Text` turn (acceptance criteria 1 + 3).
+    #[test]
+    fn null_content_with_reasoning_becomes_reasoning_turn() {
+        let recorded = json!({
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "reasoning": "The user wants me to reply with exactly one word: ALIVE.\n\nI"
+                },
+                "logprobs": null,
+                "finish_reason": "length",
+                "stop_reason": null
+            }]
+        });
+        assert_eq!(
+            parse_completion(&recorded).unwrap(),
+            ModelTurn::Reasoning(
+                "The user wants me to reply with exactly one word: ALIVE.\n\nI".into()
+            )
+        );
+    }
+
+    /// Non-streaming reasoning + tool_calls fixture (real capture, same
+    /// server): `content: null`, `tool_calls` present, `reasoning` also
+    /// present. Tool calls must still execute exactly as a content +
+    /// tool_calls turn would (acceptance criterion 2): the reasoning is not
+    /// carried on a `ToolCalls` turn (there is nowhere to put it; the calls
+    /// win outright, matching a non-reasoning model's identical turn).
+    #[test]
+    fn reasoning_plus_tool_calls_executes_tool_calls() {
+        let recorded = json!({
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "chatcmpl-tool-91db87076a1941f6",
+                        "type": "function",
+                        "function": { "name": "ping", "arguments": "{}" }
+                    }],
+                    "reasoning": "The user is asking me to call the ping tool. ..."
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+        assert_eq!(
+            parse_completion(&recorded).unwrap(),
+            ModelTurn::ToolCalls(vec![ToolCall::new("ping", json!({}))])
+        );
+    }
+
+    /// gpt-oss-style `reasoning_content` spelling gets the same treatment as
+    /// `reasoning` on the non-streaming path (parity with the streaming
+    /// accumulator's dual-spelling support).
+    #[test]
+    fn null_content_with_reasoning_content_spelling_becomes_reasoning_turn() {
+        let recorded = json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "reasoning_content": "weighing the options..."
+                }
+            }]
+        });
+        assert_eq!(
+            parse_completion(&recorded).unwrap(),
+            ModelTurn::Reasoning("weighing the options...".into())
+        );
+    }
+
+    /// An empty-string `reasoning` alongside null content has nothing worth
+    /// carrying, so it falls back to the pre-existing empty-`Text` behavior
+    /// rather than a useless `Reasoning("")`.
+    #[test]
+    fn null_content_with_empty_reasoning_string_is_empty_text() {
+        let recorded = json!({
+            "choices": [{ "message": { "content": null, "reasoning": "" } }]
         });
         assert_eq!(parse_completion(&recorded).unwrap(), ModelTurn::Text(String::new()));
     }
@@ -2967,6 +3139,25 @@ mod tests {
             vec![RunEvent::ReasoningDelta { chunk: "thinking...".into() }],
             "the `reasoning_content` spelling must also emit ReasoningDelta"
         );
+    }
+
+    /// tuxlink-nyyr2, streaming symmetry with the non-streaming
+    /// `null_content_with_reasoning_becomes_reasoning_turn` fixture test: a
+    /// stream that carries ONLY reasoning deltas (no `content`, no
+    /// `tool_calls`) before the connection ends must finalize as
+    /// `ModelTurn::Reasoning`, not an empty `Text` turn. The streaming
+    /// finalizer had the exact same loop-killer bug as `parse_completion`.
+    #[test]
+    fn stream_reasoning_only_no_content_finalizes_as_reasoning_turn() {
+        let sink = |_e: RunEvent| {};
+        let mut acc = SseAccumulator::new();
+        let body = format!(
+            "{}{}",
+            sse_frame(json!({ "choices": [{ "delta": { "reasoning": "still " } }] })),
+            sse_frame(json!({ "choices": [{ "delta": { "reasoning": "thinking" }, "finish_reason": "length" }] })),
+        );
+        acc.feed(body.as_bytes(), &sink).unwrap();
+        assert_eq!(acc.into_turn(), ModelTurn::Reasoning("still thinking".into()));
     }
 
     /// A trailing usage-only frame (`choices: []`, carrying `usage`) is captured

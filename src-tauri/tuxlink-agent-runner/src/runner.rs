@@ -1,4 +1,4 @@
-//! The bounded agent loop (T3 COR-1, T4 COR-2, T5 COR-3).
+//! The bounded agent loop (T3 COR-1, T4 COR-2, T5 COR-3, COR-4).
 //!
 //! [`run`] drives a [`Provider`] and a [`ToolInvoker`] to a terminal
 //! [`RunOutcome`]. It holds ONLY a `&dyn Provider`, a `&dyn ToolInvoker`, and a
@@ -6,7 +6,9 @@
 //! taint (SEC-4). Every tool call carries [`CallAuthority::Agent`] (SEC-3).
 //!
 //! Termination is guaranteed: every iteration either returns, advances the
-//! bounded malformed-retry counter (COR-3), or moves wall-clock time toward the
+//! bounded malformed-retry counter (COR-3 malformed tool-call batches AND
+//! COR-4 reasoning-only turns share this one counter; see the
+//! [`ModelTurn::Reasoning`] arm below), or moves wall-clock time toward the
 //! whole-run budget (COR-1, `max_response_duration`, checked at the loop top).
 //! The malformed-retry cap and the run budget are both hard bounds, so the loop
 //! cannot spin forever even against an adversarial Provider.
@@ -245,6 +247,47 @@ pub async fn run_with_conversation_with_transcript(
                 // BEFORE returning. Does not affect the outcome.
                 on_event(RunEvent::AssistantText { text: text.clone() });
                 return RunOutcome::Completed(text);
+            }
+            ModelTurn::Reasoning(reasoning) => {
+                // COR-4 (tuxlink-nyyr2): the model produced ONLY reasoning this
+                // turn, with no answer and no tool calls. A reasoning model that
+                // spends its whole per-turn output budget mid-thought
+                // (`finish_reason: "length"`) lands here; `OpenAiProvider` sizes
+                // `max_tokens` generously so this should be rare in practice
+                // (see `RESPONSE_RESERVE_TOKENS`), but the loop must not
+                // silently COMPLETE on it regardless: that is exactly the
+                // loop-killer bug (an empty answer, no routine authored).
+                //
+                // Bounded like a COR-3 malformed batch, and sharing the SAME
+                // `malformed_retries` counter/cap on purpose: two independent
+                // "unproductive turn" budgets would let a model alternate
+                // between malformed tool calls and reasoning-only turns to
+                // evade BOTH caps. That is the same class of gap
+                // `authority_denied_streak` (above) was hardened against for
+                // denied/malformed alternation. On exhaustion this is
+                // `NeedsOperator`, not `InvalidAction`: nothing schema-invalid
+                // was attempted (COR-3 is specifically about tool-call shape),
+                // so `InvalidAction`'s contract would misdescribe it.
+                if malformed_retries >= limits.max_malformed_retries {
+                    return RunOutcome::NeedsOperator(format!(
+                        "model produced reasoning with no answer and no tool call \
+                         for {} consecutive turns (last turn's reasoning was {} \
+                         chars, likely truncated by the output budget); the \
+                         operator should check the per-turn token budget for this \
+                         model",
+                        malformed_retries + 1,
+                        reasoning.len(),
+                    ));
+                }
+                malformed_retries += 1;
+                conversation.push_tool_error(
+                    "reasoning",
+                    "this turn produced only reasoning -- no answer and no tool \
+                     call. Continue: finish reasoning and either answer directly \
+                     or call a tool.",
+                );
+                record_last(transcript, conversation);
+                continue;
             }
             ModelTurn::ToolCalls(calls) => {
                 // pf6re one-shot finalization, TAINT ONLY (tuxlink-aymi7 split):
