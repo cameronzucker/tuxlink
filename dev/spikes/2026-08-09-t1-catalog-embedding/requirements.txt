@@ -1,0 +1,3 @@
+# Spike-only environment (CPU torch). Exact versions used for the committed
+# results are recorded at the bottom of results/REPORT.md via pip freeze.
+sentence-transformers

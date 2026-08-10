@@ -1,0 +1,2298 @@
+{
+ "model": "intfloat/e5-small-v2",
+ "host": "r2-i3n305",
+ "n_items": 1477,
+ "n_queries": 44,
+ "load_s": 9.22,
+ "rss_before_mib": 851.0,
+ "rss_loaded_mib": 1010.1,
+ "templates": {
+  "desc": {
+   "precompute_s": 8.49,
+   "query_ms_median": 158.4,
+   "query_ms_p95": 186.1,
+   "top1": 0.861,
+   "top5": 0.944,
+   "sec1": 0.917,
+   "margin_answer_median": 0.0382,
+   "margin_ask_median": 0.004,
+   "top1sim_nomatch_max": 0.8187,
+   "top1sim_match_min": 0.831,
+   "records": [
+    {
+     "id": "aurora-tonight",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9107851386070251,
+     "margin": 0.008511602878570557,
+     "top5": [
+      "AURORA/AUR_TONIGHT:0.911",
+      "AURORA/AUR_TOMORROW:0.902",
+      "WX_US_AK/AK_ZON_ANC2:0.856",
+      "WX_US_AZ/AZ_ZON_NOFLA:0.855",
+      "WX_US_CO/CO_ZON_PUEB:0.854"
+     ]
+    },
+    {
+     "id": "aurora-tomorrow-para",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8831643462181091,
+     "margin": 0.03206223249435425,
+     "top5": [
+      "AURORA/AUR_TOMORROW:0.883",
+      "AURORA/AUR_TONIGHT:0.851",
+      "WX_FAX/PPAE50.TIF:0.836",
+      "WX_FAX/PPAE51.TIF:0.836",
+      "WX_FAX/PPAE00.TIF:0.835"
+     ]
+    },
+    {
+     "id": "ice-west-ak",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9098644852638245,
+     "margin": 0.018673956394195557,
+     "top5": [
+      "ARCTIC_ICE/FZAK80:0.910",
+      "WX_AK_COAST/FZAK80.PAFC:0.891",
+      "WX_US_AK/AK_ZON_WARCO:0.855",
+      "WX_AK_COAST/SRUS88.PAFC:0.841",
+      "WX_US_AK/AK_ZON_ANC1:0.836"
+     ]
+    },
+    {
+     "id": "metar-nice",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8804582357406616,
+     "margin": 0.04141843318939209,
+     "top5": [
+      "METAR/FRA_NIC_ICAO:0.880",
+      "METAR/FRA_FIG_ICAO:0.839",
+      "METAR/FRA_MAR_ICAO:0.839",
+      "METAR/FRA_BEZ_ICAO:0.838",
+      "METAR/FRA_CAL_ICAO:0.836"
+     ]
+    },
+    {
+     "id": "metar-dubrovnik-para",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.880115270614624,
+     "margin": 0.044863343238830566,
+     "top5": [
+      "METAR/CRO_DUB_ICAO:0.880",
+      "METAR/CRO_RIJ_ICAO:0.835",
+      "METAR/SLO_POR_ICAO:0.834",
+      "METAR/CRO_ZAD_ICAO:0.829",
+      "METAR/CRO_PUL_ICAO:0.825"
+     ]
+    },
+    {
+     "id": "fl-auxcomm",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9322711825370789,
+     "margin": 0.10914021730422974,
+     "top5": [
+      "ARES_RACES/FL_AUX:0.932",
+      "WX_US_FL/FL_TAB_NESEG:0.823",
+      "WX_US_FL/FL_ZON_TALL:0.822",
+      "WX_FAX/PJAI10.TIF:0.819",
+      "WX_US_RAD/US.RAD.EFLPH:0.818"
+     ]
+    },
+    {
+     "id": "tx-races",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9339094161987305,
+     "margin": 0.10916507244110107,
+     "top5": [
+      "ARES_RACES/TX_RACES:0.934",
+      "ARES_RACES/TX_D16_RACES:0.825",
+      "WX_US_TX/TX_TAB_TEXAS:0.813",
+      "WX_US_TX/TX_TAB_4STTX:0.812",
+      "WX_US_TX/TX_TAB_SOPLA:0.809"
+     ]
+    },
+    {
+     "id": "roatan-15day",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8933316469192505,
+     "margin": 0.0349772572517395,
+     "top5": [
+      "HONDURAS/ROATAN:0.893",
+      "HONDURAS/GRACIAS:0.858",
+      "HONDURAS/CATACAMAS:0.847",
+      "HONDURAS/JUTICALPA:0.846",
+      "HONDURAS/PUERTOLEMPIR:0.845"
+     ]
+    },
+    {
+     "id": "hf-nets-cruisers",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9264348745346069,
+     "margin": 0.10115998983383179,
+     "top5": [
+      "HF_NETS/HF_NETS:0.926",
+      "METAREA_IV/MA_IV.HSF:0.825",
+      "WX_FAX/PPAM50.TIF:0.823",
+      "WX_FAX/PJAI20.TIF:0.823",
+      "WX_S_AFRICA/ZASHIPPING_W:0.822"
+     ]
+    },
+    {
+     "id": "keps-iss",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": false,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8727004528045654,
+     "margin": 0.033527255058288574,
+     "top5": [
+      "SAT_KEPS/AMSAT.KEPS:0.873",
+      "SAT_KEPS/ISS.2KEPS:0.839",
+      "WX_US_KY/KY_ZON_PADU:0.815",
+      "METAR/GRE_KER_ICAO:0.814",
+      "METAREA_I/INMARSAT_OW:0.811"
+     ]
+    },
+    {
+     "id": "tle-ham",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9307575225830078,
+     "margin": 0.03396165370941162,
+     "top5": [
+      "SAT_KEPS/HAM.2KEPS:0.931",
+      "SAT_KEPS/WX.2KEPS:0.897",
+      "SAT_KEPS/VIS.2KEPS:0.895",
+      "SAT_KEPS/AMSAT.KEPS:0.877",
+      "SAT_KEPS/ISS.2KEPS:0.869"
+     ]
+    },
+    {
+     "id": "keps-wxsats",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9219517707824707,
+     "margin": 0.026706457138061523,
+     "top5": [
+      "SAT_KEPS/WX.2KEPS:0.922",
+      "SAT_KEPS/VIS.2KEPS:0.895",
+      "SAT_KEPS/HAM.2KEPS:0.885",
+      "SAT_KEPS/ISS.2KEPS:0.866",
+      "WX_NOAA/NOAA.TXT:0.854"
+     ]
+    },
+    {
+     "id": "wwv-flux",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9142870903015137,
+     "margin": 0.07041454315185547,
+     "top5": [
+      "PROPAGATION/PROP_WWV:0.914",
+      "PROPAGATION/PROP_SGAS:0.844",
+      "PROPAGATION/PROP_SGAS_27:0.839",
+      "WX_FAX/PPAE01.TIF:0.839",
+      "WX_FAX/PPAE00.TIF:0.839"
+     ]
+    },
+    {
+     "id": "drap",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9217502474784851,
+     "margin": 0.07542383670806885,
+     "top5": [
+      "PROPAGATION/PROP_DRAP:0.922",
+      "WX_NOAA/NOAA.TXT:0.846",
+      "PROPAGATION/PROP_SOLWIND:0.846",
+      "PROPAGATION/PROP3DNOAA:0.841",
+      "WX_US_AK/AK_TAB_JUNE:0.840"
+     ]
+    },
+    {
+     "id": "spacewx-3day",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9363035559654236,
+     "margin": 0.05512642860412598,
+     "top5": [
+      "PROPAGATION/PROP_3DAY:0.936",
+      "PROPAGATION/PROP_3DPROB:0.881",
+      "WX_FAX/PYFK87.TIF:0.852",
+      "PROPAGATION/PROP_ADVIS:0.852",
+      "WX_FAX/PYFE87.TIF:0.848"
+     ]
+    },
+    {
+     "id": "cat-update-we",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9037912487983704,
+     "margin": 0.033666908740997314,
+     "top5": [
+      "WL2K_HELP/UPDA_CAT_WE:0.904",
+      "WL2K_HELP/UPDATE_CAT:0.870",
+      "ARES_RACES/FL_P2P_NET:0.837",
+      "WL2K_HELP/UPDA_CAT_AIR:0.836",
+      "WL2K_HELP/INQUIRIES:0.834"
+     ]
+    },
+    {
+     "id": "custom-grib-help",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9199002981185913,
+     "margin": 0.09547388553619385,
+     "top5": [
+      "WL2K_HELP/CUSTOM.GRIB:0.920",
+      "WL2K_HELP/MAXSAEA_GRIB:0.824",
+      "WX_MED/WMEDHI_ACT:0.815",
+      "WX_MED/WMEDLO_ACT:0.811",
+      "WX_MED/WMEDHI_72FOR:0.805"
+     ]
+    },
+    {
+     "id": "change-call",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9287524819374084,
+     "margin": 0.10621827840805054,
+     "top5": [
+      "WL2K_HELP/CHANGE_CALL:0.929",
+      "WL2K_HELP/PRECEDENCE:0.823",
+      "WL2K_HELP/DIDUNO:0.815",
+      "WL2K_HELP/INQUIRIES:0.813",
+      "WL2K_HELP/P3FREQLIST:0.807"
+     ]
+    },
+    {
+     "id": "buoy-41009",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9225982427597046,
+     "margin": 0.003026127815246582,
+     "top5": [
+      "WX_BUOY/NDBC41009:0.923",
+      "WX_BUOY/NDBC41004:0.920",
+      "WX_BUOY/NDBC41008:0.918",
+      "WX_BUOY/NDBC41001:0.917",
+      "WX_BUOY/NDBC41002:0.915"
+     ]
+    },
+    {
+     "id": "hap-perth",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9152960777282715,
+     "margin": 0.027107954025268555,
+     "top5": [
+      "PROPAGATION/AUS_HAP_PER:0.915",
+      "PROPAGATION/AUS_HAP_MEL:0.888",
+      "PROPAGATION/AUS_HAP_CAN:0.888",
+      "PROPAGATION/AUS_HAP_SYD:0.885",
+      "PROPAGATION/AUS_HAP_HOB:0.884"
+     ]
+    },
+    {
+     "id": "highseas-tropatl",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8852174282073975,
+     "margin": 0.0035001635551452637,
+     "top5": [
+      "WX_HIGH_SEAS/FZNT02.KNHC:0.885",
+      "WX_CAR_GULF/FZNP03.KNHC:0.882",
+      "METAREA_I/INMARSAT_HF:0.880",
+      "WX_CAR_GULF/ACCA62.TJSG:0.879",
+      "METAREA_XIV/MA_XIV.HSPAC:0.879"
+     ]
+    },
+    {
+     "id": "efd-caribbean",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.951677680015564,
+     "margin": 0.03459137678146362,
+     "top5": [
+      "WX_US/US.CARIBBEAN:0.952",
+      "WX_US/US.ALL:0.917",
+      "WX_MARITIMES/FQCN53.CWHX:0.875",
+      "WX_US_AK/AK_DIS_EXTEN:0.870",
+      "WX_US_HI/HI_FOR_EXTEN:0.870"
+     ]
+    },
+    {
+     "id": "az-zone-se",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9177944660186768,
+     "margin": 0.014506518840789795,
+     "top5": [
+      "WX_US_AZ/AZ_ZON_SE:0.918",
+      "WX_US_CA/CA_ZON_SESWA:0.903",
+      "WX_US_AZ/AZ_TAB_SE:0.886",
+      "WX_US_OR/OR_ZON_SE:0.877",
+      "WX_US_AZ/AZ_ZON_SW:0.877"
+     ]
+    },
+    {
+     "id": "nv-afd",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9365615844726562,
+     "margin": 0.07021236419677734,
+     "top5": [
+      "WX_US_NV/NV_DIS_NV:0.937",
+      "S/PACIFIC_WX/AM_SAMOA:0.866",
+      "WX_US_NV/NV_ZON_ELKO:0.863",
+      "WX_US_CA/CA_ZON_WESNE:0.862",
+      "WX_US_NV/NV_ZON_WESNE:0.862"
+     ]
+    },
+    {
+     "id": "ionogram-rome",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9408820867538452,
+     "margin": 0.06584042310714722,
+     "top5": [
+      "PROPAGATION/IONOG_ROME:0.941",
+      "PROPAGATION/IONOG_TUCU:0.875",
+      "PROPAGATION/IONO_GLO_W:0.835",
+      "PROPAGATION/IONO_GLO_E:0.834",
+      "PROPAGATION/IONO_GL_HELP:0.812"
+     ]
+    },
+    {
+     "id": "conv-outlook",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.924375057220459,
+     "margin": 0.0718044638633728,
+     "top5": [
+      "WX_US/CONV_OUT:0.924",
+      "WX_ATLANTIC/ABNT20.KNHC:0.853",
+      "WX_PACIFIC/ACPN50.PHFO:0.847",
+      "WX_US_FL/FL_ZON_TALL:0.847",
+      "WX_US_OH/OH_ZON_WILM:0.844"
+     ]
+    },
+    {
+     "id": "ice-hudson",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.875857949256897,
+     "margin": 0.007457852363586426,
+     "top5": [
+      "ARCTIC_ICE/FICN15CWIS:0.876",
+      "WX_ARCTIC/FQCN26.CWNT:0.868",
+      "WX_ARCTIC/FQCN56.CWNT:0.859",
+      "WX_ARCTIC/FQCN11.CWNT:0.845",
+      "ARCTIC_ICE/FICN17CWIS:0.839"
+     ]
+    },
+    {
+     "id": "spacewx-advisory",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9206100702285767,
+     "margin": 0.05479562282562256,
+     "top5": [
+      "PROPAGATION/PROP_ADVIS:0.921",
+      "PROPAGATION/PROP_3DAY:0.866",
+      "WX_US/CONV_OUT:0.849",
+      "WX_NOAA/NOAA.TXT:0.848",
+      "WX_PACIFIC/WTPA22.PHFO:0.843"
+     ]
+    },
+    {
+     "id": "local-wx",
+     "behavior": "ask",
+     "kind": "ambig",
+     "hit1": false,
+     "hit5": false,
+     "sec1": false,
+     "top1_sim": 0.8468773365020752,
+     "margin": 0.0018155574798583984,
+     "top5": [
+      "WX_US_SELCTY/SELCTY_PART3:0.847",
+      "WX_US_SELCTY/SELCTY_PART2:0.845",
+      "WX_US_SELCTY/SELCTY_PART1:0.845",
+      "WX_US_OR/OR_ZON_ORCE:0.844",
+      "WX_US_SELCTY/SELCTY_PART4:0.842"
+     ]
+    },
+    {
+     "id": "local-wx-ctx",
+     "behavior": "ask",
+     "kind": "section",
+     "hit1": false,
+     "hit5": true,
+     "sec1": false,
+     "top1_sim": 0.8310254812240601,
+     "margin": 0.002548515796661377,
+     "top5": [
+      "WX_ATLANTIC/WTNT23.KNHC:0.831",
+      "WX_ATLANTIC/ABNT20.KNHC:0.828",
+      "WX_US_AZ/AZ_ZON_NOFLA:0.825",
+      "WX_US_AZ/AZ_TAB_SW:0.824",
+      "WX_PACIFIC/WTPZ23.KNHC:0.824"
+     ]
+    },
+    {
+     "id": "vague-wx",
+     "behavior": "ask",
+     "kind": "ambig",
+     "hit1": false,
+     "hit5": false,
+     "sec1": false,
+     "top1_sim": 0.8741976618766785,
+     "margin": 0.005459964275360107,
+     "top5": [
+      "WX_FAX/PJAM98.TIF:0.874",
+      "WX_FAX/PWAE99.TIF:0.869",
+      "WX_FAX/PWAE98.TIF:0.869",
+      "WX_FAX/PWAE89.TIF:0.869",
+      "WX_US_CO/CO_TAB_DENBO:0.864"
+     ]
+    },
+    {
+     "id": "prop-generic",
+     "behavior": "ask",
+     "kind": "section",
+     "hit1": false,
+     "hit5": false,
+     "sec1": false,
+     "top1_sim": 0.8693779706954956,
+     "margin": 0.028480052947998047,
+     "top5": [
+      "UK_CADET/UK_PROP_D:0.869",
+      "WX_EASTPAC/SE_PJFK93:0.841",
+      "WX_US_GA/GA_TAB_PEACH:0.838",
+      "WX_MARITIMES/FQCN14.CWHX:0.838",
+      "WX_EASTPAC/SE_PJFI11:0.837"
+     ]
+    },
+    {
+     "id": "winlink-help",
+     "behavior": "ask",
+     "kind": "section",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8854588270187378,
+     "margin": 0.010656476020812988,
+     "top5": [
+      "WL2K_HELP/DIDUNO:0.885",
+      "WL2K_HELP/INQUIRIES:0.875",
+      "WL2K_USERS/CMS_TRAFFIC:0.870",
+      "WL2K_TERMS/TERMS_COND:0.856",
+      "ARES_RACES/FL_P2P_NET:0.852"
+     ]
+    },
+    {
+     "id": "grib-generic",
+     "behavior": "ask",
+     "kind": "ambig",
+     "hit1": false,
+     "hit5": false,
+     "sec1": false,
+     "top1_sim": 0.8529955148696899,
+     "margin": 0.0069876909255981445,
+     "top5": [
+      "WL2K_HELP/CUSTOM.GRIB:0.853",
+      "WL2K_HELP/MAXSAEA_GRIB:0.846",
+      "WX_MED/WMEDHI_72FOR:0.806",
+      "WX_BALTIC/DWD_SEA_D_PB:0.804",
+      "WX_MED/WMEDLO_72FOR:0.803"
+     ]
+    },
+    {
+     "id": "sat-pix",
+     "behavior": "ask",
+     "kind": "section",
+     "hit1": false,
+     "hit5": true,
+     "sec1": false,
+     "top1_sim": 0.835560142993927,
+     "margin": 0.0006410479545593262,
+     "top5": [
+      "SAT_KEPS/VIS.2KEPS:0.836",
+      "WX_NOAA/NOAA.TXT:0.835",
+      "SAT_PIX/PACNE_IR.JPG:0.832",
+      "SAT_PIX/ALIR.JPG:0.829",
+      "SAT_KEPS/WX.2KEPS:0.826"
+     ]
+    },
+    {
+     "id": "wxfax-atl",
+     "behavior": "ask",
+     "kind": "section",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.874373733997345,
+     "margin": 0.007467150688171387,
+     "top5": [
+      "WX_FAX/PJAM98.TIF:0.874",
+      "WX_FAX/PWAE10.TIF:0.867",
+      "WX_FAX/PWAD89.TIF:0.866",
+      "WX_FAX/PJAM88.TIF:0.865",
+      "WX_FAX/PWAE89.TIF:0.865"
+     ]
+    },
+    {
+     "id": "buoy-sf",
+     "behavior": "ask",
+     "kind": "item",
+     "hit1": false,
+     "hit5": false,
+     "sec1": true,
+     "top1_sim": 0.8702810406684875,
+     "margin": 0.0018076300621032715,
+     "top5": [
+      "WX_BUOY/NDBC44013:0.870",
+      "WX_BUOY/NDBC41004:0.868",
+      "WX_BUOY/NDBC41002:0.866",
+      "WX_BUOY/NDBC44009:0.863",
+      "WX_BUOY/NDBC41008:0.863"
+     ]
+    },
+    {
+     "id": "az-generic",
+     "behavior": "ask",
+     "kind": "section",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8566662073135376,
+     "margin": 0.0014656782150268555,
+     "top5": [
+      "WX_US_AZ/AZ_ZON_NOFLA:0.857",
+      "WX_US_AZ/AZ_TAB_PHOE:0.855",
+      "WX_US_AZ/AZ_TAB_SW:0.849",
+      "WX_US_CA/CA_ZON_SESWA:0.846",
+      "WX_US_AZ/AZ_TAB_NORT:0.836"
+     ]
+    },
+    {
+     "id": "nv-reno",
+     "behavior": "ask",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8964383602142334,
+     "margin": 0.016872167587280273,
+     "top5": [
+      "WX_US_NV/NV_TAB_RENO:0.896",
+      "WX_US_NV/NV_ZON_WESNE:0.880",
+      "WX_US_CA/CA_ZON_WESNE:0.880",
+      "WX_US_NV/NV_DIS_NV:0.867",
+      "WX_US_NV/NV_ZON_ELKO:0.858"
+     ]
+    },
+    {
+     "id": "none-pizza",
+     "behavior": "ask",
+     "kind": "none",
+     "hit1": false,
+     "hit5": false,
+     "sec1": false,
+     "top1_sim": 0.8070942163467407,
+     "margin": 0.0007363557815551758,
+     "top5": [
+      "WL2K_HELP/IRIDIUM:0.807",
+      "WX_US_AL/AL_ZON_TVAHU:0.806",
+      "WX_US_COAST/FZUS52.KTAE:0.801",
+      "WX_FAX/PPBM50.TIF:0.801",
+      "WX_US_COAST/FZUS51.KOKX:0.800"
+     ]
+    },
+    {
+     "id": "none-capital",
+     "behavior": "ask",
+     "kind": "none",
+     "hit1": false,
+     "hit5": false,
+     "sec1": false,
+     "top1_sim": 0.818672776222229,
+     "margin": 0.0018838047981262207,
+     "top5": [
+      "METAR/FRA_NIC_ICAO:0.819",
+      "METAR/FRA_BEZ_ICAO:0.817",
+      "METAR/FRA_AJA_ICAO:0.815",
+      "METAR/FRA_CAL_ICAO:0.812",
+      "METAR/FRA_MAR_ICAO:0.809"
+     ]
+    },
+    {
+     "id": "none-music",
+     "behavior": "ask",
+     "kind": "none",
+     "hit1": false,
+     "hit5": false,
+     "sec1": false,
+     "top1_sim": 0.8042155504226685,
+     "margin": 0.007543206214904785,
+     "top5": [
+      "WX_FAX/SPAC_TAZ_WAV:0.804",
+      "WX_AK_COAST/FZAK52.PAJK:0.797",
+      "WX_PACIFIC/WTPZ43.KNHC:0.793",
+      "WX_MED/WMEDLO_72FOR:0.792",
+      "WX_MED/WMEDLO_ACT:0.791"
+     ]
+    },
+    {
+     "id": "none-email",
+     "behavior": "ask",
+     "kind": "none",
+     "hit1": false,
+     "hit5": false,
+     "sec1": false,
+     "top1_sim": 0.8050521612167358,
+     "margin": 0.0009629726409912109,
+     "top5": [
+      "WL2K_HELP/P3FREQLIST:0.805",
+      "WL2K_HELP/IRIDIUM:0.804",
+      "WX_BALTIC/DWD_DE_RTTY1:0.799",
+      "WX_BALTIC/DWD_DE_RTTY2:0.793",
+      "WX_FAX/PPBM50.TIF:0.792"
+     ]
+    },
+    {
+     "id": "none-ardop",
+     "behavior": "ask",
+     "kind": "none",
+     "hit1": false,
+     "hit5": false,
+     "sec1": false,
+     "top1_sim": 0.8117732405662537,
+     "margin": 0.017574846744537354,
+     "top5": [
+      "WL2K_RMS/PUB_ARDOP:0.812",
+      "WL2K_HELP/IRIDIUM:0.794",
+      "WX_US_ME/ME_ZON_ARONW:0.788",
+      "WL2K_HELP/P3FREQLIST:0.786",
+      "WX_FAX/PYBA01.TIF:0.783"
+     ]
+    }
+   ]
+  },
+  "sec_desc": {
+   "precompute_s": 12.87,
+   "query_ms_median": 157.9,
+   "query_ms_p95": 226.0,
+   "top1": 0.944,
+   "top5": 0.972,
+   "sec1": 0.972,
+   "margin_answer_median": 0.0356,
+   "margin_ask_median": 0.0022,
+   "top1sim_nomatch_max": 0.8183,
+   "top1sim_match_min": 0.8268,
+   "records": [
+    {
+     "id": "aurora-tonight",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8868498802185059,
+     "margin": 0.001100301742553711,
+     "top5": [
+      "AURORA/AUR_TONIGHT:0.887",
+      "AURORA/AUR_TOMORROW:0.886",
+      "WX_US_CO/CO_ZON_PUEB:0.854",
+      "WX_US_OUTDR/OUT_CO_DEBO:0.852",
+      "WX_US_CO/CO_TAB_DENBO:0.847"
+     ]
+    },
+    {
+     "id": "aurora-tomorrow-para",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8696931004524231,
+     "margin": 0.024393081665039062,
+     "top5": [
+      "AURORA/AUR_TOMORROW:0.870",
+      "AURORA/AUR_TONIGHT:0.845",
+      "SAT_PIX/NAR420.JPG:0.830",
+      "WX_FAX/PPAE00.TIF:0.826",
+      "WX_FAX/PPAE01.TIF:0.826"
+     ]
+    },
+    {
+     "id": "ice-west-ak",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8853530287742615,
+     "margin": 0.00889807939529419,
+     "top5": [
+      "ARCTIC_ICE/FZAK80:0.885",
+      "WX_AK_COAST/FZAK80.PAFC:0.876",
+      "WX_US_AK/AK_ZON_WARCO:0.852",
+      "WX_AK_COAST/SRUS88.PAFC:0.845",
+      "WX_ARCTIC/FQCN56.CWNT:0.844"
+     ]
+    },
+    {
+     "id": "metar-nice",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8706548810005188,
+     "margin": 0.03821563720703125,
+     "top5": [
+      "METAR/FRA_NIC_ICAO:0.871",
+      "METAR/FRA_FIG_ICAO:0.832",
+      "METAR/FRA_MAR_ICAO:0.831",
+      "METAR/FRA_BEZ_ICAO:0.830",
+      "METAR/FRA_BAS_ICAO:0.830"
+     ]
+    },
+    {
+     "id": "metar-dubrovnik-para",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8623710870742798,
+     "margin": 0.03658103942871094,
+     "top5": [
+      "METAR/CRO_DUB_ICAO:0.862",
+      "METAR/CRO_RIJ_ICAO:0.826",
+      "METAR/SLO_POR_ICAO:0.824",
+      "METAR/CRO_PUL_ICAO:0.817",
+      "METAR/CRO_ZAD_ICAO:0.817"
+     ]
+    },
+    {
+     "id": "fl-auxcomm",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8954600095748901,
+     "margin": 0.06926333904266357,
+     "top5": [
+      "ARES_RACES/FL_AUX:0.895",
+      "WX_US_FL/FL_TAB_NESEG:0.826",
+      "WX_US_FL/FL_TAB_EACEN:0.823",
+      "WX_US_FL/FL_TAB_TAL:0.822",
+      "WX_US_FL/FL_ZON_TALL:0.822"
+     ]
+    },
+    {
+     "id": "tx-races",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9101883172988892,
+     "margin": 0.08187508583068848,
+     "top5": [
+      "ARES_RACES/TX_RACES:0.910",
+      "WX_US_TX/TX_TAB_TEXAS:0.828",
+      "WX_US_TX/TX_TAB_DESOU:0.825",
+      "WX_US_TX/TX_TAB_STEXA:0.824",
+      "WX_US_TX/TX_TAB_SOCEN:0.823"
+     ]
+    },
+    {
+     "id": "roatan-15day",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.876805305480957,
+     "margin": 0.02539759874343872,
+     "top5": [
+      "HONDURAS/ROATAN:0.877",
+      "HONDURAS/GRACIAS:0.851",
+      "HONDURAS/JUTICALPA:0.847",
+      "HONDURAS/CATACAMAS:0.845",
+      "HONDURAS/PUERTOLEMPIR:0.844"
+     ]
+    },
+    {
+     "id": "hf-nets-cruisers",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9121235609054565,
+     "margin": 0.08554381132125854,
+     "top5": [
+      "HF_NETS/HF_NETS:0.912",
+      "WX_GT_LAKES/FQCN53.CWTO:0.827",
+      "WX_GT_LAKES/FQCN10.CWTO:0.826",
+      "WX_FAX/SPAC_TAZ_WAV:0.821",
+      "WX_US_HI/HI_CO_NAVTX:0.821"
+     ]
+    },
+    {
+     "id": "keps-iss",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8950322270393372,
+     "margin": 0.027949094772338867,
+     "top5": [
+      "SAT_KEPS/ISS.2KEPS:0.895",
+      "SAT_KEPS/VIS.2KEPS:0.867",
+      "SAT_KEPS/WX.2KEPS:0.864",
+      "SAT_KEPS/HAM.2KEPS:0.863",
+      "SAT_KEPS/AMSAT.KEPS:0.861"
+     ]
+    },
+    {
+     "id": "tle-ham",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9062333106994629,
+     "margin": 0.02694404125213623,
+     "top5": [
+      "SAT_KEPS/HAM.2KEPS:0.906",
+      "SAT_KEPS/WX.2KEPS:0.879",
+      "SAT_KEPS/VIS.2KEPS:0.878",
+      "SAT_KEPS/AMSAT.KEPS:0.860",
+      "SAT_KEPS/ISS.2KEPS:0.859"
+     ]
+    },
+    {
+     "id": "keps-wxsats",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9023526310920715,
+     "margin": 0.022152960300445557,
+     "top5": [
+      "SAT_KEPS/WX.2KEPS:0.902",
+      "SAT_KEPS/VIS.2KEPS:0.880",
+      "SAT_KEPS/HAM.2KEPS:0.873",
+      "SAT_KEPS/ISS.2KEPS:0.860",
+      "WX_NOAA/NOAA.TXT:0.851"
+     ]
+    },
+    {
+     "id": "wwv-flux",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9107538461685181,
+     "margin": 0.07163739204406738,
+     "top5": [
+      "PROPAGATION/PROP_WWV:0.911",
+      "WX_FAX/PJBI10.TIF:0.839",
+      "PROPAGATION/PROP_SGAS_27:0.839",
+      "WX_FAX/PPAE01.TIF:0.838",
+      "WX_FAX/PWBE10.TIF:0.838"
+     ]
+    },
+    {
+     "id": "drap",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9195088744163513,
+     "margin": 0.0727698802947998,
+     "top5": [
+      "PROPAGATION/PROP_DRAP:0.920",
+      "PROPAGATION/PROP_SOLWIND:0.847",
+      "WX_NOAA/NOAA.TXT:0.846",
+      "PROPAGATION/PROPWKHI:0.844",
+      "METAREA_I/INMARSAT_HF:0.843"
+     ]
+    },
+    {
+     "id": "spacewx-3day",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9106005430221558,
+     "margin": 0.034670472145080566,
+     "top5": [
+      "PROPAGATION/PROP_3DAY:0.911",
+      "PROPAGATION/PROP_3DPROB:0.876",
+      "PROPAGATION/PROP_ADVIS:0.859",
+      "PROPAGATION/PROP_SGAS_27:0.849",
+      "WX_US_SELCTY/SELCTY_PART3:0.840"
+     ]
+    },
+    {
+     "id": "cat-update-we",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8982505798339844,
+     "margin": 0.03951376676559448,
+     "top5": [
+      "WL2K_HELP/UPDA_CAT_WE:0.898",
+      "WL2K_HELP/UPDATE_CAT:0.859",
+      "WL2K_HELP/UPDA_CAT_AIR:0.844",
+      "WL2K_HELP/DIDUNO:0.838",
+      "WL2K_HELP/INQUIRIES:0.836"
+     ]
+    },
+    {
+     "id": "custom-grib-help",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9000512957572937,
+     "margin": 0.062003910541534424,
+     "top5": [
+      "WL2K_HELP/CUSTOM.GRIB:0.900",
+      "WL2K_HELP/MAXSAEA_GRIB:0.838",
+      "WX_MED/WMEDHI_ACT:0.812",
+      "WX_MED/WMEDLO_ACT:0.808",
+      "METAR/METAR_READER:0.804"
+     ]
+    },
+    {
+     "id": "change-call",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9094384908676147,
+     "margin": 0.07619994878768921,
+     "top5": [
+      "WL2K_HELP/CHANGE_CALL:0.909",
+      "WL2K_HELP/PRECEDENCE:0.833",
+      "WL2K_HELP/DIDUNO:0.833",
+      "WL2K_HELP/ACCEPTLIST:0.816",
+      "WL2K_HELP/WL2K.QTH:0.815"
+     ]
+    },
+    {
+     "id": "buoy-41009",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9091039896011353,
+     "margin": 0.004969358444213867,
+     "top5": [
+      "WX_BUOY/NDBC41009:0.909",
+      "WX_BUOY/NDBC41004:0.904",
+      "WX_BUOY/NDBC41008:0.903",
+      "WX_BUOY/NDBC41010:0.901",
+      "WX_BUOY/NDBC41001:0.901"
+     ]
+    },
+    {
+     "id": "hap-perth",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9071834683418274,
+     "margin": 0.026436269283294678,
+     "top5": [
+      "PROPAGATION/AUS_HAP_PER:0.907",
+      "PROPAGATION/AUS_HAP_MEL:0.881",
+      "PROPAGATION/AUS_HAP_CAN:0.880",
+      "PROPAGATION/AUS_HAP_HOB:0.878",
+      "PROPAGATION/AUS_HAP_SYD:0.878"
+     ]
+    },
+    {
+     "id": "highseas-tropatl",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9035500288009644,
+     "margin": 0.02653038501739502,
+     "top5": [
+      "WX_HIGH_SEAS/FZNT02.KNHC:0.904",
+      "WX_ATLANTIC/ABNT20.KNHC:0.877",
+      "METAREA_I/INMARSAT_HF:0.876",
+      "WX_S_AFRICA/ZASHIPPING:0.874",
+      "S/PACIFIC_WX/PACIFIC:0.873"
+     ]
+    },
+    {
+     "id": "efd-caribbean",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9344913959503174,
+     "margin": 0.030273139476776123,
+     "top5": [
+      "WX_US/US.CARIBBEAN:0.934",
+      "WX_US/US.ALL:0.904",
+      "WX_US_AK/AK_DIS_EXTEN:0.874",
+      "WX_US_HI/HI_FOR_EXTEN:0.872",
+      "WX_MARITIMES/FQCN53.CWHX:0.867"
+     ]
+    },
+    {
+     "id": "az-zone-se",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8826648592948914,
+     "margin": 0.003565371036529541,
+     "top5": [
+      "WX_US_AZ/AZ_ZON_SE:0.883",
+      "WX_US_CA/CA_ZON_SESWA:0.879",
+      "WX_US_AZ/AZ_TAB_SE:0.864",
+      "WX_US_AZ/AZ_ZON_NOFLA:0.859",
+      "WX_US_MT/MT_ZON_SCSE:0.857"
+     ]
+    },
+    {
+     "id": "nv-afd",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.909615695476532,
+     "margin": 0.041667819023132324,
+     "top5": [
+      "WX_US_NV/NV_DIS_NV:0.910",
+      "WX_US_NV/NV_ZON_ELKO:0.868",
+      "WX_US_NV/NV_TAB_RENO:0.863",
+      "WX_US_NV/NV_ZON_WESNE:0.861",
+      "S/PACIFIC_WX/AM_SAMOA:0.860"
+     ]
+    },
+    {
+     "id": "ionogram-rome",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9148708581924438,
+     "margin": 0.04825621843338013,
+     "top5": [
+      "PROPAGATION/IONOG_ROME:0.915",
+      "PROPAGATION/IONOG_TUCU:0.867",
+      "PROPAGATION/IONO_GLO_W:0.825",
+      "PROPAGATION/IONO_GLO_E:0.825",
+      "WX_MED/GEOP_EUR:0.816"
+     ]
+    },
+    {
+     "id": "conv-outlook",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.904114842414856,
+     "margin": 0.04604363441467285,
+     "top5": [
+      "WX_US/CONV_OUT:0.904",
+      "PROPAGATION/PROP_ADVIS:0.858",
+      "WX_ATLANTIC/ABNT20.KNHC:0.851",
+      "WX_US_SELCTY/SELCTY_PART1:0.848",
+      "WX_US_SELCTY/SELCTY_PART3:0.847"
+     ]
+    },
+    {
+     "id": "ice-hudson",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": false,
+     "hit5": true,
+     "sec1": false,
+     "top1_sim": 0.8668305277824402,
+     "margin": 0.00047838687896728516,
+     "top5": [
+      "WX_ARCTIC/FQCN26.CWNT:0.867",
+      "ARCTIC_ICE/FICN15CWIS:0.866",
+      "WX_ARCTIC/FQCN56.CWNT:0.865",
+      "WX_ARCTIC/FQCN17.CWNT:0.840",
+      "WX_ARCTIC/FQCN11.CWNT:0.840"
+     ]
+    },
+    {
+     "id": "spacewx-advisory",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9082993268966675,
+     "margin": 0.037763357162475586,
+     "top5": [
+      "PROPAGATION/PROP_ADVIS:0.908",
+      "PROPAGATION/PROP_3DAY:0.871",
+      "WX_US/CONV_OUT:0.850",
+      "WX_NOAA/NOAA.TXT:0.846",
+      "METAREA_I/INMARSAT_HF:0.843"
+     ]
+    },
+    {
+     "id": "local-wx",
+     "behavior": "ask",
+     "kind": "ambig",
+     "hit1": false,
+     "hit5": false,
+     "sec1": false,
+     "top1_sim": 0.8512613773345947,
+     "margin": 0.002766132354736328,
+     "top5": [
+      "WX_US_OR/OR_ZON_HAR:0.851",
+      "WX_US_SELCTY/SELCTY_PART3:0.848",
+      "WX_US_SELCTY/SELCTY_PART2:0.847",
+      "WX_US_SELCTY/SELCTY_PART1:0.846",
+      "WX_US_OR/OR_ZON_BAK:0.846"
+     ]
+    },
+    {
+     "id": "local-wx-ctx",
+     "behavior": "ask",
+     "kind": "section",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8267707824707031,
+     "margin": 0.003081798553466797,
+     "top5": [
+      "WX_US_AZ/AZ_TAB_SW:0.827",
+      "WX_US_AZ/AZ_ZON_SW:0.824",
+      "WX_US_AZ/AZ_TAB_NORT:0.823",
+      "WX_US_SELCTY/SELCTY_PART3:0.820",
+      "WX_US_AZ/AZ_TAB_PHOE:0.817"
+     ]
+    },
+    {
+     "id": "vague-wx",
+     "behavior": "ask",
+     "kind": "ambig",
+     "hit1": false,
+     "hit5": false,
+     "sec1": false,
+     "top1_sim": 0.8656663298606873,
+     "margin": 0.000795900821685791,
+     "top5": [
+      "WX_US_MS/MS_FOR_JACK:0.866",
+      "WX_US_CO/CO_TAB_DENBO:0.865",
+      "WX_US_FL/FL_TAB_MIA:0.863",
+      "WX_US_OUTDR/OUT_CO_DEBO:0.862",
+      "S/PACIFIC_WX/SOLOMAN_IS:0.862"
+     ]
+    },
+    {
+     "id": "prop-generic",
+     "behavior": "ask",
+     "kind": "section",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8745898008346558,
+     "margin": 0.0048636794090271,
+     "top5": [
+      "PROPAGATION/PROPWKHI:0.875",
+      "PROPAGATION/PROP_DRAP:0.870",
+      "PROPAGATION/PROP_SOLWIND:0.867",
+      "PROPAGATION/PROP_ADVIS:0.866",
+      "PROPAGATION/AUS_HAP_DAR:0.864"
+     ]
+    },
+    {
+     "id": "winlink-help",
+     "behavior": "ask",
+     "kind": "section",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8787144422531128,
+     "margin": 0.005238533020019531,
+     "top5": [
+      "WL2K_HELP/DIDUNO:0.879",
+      "WL2K_HELP/INQUIRIES:0.873",
+      "WL2K_USERS/CMS_TRAFFIC:0.865",
+      "WL2K_HELP/UPDA_CAT_WE:0.857",
+      "WL2K_USERS/CMS_STATUS:0.846"
+     ]
+    },
+    {
+     "id": "grib-generic",
+     "behavior": "ask",
+     "kind": "ambig",
+     "hit1": false,
+     "hit5": false,
+     "sec1": false,
+     "top1_sim": 0.8453059196472168,
+     "margin": 7.56978988647461e-05,
+     "top5": [
+      "WL2K_HELP/MAXSAEA_GRIB:0.845",
+      "WL2K_HELP/CUSTOM.GRIB:0.845",
+      "WX_MED/WMEDHI_72FOR:0.799",
+      "WX_MED/WMEDHI_ACT:0.799",
+      "WX_MED/WMEDLO_72FOR:0.796"
+     ]
+    },
+    {
+     "id": "sat-pix",
+     "behavior": "ask",
+     "kind": "section",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8414640426635742,
+     "margin": 0.004983365535736084,
+     "top5": [
+      "SAT_PIX/ALIR.JPG:0.841",
+      "SAT_KEPS/VIS.2KEPS:0.836",
+      "SAT_PIX/ALVS.JPG:0.836",
+      "SAT_PIX/PACNE_IR.JPG:0.832",
+      "WX_NOAA/NOAA.TXT:0.829"
+     ]
+    },
+    {
+     "id": "wxfax-atl",
+     "behavior": "ask",
+     "kind": "section",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8953475952148438,
+     "margin": 0.000657498836517334,
+     "top5": [
+      "WX_FAX/PJAM98.TIF:0.895",
+      "WX_FAX/PWAE89.TIF:0.895",
+      "WX_FAX/PWAE98.TIF:0.895",
+      "WX_FAX/PWAD89.TIF:0.892",
+      "WX_FAX/PPAE00.TIF:0.890"
+     ]
+    },
+    {
+     "id": "buoy-sf",
+     "behavior": "ask",
+     "kind": "item",
+     "hit1": false,
+     "hit5": false,
+     "sec1": true,
+     "top1_sim": 0.8550835847854614,
+     "margin": 0.001505136489868164,
+     "top5": [
+      "WX_BUOY/NDBC44013:0.855",
+      "WX_AK_COAST/SRUS88.PAFC:0.854",
+      "WX_BUOY/NDBC41004:0.851",
+      "WX_BUOY/NDBC41009:0.848",
+      "WX_BUOY/NDBC41002:0.847"
+     ]
+    },
+    {
+     "id": "az-generic",
+     "behavior": "ask",
+     "kind": "section",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8536137342453003,
+     "margin": 0.0015666484832763672,
+     "top5": [
+      "WX_US_AZ/AZ_TAB_SW:0.854",
+      "WX_US_AZ/AZ_ZON_NOFLA:0.852",
+      "WX_US_AZ/AZ_TAB_PHOE:0.849",
+      "WX_US_CA/CA_ZON_SESWA:0.846",
+      "WX_US_AZ/AZ_TAB_NORT:0.846"
+     ]
+    },
+    {
+     "id": "nv-reno",
+     "behavior": "ask",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8843961954116821,
+     "margin": 0.011513173580169678,
+     "top5": [
+      "WX_US_NV/NV_TAB_RENO:0.884",
+      "WX_US_NV/NV_ZON_WESNE:0.873",
+      "WX_US_CA/CA_ZON_WESNE:0.869",
+      "WX_US_NV/NV_DIS_NV:0.868",
+      "WX_US_NV/NV_ZON_ELKO:0.860"
+     ]
+    },
+    {
+     "id": "none-pizza",
+     "behavior": "ask",
+     "kind": "none",
+     "hit1": false,
+     "hit5": false,
+     "sec1": false,
+     "top1_sim": 0.8115185499191284,
+     "margin": 0.0011074542999267578,
+     "top5": [
+      "WX_US_PA/PA_ZON_NEPEN:0.812",
+      "WX_US_NY/NY_ZON_CENT:0.810",
+      "WX_US_TN/TN_ZON_MSOU:0.810",
+      "WX_US_NY/NY_ZON_EAST:0.807",
+      "WX_US_MT/MT_ZON_NE:0.806"
+     ]
+    },
+    {
+     "id": "none-capital",
+     "behavior": "ask",
+     "kind": "none",
+     "hit1": false,
+     "hit5": false,
+     "sec1": false,
+     "top1_sim": 0.8058507442474365,
+     "margin": 0.00014543533325195312,
+     "top5": [
+      "METAR/FRA_BEZ_ICAO:0.806",
+      "METAR/FRA_NIC_ICAO:0.806",
+      "METAR/FRA_AJA_ICAO:0.805",
+      "METAREA_III/WOMQ50_LFPW:0.802",
+      "METAR/FRA_HYE_ICAO:0.802"
+     ]
+    },
+    {
+     "id": "none-music",
+     "behavior": "ask",
+     "kind": "none",
+     "hit1": false,
+     "hit5": false,
+     "sec1": false,
+     "top1_sim": 0.7983604669570923,
+     "margin": 0.0037955045700073242,
+     "top5": [
+      "WX_FAX/SPAC_TAZ_WAV:0.798",
+      "WL2K_HELP/US_AMAT_FREQ:0.795",
+      "WX_AK_COAST/FZAK52.PAJK:0.793",
+      "WX_MED/WMEDLO_72FOR:0.790",
+      "WX_MED/WMEDLO_48FOR:0.789"
+     ]
+    },
+    {
+     "id": "none-email",
+     "behavior": "ask",
+     "kind": "none",
+     "hit1": false,
+     "hit5": false,
+     "sec1": false,
+     "top1_sim": 0.8025232553482056,
+     "margin": 0.0007706880569458008,
+     "top5": [
+      "WL2K_HELP/IRIDIUM:0.803",
+      "WL2K_HELP/P3FREQLIST:0.802",
+      "WL2K_HELP/FIRM_UPDATE:0.799",
+      "WX_BALTIC/DWD_DE_RTTY1:0.795",
+      "METAREA_I/INMARSAT_OW:0.795"
+     ]
+    },
+    {
+     "id": "none-ardop",
+     "behavior": "ask",
+     "kind": "none",
+     "hit1": false,
+     "hit5": false,
+     "sec1": false,
+     "top1_sim": 0.8182562589645386,
+     "margin": 0.023354291915893555,
+     "top5": [
+      "WL2K_RMS/PUB_ARDOP:0.818",
+      "WX_US_AR/AR_ZON_SE:0.795",
+      "WX_US_ME/ME_ZON_ARONW:0.795",
+      "WL2K_HELP/IRIDIUM:0.794",
+      "WX_US_ME/ME_ZON_ARONE:0.794"
+     ]
+    }
+   ]
+  },
+  "full": {
+   "precompute_s": 14.87,
+   "query_ms_median": 160.0,
+   "query_ms_p95": 291.4,
+   "top1": 0.944,
+   "top5": 0.972,
+   "sec1": 0.972,
+   "margin_answer_median": 0.0317,
+   "margin_ask_median": 0.0018,
+   "top1sim_nomatch_max": 0.8211,
+   "top1sim_match_min": 0.8285,
+   "records": [
+    {
+     "id": "aurora-tonight",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8909608721733093,
+     "margin": 0.010144472122192383,
+     "top5": [
+      "AURORA/AUR_TONIGHT:0.891",
+      "AURORA/AUR_TOMORROW:0.881",
+      "WX_US_OUTDR/OUT_CO_DEBO:0.857",
+      "WX_US_CO/CO_ZON_EAST:0.856",
+      "WX_US_CO/CO_ZON_PUEB:0.852"
+     ]
+    },
+    {
+     "id": "aurora-tomorrow-para",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8683614730834961,
+     "margin": 0.0129164457321167,
+     "top5": [
+      "AURORA/AUR_TOMORROW:0.868",
+      "AURORA/AUR_TONIGHT:0.855",
+      "WX_EASTPAC/NE_PJBM88:0.832",
+      "WX_EASTPAC/NE_PJBI20:0.830",
+      "WX_FAX/PJAI88.TIF:0.830"
+     ]
+    },
+    {
+     "id": "ice-west-ak",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.890325129032135,
+     "margin": 0.009926378726959229,
+     "top5": [
+      "ARCTIC_ICE/FZAK80:0.890",
+      "WX_AK_COAST/FZAK80.PAFC:0.880",
+      "WX_US_AK/AK_ZON_WARCO:0.856",
+      "WX_AK_COAST/SRUS88.PAFC:0.852",
+      "WX_ARCTIC/FQCN56.CWNT:0.851"
+     ]
+    },
+    {
+     "id": "metar-nice",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.868168830871582,
+     "margin": 0.03425884246826172,
+     "top5": [
+      "METAR/FRA_NIC_ICAO:0.868",
+      "METAR/FRA_MAR_ICAO:0.834",
+      "METAR/FRA_BEZ_ICAO:0.831",
+      "METAR/FRA_HYE_ICAO:0.828",
+      "WL2K_HELP/METAR:0.828"
+     ]
+    },
+    {
+     "id": "metar-dubrovnik-para",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8611243367195129,
+     "margin": 0.029860079288482666,
+     "top5": [
+      "METAR/CRO_DUB_ICAO:0.861",
+      "METAR/SLO_POR_ICAO:0.831",
+      "METAR/CRO_RIJ_ICAO:0.831",
+      "WX_MED/ADR_ENG:0.822",
+      "METAR/GRE_PRE_ICAO:0.821"
+     ]
+    },
+    {
+     "id": "fl-auxcomm",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8942821025848389,
+     "margin": 0.061437368392944336,
+     "top5": [
+      "ARES_RACES/FL_AUX:0.894",
+      "WX_US_FL/FL_TAB_EACEN:0.833",
+      "WX_US_FL/FL_TAB_NESEG:0.823",
+      "WX_ATLANTIC/WTNT43.KNHC:0.823",
+      "WX_US_FL/FL_TAB_KEYS:0.821"
+     ]
+    },
+    {
+     "id": "tx-races",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.912645697593689,
+     "margin": 0.08522260189056396,
+     "top5": [
+      "ARES_RACES/TX_RACES:0.913",
+      "WX_US_TX/TX_TAB_DESOU:0.827",
+      "WX_US_TX/TX_TAB_TEXAS:0.826",
+      "ARES_RACES/TX_D16_RACES:0.824",
+      "WX_US_TX/TX_TAB_SOCEN:0.824"
+     ]
+    },
+    {
+     "id": "roatan-15day",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8781730532646179,
+     "margin": 0.031239569187164307,
+     "top5": [
+      "HONDURAS/ROATAN:0.878",
+      "HONDURAS/GRACIAS:0.847",
+      "HONDURAS/PUERTOLEMPIR:0.845",
+      "HONDURAS/JUTICALPA:0.842",
+      "HONDURAS/LA-CEIBA:0.840"
+     ]
+    },
+    {
+     "id": "hf-nets-cruisers",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.901484489440918,
+     "margin": 0.0631399154663086,
+     "top5": [
+      "HF_NETS/HF_NETS:0.901",
+      "WX_MARITIMES/FQCN53.CWHX:0.838",
+      "WX_HIGH_SEAS/FZNT01.KWBC:0.838",
+      "WX_HIGH_SEAS/FZPN40.PHFO:0.836",
+      "WX_HIGH_SEAS/FZPS40.PHFO:0.835"
+     ]
+    },
+    {
+     "id": "keps-iss",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8996844291687012,
+     "margin": 0.025153934955596924,
+     "top5": [
+      "SAT_KEPS/ISS.2KEPS:0.900",
+      "SAT_KEPS/VIS.2KEPS:0.875",
+      "SAT_KEPS/WX.2KEPS:0.867",
+      "SAT_KEPS/HAM.2KEPS:0.866",
+      "SAT_KEPS/AMSAT.KEPS:0.861"
+     ]
+    },
+    {
+     "id": "tle-ham",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9005715250968933,
+     "margin": 0.025718212127685547,
+     "top5": [
+      "SAT_KEPS/HAM.2KEPS:0.901",
+      "SAT_KEPS/WX.2KEPS:0.875",
+      "SAT_KEPS/VIS.2KEPS:0.871",
+      "SAT_KEPS/ISS.2KEPS:0.857",
+      "SAT_KEPS/AMSAT.KEPS:0.852"
+     ]
+    },
+    {
+     "id": "keps-wxsats",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8908326029777527,
+     "margin": 0.021647155284881592,
+     "top5": [
+      "SAT_KEPS/WX.2KEPS:0.891",
+      "SAT_KEPS/VIS.2KEPS:0.869",
+      "SAT_KEPS/HAM.2KEPS:0.862",
+      "SAT_KEPS/ISS.2KEPS:0.850",
+      "WX_NOAA/NOAA.TXT:0.844"
+     ]
+    },
+    {
+     "id": "wwv-flux",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9080499410629272,
+     "margin": 0.07052344083786011,
+     "top5": [
+      "PROPAGATION/PROP_WWV:0.908",
+      "WX_FAX/PJBI10.TIF:0.838",
+      "WX_US_WV/WV_TAB_PANH:0.837",
+      "PROPAGATION/PROP_SGAS_27:0.837",
+      "WX_FAX/PPAE01.TIF:0.836"
+     ]
+    },
+    {
+     "id": "drap",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9188740849494934,
+     "margin": 0.06854677200317383,
+     "top5": [
+      "PROPAGATION/PROP_DRAP:0.919",
+      "METAREA_I/INMARSAT_HF:0.850",
+      "AURORA/AUR_TONIGHT:0.846",
+      "PROPAGATION/PROP3DNOAA:0.846",
+      "PROPAGATION/PROP_SOLWIND:0.846"
+     ]
+    },
+    {
+     "id": "spacewx-3day",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9127641916275024,
+     "margin": 0.037395477294921875,
+     "top5": [
+      "PROPAGATION/PROP_3DAY:0.913",
+      "PROPAGATION/PROP_3DPROB:0.875",
+      "PROPAGATION/PROP_ADVIS:0.857",
+      "WX_FAX/PYFK87.TIF:0.849",
+      "WX_EASTPAC/SE_PJFK93:0.849"
+     ]
+    },
+    {
+     "id": "cat-update-we",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8971105217933655,
+     "margin": 0.04248541593551636,
+     "top5": [
+      "WL2K_HELP/UPDA_CAT_WE:0.897",
+      "WL2K_HELP/UPDATE_CAT:0.855",
+      "WL2K_HELP/UPDA_CAT_AIR:0.849",
+      "WL2K_HELP/DIDUNO:0.841",
+      "WL2K_USERS/CMS_TRAFFIC:0.836"
+     ]
+    },
+    {
+     "id": "custom-grib-help",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9049016237258911,
+     "margin": 0.0631253719329834,
+     "top5": [
+      "WL2K_HELP/CUSTOM.GRIB:0.905",
+      "WL2K_HELP/MAXSAEA_GRIB:0.842",
+      "WX_MED/WMEDHI_ACT:0.824",
+      "WX_MED/WMEDLO_ACT:0.822",
+      "WX_MED/WMEDLO_72FOR:0.817"
+     ]
+    },
+    {
+     "id": "change-call",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9084630012512207,
+     "margin": 0.07438743114471436,
+     "top5": [
+      "WL2K_HELP/CHANGE_CALL:0.908",
+      "WL2K_HELP/DIDUNO:0.834",
+      "WL2K_HELP/PRECEDENCE:0.833",
+      "WL2K_HELP/METAR:0.823",
+      "WL2K_HELP/INQUIRIES:0.820"
+     ]
+    },
+    {
+     "id": "buoy-41009",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9055920839309692,
+     "margin": 0.004005074501037598,
+     "top5": [
+      "WX_BUOY/NDBC41009:0.906",
+      "WX_BUOY/NDBC41010:0.902",
+      "WX_BUOY/NDBC41004:0.899",
+      "WX_BUOY/NDBC41008:0.898",
+      "WX_BUOY/NDBC41001:0.897"
+     ]
+    },
+    {
+     "id": "hap-perth",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9068632125854492,
+     "margin": 0.024853646755218506,
+     "top5": [
+      "PROPAGATION/AUS_HAP_PER:0.907",
+      "PROPAGATION/AUS_HAP_MEL:0.882",
+      "PROPAGATION/AUS_HAP_CAN:0.880",
+      "PROPAGATION/AUS_HAP_ADE:0.875",
+      "PROPAGATION/AUS_HAP_SYD:0.873"
+     ]
+    },
+    {
+     "id": "highseas-tropatl",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9041007161140442,
+     "margin": 0.020767807960510254,
+     "top5": [
+      "WX_HIGH_SEAS/FZNT02.KNHC:0.904",
+      "WX_ATLANTIC/ABNT20.KNHC:0.883",
+      "METAREA_XIV/MA_XIV.HSPAC:0.881",
+      "WX_ATLANTIC/WTNT23.KNHC:0.878",
+      "WX_ATLANTIC/WTNT21.KNHC:0.878"
+     ]
+    },
+    {
+     "id": "efd-caribbean",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9136090278625488,
+     "margin": 0.01846247911453247,
+     "top5": [
+      "WX_US/US.CARIBBEAN:0.914",
+      "WX_US/US.ALL:0.895",
+      "WX_US_AK/AK_DIS_EXTEN:0.873",
+      "WX_US_HI/HI_FOR_EXTEN:0.871",
+      "WX_MARITIMES/FQCN53.CWHX:0.867"
+     ]
+    },
+    {
+     "id": "az-zone-se",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": false,
+     "hit5": true,
+     "sec1": false,
+     "top1_sim": 0.8823364973068237,
+     "margin": 0.0036153793334960938,
+     "top5": [
+      "WX_US_CA/CA_ZON_SESWA:0.882",
+      "WX_US_AZ/AZ_ZON_SE:0.879",
+      "WX_US_AZ/AZ_TAB_SE:0.867",
+      "WX_US_AZ/AZ_ZON_NOFLA:0.860",
+      "WX_US_AZ/AZ_ZON_SW:0.857"
+     ]
+    },
+    {
+     "id": "nv-afd",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8964883089065552,
+     "margin": 0.03212624788284302,
+     "top5": [
+      "WX_US_NV/NV_DIS_NV:0.896",
+      "WX_US_NV/NV_ZON_WESNE:0.864",
+      "S/PACIFIC_WX/AM_SAMOA:0.863",
+      "WX_US/US.ALL:0.862",
+      "WX_US_NV/NV_ZON_ELKO:0.861"
+     ]
+    },
+    {
+     "id": "ionogram-rome",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8960965275764465,
+     "margin": 0.03498631715774536,
+     "top5": [
+      "PROPAGATION/IONOG_ROME:0.896",
+      "PROPAGATION/IONOG_TUCU:0.861",
+      "PROPAGATION/IONO_GLO_W:0.834",
+      "PROPAGATION/IONO_GLO_E:0.834",
+      "PROPAGATION/IONO_GL_HELP:0.816"
+     ]
+    },
+    {
+     "id": "conv-outlook",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.906767725944519,
+     "margin": 0.049012064933776855,
+     "top5": [
+      "WX_US/CONV_OUT:0.907",
+      "WX_ATLANTIC/ABNT20.KNHC:0.858",
+      "PROPAGATION/PROP_ADVIS:0.858",
+      "WX_PACIFIC/ACPN50.PHFO:0.849",
+      "WX_US_MT/MT_FOR_GRFAL:0.847"
+     ]
+    },
+    {
+     "id": "ice-hudson",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8787386417388916,
+     "margin": 0.007663249969482422,
+     "top5": [
+      "ARCTIC_ICE/FICN15CWIS:0.879",
+      "WX_ARCTIC/FQCN26.CWNT:0.871",
+      "WX_ARCTIC/FQCN56.CWNT:0.870",
+      "ARCTIC_ICE/FICN17CWIS:0.848",
+      "WX_ARCTIC/FQCN11.CWNT:0.847"
+     ]
+    },
+    {
+     "id": "spacewx-advisory",
+     "behavior": "answer",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.9050419330596924,
+     "margin": 0.035830914974212646,
+     "top5": [
+      "PROPAGATION/PROP_ADVIS:0.905",
+      "PROPAGATION/PROP_3DAY:0.869",
+      "WX_US/CONV_OUT:0.854",
+      "METAREA_I/INMARSAT_HF:0.846",
+      "WX_ATLANTIC/ABNT20.KNHC:0.842"
+     ]
+    },
+    {
+     "id": "local-wx",
+     "behavior": "ask",
+     "kind": "ambig",
+     "hit1": false,
+     "hit5": false,
+     "sec1": false,
+     "top1_sim": 0.8470796346664429,
+     "margin": 0.0005584359169006348,
+     "top5": [
+      "WX_US_OUTDR/OUT_CO_DEBO:0.847",
+      "WX_US_SELCTY/SELCTY_PART3:0.847",
+      "WX_ATLANTIC/ABNT20.KNHC:0.845",
+      "WX_US_ME/ME_ZON_ANDR:0.844",
+      "WX_US_ME/ME_ZON_ARONW:0.843"
+     ]
+    },
+    {
+     "id": "local-wx-ctx",
+     "behavior": "ask",
+     "kind": "section",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8285361528396606,
+     "margin": 0.003735780715942383,
+     "top5": [
+      "WX_US_AZ/AZ_TAB_SW:0.829",
+      "WX_US_AZ/AZ_TAB_NORT:0.825",
+      "WX_US_SELCTY/SELCTY_PART3:0.824",
+      "WX_US_AZ/AZ_ZON_SW:0.822",
+      "WX_US_OUTDR/OUT_CO_DEBO:0.821"
+     ]
+    },
+    {
+     "id": "vague-wx",
+     "behavior": "ask",
+     "kind": "ambig",
+     "hit1": false,
+     "hit5": false,
+     "sec1": false,
+     "top1_sim": 0.870171308517456,
+     "margin": 0.0049097537994384766,
+     "top5": [
+      "S/PACIFIC_WX/SOLOMAN_IS:0.870",
+      "WX_ATLANTIC/ABNT20.KNHC:0.865",
+      "WX_US_CO/CO_TAB_DENBO:0.865",
+      "WX_US_OUTDR/OUT_CO_DEBO:0.865",
+      "WX_US_MS/MS_FOR_JACK:0.864"
+     ]
+    },
+    {
+     "id": "prop-generic",
+     "behavior": "ask",
+     "kind": "section",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8724885582923889,
+     "margin": 0.000488579273223877,
+     "top5": [
+      "PROPAGATION/PROPWKHI:0.872",
+      "PROPAGATION/PROP_ADVIS:0.872",
+      "PROPAGATION/PROP_SOLWIND:0.868",
+      "PROPAGATION/PROP3DNOAA:0.868",
+      "PROPAGATION/PROP_DRAP:0.867"
+     ]
+    },
+    {
+     "id": "winlink-help",
+     "behavior": "ask",
+     "kind": "section",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8723869323730469,
+     "margin": 0.0014336109161376953,
+     "top5": [
+      "WL2K_HELP/DIDUNO:0.872",
+      "WL2K_HELP/INQUIRIES:0.871",
+      "WL2K_USERS/CMS_TRAFFIC:0.864",
+      "WL2K_HELP/UPDA_CAT_WE:0.862",
+      "WL2K_TERMS/TERMS_COND:0.856"
+     ]
+    },
+    {
+     "id": "grib-generic",
+     "behavior": "ask",
+     "kind": "ambig",
+     "hit1": false,
+     "hit5": false,
+     "sec1": false,
+     "top1_sim": 0.8500050902366638,
+     "margin": 0.004035651683807373,
+     "top5": [
+      "WL2K_HELP/CUSTOM.GRIB:0.850",
+      "WL2K_HELP/MAXSAEA_GRIB:0.846",
+      "WX_US_MT/MT_FOR_GRFAL:0.813",
+      "WX_US_MI/MI_TAB_GRRAP:0.808",
+      "WX_US_RAD/US.RAD.GRLAK:0.807"
+     ]
+    },
+    {
+     "id": "sat-pix",
+     "behavior": "ask",
+     "kind": "section",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8494277000427246,
+     "margin": 0.0018659234046936035,
+     "top5": [
+      "SAT_PIX/ALIR.JPG:0.849",
+      "SAT_PIX/ALVS.JPG:0.848",
+      "SAT_PIX/PACTR_IR.JPG:0.840",
+      "SAT_PIX/PACNE_IR.JPG:0.840",
+      "SAT_PIX/WCVS.JPG:0.839"
+     ]
+    },
+    {
+     "id": "wxfax-atl",
+     "behavior": "ask",
+     "kind": "section",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8981441259384155,
+     "margin": 0.0017727017402648926,
+     "top5": [
+      "WX_FAX/ATSA00Z.GIF:0.898",
+      "WX_FAX/PJAM98.TIF:0.896",
+      "WX_FAX/PWAE98.TIF:0.895",
+      "WX_FAX/PWAE89.TIF:0.894",
+      "WX_FAX/PPAE00.TIF:0.893"
+     ]
+    },
+    {
+     "id": "buoy-sf",
+     "behavior": "ask",
+     "kind": "item",
+     "hit1": false,
+     "hit5": false,
+     "sec1": true,
+     "top1_sim": 0.8543856143951416,
+     "margin": 0.0002536773681640625,
+     "top5": [
+      "WX_BUOY/NDBC44013:0.854",
+      "WX_AK_COAST/SRUS88.PAFC:0.854",
+      "WX_BUOY/NDBC41004:0.850",
+      "WX_BUOY/NDBC62001:0.848",
+      "WX_BUOY/NDBC41009:0.848"
+     ]
+    },
+    {
+     "id": "az-generic",
+     "behavior": "ask",
+     "kind": "section",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8532402515411377,
+     "margin": 0.00015473365783691406,
+     "top5": [
+      "WX_US_AZ/AZ_ZON_NOFLA:0.853",
+      "WX_US_AZ/AZ_TAB_SW:0.853",
+      "WX_US_AZ/AZ_TAB_PHOE:0.850",
+      "WX_US_AZ/AZ_TAB_SE:0.848",
+      "WX_US_AZ/AZ_TAB_NORT:0.845"
+     ]
+    },
+    {
+     "id": "nv-reno",
+     "behavior": "ask",
+     "kind": "item",
+     "hit1": true,
+     "hit5": true,
+     "sec1": true,
+     "top1_sim": 0.8757309913635254,
+     "margin": 0.00028967857360839844,
+     "top5": [
+      "WX_US_NV/NV_TAB_RENO:0.876",
+      "WX_US_NV/NV_ZON_WESNE:0.875",
+      "WX_US_CA/CA_ZON_WESNE:0.875",
+      "WX_US_NV/NV_DIS_NV:0.868",
+      "WX_US_NV/NV_ZON_ELKO:0.849"
+     ]
+    },
+    {
+     "id": "none-pizza",
+     "behavior": "ask",
+     "kind": "none",
+     "hit1": false,
+     "hit5": false,
+     "sec1": false,
+     "top1_sim": 0.8211392164230347,
+     "margin": 0.00215989351272583,
+     "top5": [
+      "WL2K_HELP/WL2K.QTH:0.821",
+      "WX_NAVTEX/FZPN23.KWNM:0.819",
+      "WX_US_TN/TN_ZON_MSOU:0.818",
+      "WX_US_NY/NY_ZON_CENT:0.818",
+      "WX_US_PA/PA_ZON_CENT:0.817"
+     ]
+    },
+    {
+     "id": "none-capital",
+     "behavior": "ask",
+     "kind": "none",
+     "hit1": false,
+     "hit5": false,
+     "sec1": false,
+     "top1_sim": 0.8095712661743164,
+     "margin": 0.00033396482467651367,
+     "top5": [
+      "WX_CANADA/FPCN72.CWQB:0.810",
+      "METAR/FRA_BEZ_ICAO:0.809",
+      "METAREA_III/WOMQ50_LFPW:0.809",
+      "WX_CANADA/FPCN73.CWQB:0.809",
+      "WX_CANADA/FPCN55.CWQB:0.809"
+     ]
+    },
+    {
+     "id": "none-music",
+     "behavior": "ask",
+     "kind": "none",
+     "hit1": false,
+     "hit5": false,
+     "sec1": false,
+     "top1_sim": 0.8049774169921875,
+     "margin": 0.004662275314331055,
+     "top5": [
+      "WL2K_HELP/US_AMAT_FREQ:0.805",
+      "WX_FAX/SPAC_TAZ_WAV:0.800",
+      "WX_MED/WMEDLO_72FOR:0.795",
+      "WX_US_OUTDR/OUT_CO_DEBO:0.794",
+      "WX_AK_COAST/FZAK52.PAJK:0.794"
+     ]
+    },
+    {
+     "id": "none-email",
+     "behavior": "ask",
+     "kind": "none",
+     "hit1": false,
+     "hit5": false,
+     "sec1": false,
+     "top1_sim": 0.8078937530517578,
+     "margin": 0.0019378662109375,
+     "top5": [
+      "WX_BALTIC/DWD_DE_RTTY1:0.808",
+      "WL2K_HELP/P3FREQLIST:0.806",
+      "WX_BALTIC/DWD_DE_RTTY2:0.805",
+      "WL2K_HELP/FIRM_UPDATE:0.805",
+      "WX_US_AR/AR_ZON_SE:0.801"
+     ]
+    },
+    {
+     "id": "none-ardop",
+     "behavior": "ask",
+     "kind": "none",
+     "hit1": false,
+     "hit5": false,
+     "sec1": false,
+     "top1_sim": 0.8199031352996826,
+     "margin": 0.015073060989379883,
+     "top5": [
+      "WL2K_RMS/PUB_ARDOP:0.820",
+      "WX_US_AR/AR_ZON_SE:0.805",
+      "WX_FAX/PYBA01.TIF:0.802",
+      "WX_US_AR/AR_ZON_NW:0.800",
+      "WL2K_HELP/P3FREQLIST:0.798"
+     ]
+    }
+   ]
+  }
+ },
+ "rss_peak_mib": 1203.9
+}
