@@ -156,14 +156,23 @@ The catalog inquiry path matters specifically for emcomm operators
 running RF-only with no internet — it is how a station with no upstream
 connectivity refreshes its gateway list mid-event.
 
-## Weather data — not a Winlink catalog item
+## Weather data — two different rails
 
-A common newcomer surprise: weather data on Winlink is NOT a catalog
-inquiry, and it does NOT come from `INQUIRY@winlink.org`. Weather is a
-**third-party service** (Saildocs) that happens to use Winlink as the
-mail transport.
+Weather on Winlink rides **two different rails**, and picking the wrong
+one is a common failure:
 
-To fetch a GRIB file or a NWS text forecast, tuxlink composes a regular
+**NWS text and tabular forecasts ARE catalog items.** State zone
+forecasts, tabular state forecasts, and the other NWS area-weather text
+products are ordinary Request Center inquiries to `INQUIRY@winlink.org`
+— the `WX_US_<state>` buckets carry them (for many states the tabular
+form, `*_TAB_*`, is the only form published). Request them like any
+other catalog item; the reply comes back as a catalog reply message.
+Do NOT route these through Saildocs.
+
+**GRIB files and weather-model data are a Saildocs request.** Binary
+weather-model output (GFS and friends) is served by a **third-party
+service** (Saildocs) that happens to use Winlink as the mail transport
+— it is not a catalog inquiry. For those, tuxlink composes a regular
 outgoing message addressed to:
 
 ```
@@ -174,8 +183,9 @@ Body:    send gfs:40N,60N,140W,120W|2,2|24,48,72|PRESS,WIND
 
 - The recipient is Saildocs, NOT Winlink.
 - The Body is Saildocs' own request grammar (`send <category>:<args>`).
-- The response is a GRIB-1 binary file (for `gfs` and similar weather-
-  model requests) or plain text (for NWS bulletins).
+- The response is a GRIB-1 binary file (for `gfs` and similar
+  weather-model requests) or plain text (for Saildocs' own bulletin
+  offerings).
 
 The full Saildocs grammar is documented at https://saildocs.com/gribinfo.
 Tuxlink offers a dedicated GRIB request form in the Request Center

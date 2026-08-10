@@ -126,6 +126,40 @@ Notes:
 - **TX audio.** The radio's data-mode menu has a per-band audio routing
   setting; set to USB for HF data modes.
 
+## Yaesu FT-710 (HF, 100 W)
+
+A current-production HF transceiver with built-in USB audio + CAT, common
+in new shacks.
+
+| Setting | Value |
+|---|---|
+| Hamlib model | `1049` (verify with `rigctl --list \| grep FT-710`) |
+| CAT baud | menu-set; match the radio's OPERATION SETTING → GENERAL → CAT RATE (38400 is a common choice) |
+| CAT data | 8N2 (Yaesu newcat family) |
+| Data jack | USB direct (built-in codec), or rear DATA jack via interface |
+| Recommended interface | Direct USB to start; an external interface (DigiRig / DRA-class) if the internal codec proves RFI-susceptible at your power level (see notes) |
+| VARA HF Standard | Works (see notes) |
+| ARDOP | Works (see notes) |
+
+Notes:
+
+- **DATA MOD SOURCE must match how you key.** With DATA MOD SOURCE left on
+  AUTO, the radio selects the modulation source by the PTT method — keying
+  over CAT gets NO rear/USB data audio (dead air on transmit). Either set
+  the data modulation source explicitly to the rear/USB path, or key via
+  the DATA-jack PTT line. This is the most common "it keys but nothing is
+  transmitted" cause on this radio.
+- **Internal USB codec and TX RFI.** The built-in USB audio codec has been
+  field-observed to reset when transmitting at higher power (RF getting
+  back into the USB path). A codec reset mid-connect drops the modem's
+  audio device and the session does not recover on its own. Ferrites on
+  the USB run and reduced power help; an external interface with its own
+  isolated codec sidesteps it entirely.
+- **Do not hold the CAT serial port open while streaming audio.** CAT and
+  audio share the single USB connection; a client that keeps the CAT port
+  held open during a data session invites contention. Tuxlink's rig
+  control opens CAT transiently; hand-rolled tooling should do the same.
+
 ## Kenwood TS-590S / TS-590SG (HF, 100 W)
 
 A popular fixed-station HF rig in established stations.

@@ -159,6 +159,21 @@ fn routines_run_err(e: RoutinesRunError) -> ErrorData {
     }
 }
 
+/// Every tool whose handler calls `EgressGuard::taint` — the single source the
+/// server `instructions` string is BUILT from, and the enumeration the
+/// parity drift-gate holds `docs/mcp-knowledge/agents-guide.md` to. Exists
+/// because the hand-written "these four taint" lists shipped wrong while
+/// `routines_journal_get` was the undocumented fifth. Adding a `guard.taint`
+/// call to a tool without extending this const leaves the instructions and
+/// guide lying again — extend it in the same change.
+pub const TAINTING_TOOLS: &[&str] = &[
+    "mailbox_list",
+    "message_read",
+    "tauri_search_run",
+    "session_log_snapshot",
+    "routines_journal_get",
+];
+
 /// The Tuxlink MCP server handler. Cloned per the rmcp serve loop; the inner
 /// [`McpState`] is `Arc`-shared so all clones see the same live guard state.
 #[derive(Clone)]
@@ -2444,17 +2459,18 @@ impl ServerHandler for TuxlinkMcp {
             .enable_prompts()
             .enable_resources()
             .build();
-        ServerInfo::new(capabilities).with_instructions(
+        ServerInfo::new(capabilities).with_instructions(format!(
             "Tuxlink MCP server. New here? Read the resource tuxlink://agents/guide \
              first - it explains the full tool surface by tier and the arm/taint \
              rules. Read-only tools report app/backend/modem status, \
              mailbox + search content, curated config, devices, and the session log. \
-             Tools that return untrusted external content (mailbox_list, message_read, \
-             tauri_search_run, session_log_snapshot) taint the session, locking send \
-             authority until the operator re-arms. Resources (tuxlink:// URIs) serve \
-             curated operator knowledge - glossary, transport/device guides, and \
-             diagnostic playbooks. Prompts walk common operator workflows.",
-        )
+             Tools that return untrusted external content ({}) taint the session, \
+             locking send authority until the operator re-arms. Resources \
+             (tuxlink:// URIs) serve curated operator knowledge - glossary, \
+             transport/device guides, and diagnostic playbooks. Prompts walk \
+             common operator workflows.",
+            TAINTING_TOOLS.join(", ")
+        ))
     }
 
     // ----- Knowledge layer: resources + prompts (phase 3.5) -----

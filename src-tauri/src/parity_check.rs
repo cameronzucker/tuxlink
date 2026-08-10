@@ -29,6 +29,7 @@ use std::collections::BTreeMap;
 const MANIFEST: &str = include_str!("../../docs/parity/parity-manifest.json");
 const LIB_RS: &str = include_str!("lib.rs");
 const ROUTER_RS: &str = include_str!("../tuxlink-mcp-core/src/router.rs");
+const AGENTS_GUIDE: &str = include_str!("../../docs/mcp-knowledge/agents-guide.md");
 
 #[derive(serde::Deserialize)]
 struct Manifest {
@@ -238,5 +239,68 @@ fn tool_budget_matches_router() {
          in the same PR and justify the schema tax (ADR 0027)",
         tools.len(),
         m.tool_budget
+    );
+}
+
+// ----- Agents-guide drift gate (tuxlink-9n4cr) -------------------------------
+//
+// The guide claims to describe "the full MCP tool surface"; before this gate
+// it silently covered 56 of 92 (the entire routines tier was invisible) and
+// asserted "these four taint" while the registry tainted five. The tool COUNT
+// was already pinned above; these pin the guide's COVERAGE and the taint
+// enumeration to the same registry source text.
+
+/// The guide names every registered tool, backticked. No exemption list on
+/// purpose: a tool worth registering is worth one line of agent-facing
+/// documentation, in the same PR that adds it.
+#[test]
+fn agents_guide_names_every_router_tool() {
+    let missing: Vec<String> = router_tools()
+        .into_iter()
+        .filter(|t| !AGENTS_GUIDE.contains(&format!("`{t}`")))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "docs/mcp-knowledge/agents-guide.md never names these registered \
+         tools (backticked): {missing:?} — the guide claims the full surface, \
+         so document each (a tier-list mention is enough) in the same PR"
+    );
+}
+
+/// Every tainting tool (per the router's `TAINTING_TOOLS` const, which also
+/// builds the server `instructions` string) is named in the guide, and the
+/// stale closed-list phrasing that shipped wrong cannot come back.
+#[test]
+fn agents_guide_taint_enumeration_matches_registry() {
+    for tool in tuxlink_mcp_core::router::TAINTING_TOOLS {
+        assert!(
+            AGENTS_GUIDE.contains(&format!("`{tool}`")),
+            "tainting tool `{tool}` is not named in agents-guide.md — the \
+             taint list shipped wrong once (routines_journal_get was the \
+             undocumented fifth); keep the guide's enumeration in sync with \
+             router::TAINTING_TOOLS"
+        );
+    }
+    assert!(
+        !AGENTS_GUIDE.contains("These four return"),
+        "agents-guide.md has regressed to the stale 'These four' taint \
+         phrasing — the registry taints {} tools; enumerate from \
+         router::TAINTING_TOOLS",
+        tuxlink_mcp_core::router::TAINTING_TOOLS.len()
+    );
+    // The const is the source the runtime instructions are BUILT from; if a
+    // new `guard.taint(...)` call site lands without extending it, this
+    // count check against the router source text catches the drift. Scoped
+    // to the handler region — the router's own test module below
+    // `#[cfg(test)]` taints fixtures freely and must not count.
+    let handler_src = ROUTER_RS.split("#[cfg(test)]").next().unwrap_or(ROUTER_RS);
+    let taint_call_sites = handler_src.matches(".taint(tuxlink_security::TaintReason::").count();
+    assert_eq!(
+        taint_call_sites,
+        tuxlink_mcp_core::router::TAINTING_TOOLS.len(),
+        "router.rs has {} `guard.taint(...)` call sites but TAINTING_TOOLS \
+         lists {} tools — extend the const (and the guide) in the same change",
+        taint_call_sites,
+        tuxlink_mcp_core::router::TAINTING_TOOLS.len()
     );
 }
