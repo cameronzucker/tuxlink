@@ -38,6 +38,12 @@
 //! * **COR-3** — each tool call's args are validated against the tool's JSON
 //!   schema; on failure the error is fed back and re-prompted, bounded by
 //!   [`Limits::max_malformed_retries`], then [`RunOutcome::InvalidAction`].
+//! * **COR-4**: a turn that produced ONLY reasoning (no answer, no tool
+//!   calls, as when a reasoning model spends its whole per-turn output budget
+//!   mid-thought) is fed back and re-prompted rather than silently completing
+//!   empty, bounded by the SAME [`Limits::max_malformed_retries`] budget COR-3
+//!   uses (a shared counter, so alternating failure kinds cannot evade either
+//!   cap), then [`RunOutcome::NeedsOperator`].
 
 mod conversation;
 mod fakes;
@@ -730,6 +736,159 @@ mod acceptance_tests {
         assert_eq!(invoker.call_count(), 1);
     }
 
+    // --- COR-4 (tuxlink-nyyr2: reasoning-only turn recovery) ---------------
+
+    #[tokio::test]
+    async fn cor4_reasoning_only_then_valid_completes() {
+        // A reasoning-only turn (no answer, no tool call -- e.g. a reasoning
+        // model that burned its output budget mid-thought) is NOT classified
+        // as an empty/unproductive turn that silently ends the loop
+        // (acceptance criterion 1). The loop retries; the model recovers on
+        // the next turn and answers.
+        let provider = ScriptedProvider::new(vec![
+            ModelTurn::Reasoning("still weighing which tool to call...".into()),
+            ModelTurn::Text("done".into()),
+        ]);
+        let invoker = RecordingInvoker::always_ok(vec![echo_tool()]);
+        let outcome = run(
+            "go",
+            &provider,
+            &invoker,
+            EgressStatus::default(),
+            fast_limits(),
+            CancellationToken::new(),
+        )
+        .await;
+        assert_eq!(outcome, RunOutcome::Completed("done".into()));
+        assert_eq!(invoker.call_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn cor4_reasoning_only_can_recover_into_tool_calls() {
+        // The retry after a reasoning-only turn can ALSO land on a productive
+        // tool-calling turn, not just a final Text answer.
+        let provider = ScriptedProvider::new(vec![
+            ModelTurn::Reasoning("thinking about which station to query...".into()),
+            ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({"msg": "hi"}))]),
+            ModelTurn::Text("done".into()),
+        ]);
+        let invoker = RecordingInvoker::always_ok(vec![echo_tool()]);
+        let outcome = run(
+            "go",
+            &provider,
+            &invoker,
+            EgressStatus::default(),
+            fast_limits(),
+            CancellationToken::new(),
+        )
+        .await;
+        assert_eq!(outcome, RunOutcome::Completed("done".into()));
+        assert_eq!(invoker.call_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn cor4_reasoning_only_three_times_returns_needs_operator_not_completed() {
+        // max_malformed_retries = 2 (fast_limits) -> 3 consecutive
+        // reasoning-only turns exhausts, mirroring
+        // `cor3_malformed_three_times_returns_invalid_action`. Exhaustion must
+        // be a visible NeedsOperator, never a silent
+        // `RunOutcome::Completed("")` -- that silent-empty-completion is
+        // exactly the tuxlink-nyyr2 loop-killer bug.
+        let provider = ScriptedProvider::new(vec![
+            ModelTurn::Reasoning("a".into()),
+            ModelTurn::Reasoning("b".into()),
+            ModelTurn::Reasoning("c".into()),
+            // A 4th turn that must never be reached.
+            ModelTurn::Text("should-not-reach".into()),
+        ]);
+        let invoker = RecordingInvoker::always_ok(vec![echo_tool()]);
+        let outcome = run(
+            "go",
+            &provider,
+            &invoker,
+            EgressStatus::default(),
+            fast_limits(),
+            CancellationToken::new(),
+        )
+        .await;
+        match &outcome {
+            RunOutcome::NeedsOperator(reason) => {
+                assert!(
+                    reason.contains("reasoning"),
+                    "reason should name reasoning-only turns as the cause: {reason}"
+                );
+            }
+            other => panic!("expected NeedsOperator, got {other:?}"),
+        }
+        assert_ne!(
+            outcome,
+            RunOutcome::Completed(String::new()),
+            "must never silently complete empty (tuxlink-nyyr2)"
+        );
+        assert_eq!(invoker.call_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn cor4_reasoning_only_shares_retry_budget_with_malformed_batches() {
+        // Anti-oscillation (mirrors the authority_denied_streak / malformed
+        // interaction fixed earlier for tool-denial handling): a model
+        // alternating between a malformed tool call and a reasoning-only turn
+        // must NOT get separate retry budgets for each -- that would let it
+        // evade both caps forever. They draw from the SAME counter: malformed
+        // (1), reasoning-only (2), malformed (3) exhausts the budget=2 cap on
+        // the third turn even though only two of the three were the SAME kind.
+        let provider = ScriptedProvider::new(vec![
+            ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({}))]), // malformed (1)
+            ModelTurn::Reasoning("still thinking".into()),                // reasoning-only (2)
+            ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({}))]), // malformed (3) -> exhausts
+            ModelTurn::Text("should-not-reach".into()),
+        ]);
+        let invoker = RecordingInvoker::always_ok(vec![echo_tool()]);
+        let outcome = run(
+            "go",
+            &provider,
+            &invoker,
+            EgressStatus::default(),
+            fast_limits(),
+            CancellationToken::new(),
+        )
+        .await;
+        assert!(
+            matches!(outcome, RunOutcome::InvalidAction(_)),
+            "expected InvalidAction -- turn 3 is a malformed tool-call batch \
+             sharing the counter turn 2's reasoning-only turn already \
+             incremented; with SEPARATE counters this run would instead reach \
+             the should-not-reach turn, got {outcome:?}"
+        );
+        assert_eq!(invoker.call_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn cor4_valid_tool_call_resets_reasoning_retry_counter() {
+        // Progress resets the shared counter: reasoning-only, then a VALID
+        // tool call, then two more reasoning-only turns must NOT trip the
+        // (budget=2) cap, because the valid call in between reset it to 0.
+        let provider = ScriptedProvider::new(vec![
+            ModelTurn::Reasoning("thinking".into()),
+            ModelTurn::ToolCalls(vec![ToolCall::new("echo", json!({"msg": "ok"}))]), // valid, resets
+            ModelTurn::Reasoning("thinking again".into()),
+            ModelTurn::Reasoning("still thinking".into()),
+            ModelTurn::Text("done".into()),
+        ]);
+        let invoker = RecordingInvoker::always_ok(vec![echo_tool()]);
+        let outcome = run(
+            "go",
+            &provider,
+            &invoker,
+            EgressStatus::default(),
+            fast_limits(),
+            CancellationToken::new(),
+        )
+        .await;
+        assert_eq!(outcome, RunOutcome::Completed("done".into()));
+        assert_eq!(invoker.call_count(), 1);
+    }
+
     // --- Tool denial (pf6re: narrate-not-kill) ----------------------------
 
     /// A denied egress call no longer KILLS the turn: the denial comes back as
@@ -1132,6 +1291,43 @@ mod acceptance_tests {
             recorded,
             vec![RunEvent::AssistantText { text: "plain".into() }],
             "a non-streaming turn emits only the finalizing AssistantText"
+        );
+    }
+
+    #[tokio::test]
+    async fn reasoning_only_turn_emits_no_assistanttext_before_recovering() {
+        // A reasoning-only turn must NOT fire the finalizing AssistantText
+        // event -- that event means "the run is completing with this answer"
+        // (COR-4, tuxlink-nyyr2), and a reasoning-only turn is, by
+        // definition, not a completion. Only the eventual real Text turn
+        // emits it.
+        use std::sync::Mutex;
+        let provider = ScriptedProvider::new(vec![
+            ModelTurn::Reasoning("still deciding".into()),
+            ModelTurn::Text("final".into()),
+        ]);
+        let invoker = RecordingInvoker::always_ok(vec![echo_tool()]);
+
+        let events: Mutex<Vec<RunEvent>> = Mutex::new(Vec::new());
+        let mut convo = Conversation::new("go");
+        let outcome = run_with_conversation(
+            &mut convo,
+            &provider,
+            &invoker,
+            EgressStatus::default(),
+            fast_limits(),
+            CancellationToken::new(),
+            &|ev| events.lock().unwrap().push(ev),
+        )
+        .await;
+
+        assert_eq!(outcome, RunOutcome::Completed("final".into()));
+        let recorded = events.into_inner().unwrap();
+        assert_eq!(
+            recorded,
+            vec![RunEvent::AssistantText { text: "final".into() }],
+            "the reasoning-only turn must emit NO AssistantText of its own -- \
+             only the eventual real completion does"
         );
     }
 

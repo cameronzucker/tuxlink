@@ -126,14 +126,26 @@ pub enum ToolOutcome {
     Cancelled(String),
 }
 
-/// A turn the model produced: either a final text answer, or one-or-more tool
-/// calls to execute before the next turn.
+/// A turn the model produced: a final text answer, one-or-more tool calls to
+/// execute before the next turn, or a reasoning-only turn that produced
+/// neither.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ModelTurn {
     /// A final assistant message; the loop returns [`RunOutcome::Completed`].
     Text(String),
     /// Tool calls to dispatch; the loop runs them, appends results, re-prompts.
     ToolCalls(Vec<ToolCall>),
+    /// The model produced ONLY its reasoning/thinking channel this turn: no
+    /// visible answer and no tool calls. Carries the raw reasoning text.
+    ///
+    /// A reasoning model that spends its whole per-turn output budget
+    /// mid-thought (`finish_reason: "length"`, `content: null`) lands here.
+    /// This is deliberately NOT [`ModelTurn::Text`]: a `Text` turn always
+    /// completes the run (see `crate::runner`), and coercing a
+    /// reasoning-only response into `Text(String::new())` would silently end
+    /// the run with nothing authored (tuxlink-nyyr2). The loop instead
+    /// treats this as a bounded, retryable non-terminal turn (COR-4).
+    Reasoning(String),
 }
 
 /// Hard bounds on a single `run`. Defaults are conservative.
@@ -148,8 +160,12 @@ pub struct Limits {
     /// Per-turn wall-clock timeout for a single Provider call (COR-1). A turn
     /// that exceeds it is treated as exhaustion → [`RunOutcome::NeedsOperator`].
     pub per_turn_timeout: std::time::Duration,
-    /// Maximum consecutive malformed-call retries within one turn before the
-    /// loop gives up with [`RunOutcome::InvalidAction`] (COR-3). Default 2.
+    /// Maximum consecutive unproductive turns, counting BOTH malformed
+    /// tool-call batches (COR-3) and reasoning-only turns with no answer and
+    /// no tool calls (COR-4), before the loop gives up. The two share this
+    /// ONE counter (an alternating mix of both kinds is still bounded by it);
+    /// COR-3 exhaustion returns [`RunOutcome::InvalidAction`], COR-4
+    /// exhaustion returns [`RunOutcome::NeedsOperator`]. Default 2.
     pub max_malformed_retries: u32,
 }
 
@@ -265,8 +281,10 @@ pub enum RunEvent {
 pub enum RunOutcome {
     /// The model produced a final text answer.
     Completed(String),
-    /// A bound was hit (turns or per-turn timeout) before finishing; the
-    /// operator should decide whether to continue. Carries a reason (COR-1).
+    /// A bound was hit (turns, per-turn timeout, a reasoning-only retry
+    /// budget, or an unfittable context window) before finishing; the
+    /// operator should decide whether to continue. Carries a reason (COR-1,
+    /// COR-4, or F2).
     NeedsOperator(String),
     /// The model could not produce a schema-valid tool call within the retry
     /// budget. Carries the last validation detail (COR-3).
