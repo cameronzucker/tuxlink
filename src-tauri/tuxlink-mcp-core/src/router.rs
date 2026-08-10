@@ -41,6 +41,10 @@ const KNOWLEDGE_MIME: &str = "text/markdown";
 fn port_err(e: PortError) -> ErrorData {
     match e {
         PortError::InvalidInput(reason) => ErrorData::invalid_request(reason, None),
+        PortError::Denied(reason) => ErrorData::invalid_request(
+            format!("not authorized to read: {reason}. {}", denial_remedy(&reason)),
+            None,
+        ),
         other => ErrorData::internal_error(other.to_string(), None),
     }
 }
@@ -312,7 +316,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "mailbox_list",
-        description = "List message metadata in a mailbox folder. Returns untrusted message senders/subjects, so calling this taints the session (send authority is locked until the operator re-arms)."
+        description = "List message metadata in a mailbox folder. `folder` is a slug from user_folders_list (system folders: inbox, outbox, sent, archive, deleted); an unknown folder is refused with the valid slugs named - it does NOT return an empty list. Returns untrusted message senders/subjects, so calling this taints the session (send authority is locked until the operator re-arms)."
     )]
     pub async fn mailbox_list(
         &self,
@@ -349,7 +353,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "user_folders_list",
-        description = "Enumerate mailbox folders and their message counts. Structural metadata; does not taint. Read-only."
+        description = "Enumerate mailbox folders and their message counts. Each folder carries `name` (display-only) and `slug` - pass the `slug` (never the display name) as the `folder` argument of mailbox_list / message_read / mailbox_move. Structural metadata; does not taint. Read-only."
     )]
     pub async fn user_folders_list(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.mailbox.folders().await.map_err(port_err)?;
@@ -667,7 +671,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "solar_conditions",
-        description = "Report the STORED space-weather indices (SFI/A/K) and the sunspot number used for predictions. IMPORTANT: this reads a cached snapshot - it does not fetch anything, and the data may be old. Always check the returned `source` and `updated_at_ms` before presenting these as current. `source` is: \"swpc\" (from the internet), \"rf-wwv\" or \"rf-wwv-voice\" (decoded from the radio), or \"shipped\" (a fallback that shipped with the app and has NEVER been updated - do not present shipped defaults as current conditions). If the data is stale or from shipped defaults, tell the operator and offer wwv_capture_offair, which refreshes it over their own radio with no internet. Read-only; does not taint."
+        description = "Report the STORED space-weather indices (SFI/A/K) and the sunspot number used for predictions. IMPORTANT: this reads a cached snapshot - it does not fetch anything, and the data may be old. Always check the returned `source` and `updated_at_ms` before presenting these as current. `source` is: \"swpc\" (from the internet), \"rf-wwv\" or \"rf-wwv-voice\" (decoded from the radio), or \"shipped\" (a fallback that shipped with the app and has NEVER been updated - do not present shipped defaults as current conditions; `updated_at_ms` is null in that case, because there is no update time). If the data is stale or from shipped defaults, tell the operator and offer wwv_capture_offair, which refreshes it over their own radio with no internet. Read-only; does not taint."
     )]
     pub async fn solar_conditions(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.prediction.solar().await.map_err(port_err)?;
@@ -1222,7 +1226,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "catalog_send_inquiry",
-        description = "Stage a Winlink Request Center inquiry for one or more catalog item ids (the filename ids from catalog_list) in the local outbox; returns the staged message id. Use this to request ANY catalog product - propagation forecasts, METAR airport weather, satellite keplerian data, bulletins, marine forecasts, etc., not just GRIB weather. The requested products are delivered to the mailbox after the operator next connects (Arm to send). No transmission occurs here."
+        description = "Stage a Winlink Request Center inquiry for one or more catalog item ids (the filename ids from catalog_list) in the local outbox; returns the staged message id. Every id is VALIDATED against the catalog - an id that is not a catalog_list `id` is refused with the closest real ids, so browse or confirm ids first rather than guessing. Use this to request ANY catalog product - propagation forecasts, METAR airport weather, satellite keplerian data, bulletins, marine forecasts, etc., not just GRIB weather. The requested products are delivered to the mailbox after the operator next connects (Arm to send). No transmission occurs here."
     )]
     pub async fn catalog_send_inquiry(
         &self,
@@ -2839,6 +2843,23 @@ mod tests {
             ErrorCode::INTERNAL_ERROR,
             "NotFound keeps its existing internal-error mapping - M2 narrows nothing else"
         );
+
+        // The one arm-gated read (find_peers) must deny in the SAME
+        // "not authorized …" shape as egress/write denials — its prior
+        // `Unavailable` mapping read as an outage and evaded client-side
+        // denial classifiers keyed on the prefix (tuxlink-9n4cr).
+        let denied = port_err(PortError::Denied(
+            "the peer roster requires armed send authority: send authority is not armed".to_string(),
+        ));
+        assert_eq!(denied.code, ErrorCode::INVALID_REQUEST);
+        assert!(denied.message.starts_with("not authorized to read:"));
+        let tainted = port_err(PortError::Denied(
+            "session is tainted by untrusted message content".to_string(),
+        ));
+        assert!(
+            tainted.message.contains("DISCARDS this conversation"),
+            "a taint denial must carry the quarantine remedy, not the arm remedy"
+        );
     }
 
     fn handler() -> TuxlinkMcp {
@@ -3036,7 +3057,7 @@ mod tests {
             a_index: Some(2.0),
             k_index: Some(3.0),
             ssn: 4.0,
-            updated_at_ms: 5,
+            updated_at_ms: Some(5),
             source: "shipped".into(),
         };
         let obj = serde_json::to_value(&dto).unwrap();

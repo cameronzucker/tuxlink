@@ -165,6 +165,7 @@ impl MailboxPort for MockMailbox {
     async fn folders(&self) -> Result<Vec<FolderDto>, PortError> {
         Ok(vec![FolderDto {
             name: "Inbox".into(),
+            slug: "inbox".into(),
             count: 1,
         }])
     }
