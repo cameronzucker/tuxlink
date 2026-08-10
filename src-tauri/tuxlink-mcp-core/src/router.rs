@@ -232,7 +232,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "vara_status",
-        description = "Report VARA modem status: connected, bandwidth, and state. Read-only. Also reports `reachable` (true/false/null): command-port (8300) reachability - true = the cmd port answered (or a session is Open), false = no answer, null = unknown (session busy, probe skipped rather than made to wait). cmd-reachable is NOT ready-to-send; use `vara_probe` to confirm a real VARA is answering."
+        description = "Report VARA modem status: connected, bandwidth, and state. `bandwidth` is the CONFIGURED bandwidth, not a live negotiated value. Read-only. Also reports `reachable` (true/false/null): command-port (8300) reachability - true = the cmd port answered (or a session is Open), false = no answer, null = unknown (session busy, probe skipped rather than made to wait). cmd-reachable is NOT ready-to-send; use `vara_probe` to confirm a real VARA is answering."
     )]
     pub async fn vara_status(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.status.vara_status().await.map_err(port_err)?;
@@ -273,7 +273,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "rig_status",
-        description = "Report the rig's configured state and, best-effort, its live VFO frequency/mode/PTT via a transient rigctld read (never transmits; may report nulls if the rig is unconfigured or its serial is busy with an active session). Read-only."
+        description = "Report the rig's CONFIGURED state only. `vfo_hz`, `mode`, and `ptt` are ALWAYS null by design - Tuxlink deliberately does not read the live rig here, because that would spawn an ungated CAT-control server; `configured` tells you whether rig control is set up. For the live dial, the operator's radio panel is the source of truth. Read-only; never transmits."
     )]
     pub async fn rig_status(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.status.rig_status().await.map_err(port_err)?;
@@ -790,7 +790,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "cms_connect",
-        description = "Connect to the configured CMS (Winlink common message server). EGRESS: requires armed send-authority and an un-tainted session; denied otherwise."
+        description = "Connect to the CONFIGURED CMS (Winlink common message server) - there is no host/transport parameter; the endpoint comes from the app config (config_read shows it). Connecting runs the full exchange: staged OUTBOX MAIL TRANSMITS and inbound mail is retrieved. EGRESS: requires armed send-authority and an un-tainted session; denied otherwise."
     )]
     pub async fn cms_connect(&self) -> Result<CallToolResult, ErrorData> {
         self.state.egress.cms_connect().await.map_err(egress_err)?;
@@ -1025,7 +1025,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "packet_config_set",
-        description = "Set the packet (AX.25/KISS) connection params (ssid, tcp host/port, tx delay). WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise."
+        description = "Set the packet (AX.25/KISS) connection params. ALL FOUR fields are required on every call (ssid, tcp_host, tcp_port, txdelay_ms) - this is a whole-config set, not a partial patch, so read packet_config_get first and resend the unchanged values. WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise."
     )]
     pub async fn packet_config_set(
         &self,
@@ -1065,7 +1065,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "position_set_source",
-        description = "Set the position source (e.g. gps/manual). WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise."
+        description = "Set the position source. The ONLY source is \"Gps\" (any casing accepted); this is not an open set - a manual/fixed location is set via config_set_grid instead, not as a source. WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise."
     )]
     pub async fn position_set_source(
         &self,
@@ -1166,7 +1166,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "message_send",
-        description = "Stage a composed message in the local outbox; returns the staged message id. No transmission occurs until a later gated connect. Validates recipients/subject/body; a malformed value (e.g. a CR/LF in an address) is rejected as invalid."
+        description = "Stage a composed message in the local outbox; returns the staged message id. Text only - this tool CANNOT attach files (there is no attachment parameter; do not promise attachments). No transmission occurs until a later gated connect. Validates recipients/subject/body; a malformed value (e.g. a CR/LF in an address) is rejected as invalid."
     )]
     pub async fn message_send(
         &self,
@@ -1244,7 +1244,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "grib_send_request",
-        description = "Stage a GRIB weather-product request in the local outbox; returns the staged message id. No transmission occurs until a later gated connect. Validates the subject header."
+        description = "Stage a GRIB weather-product request in the local outbox; returns the staged message id. `mode` is EXACTLY \"send\" (one-shot) or \"sub\" (subscription) - natural-language words like \"forecast\"/\"gfs\" are refused. The request geometry is fixed server-side: a 10-degree box centered on lat/lon at a 2x2 grid with default times/parameters - you cannot request a different area or resolution through this tool. No transmission occurs until a later gated connect. Validates the subject header."
     )]
     pub async fn grib_send_request(
         &self,
@@ -1337,7 +1337,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "ft8_set_band",
-        description = "Set the FT-8 band (e.g. \"20m\", \"40m\"). If rig CAT control is configured this QSYs the radio's dial to that band's FT-8 frequency. Does not transmit."
+        description = "Set the FT-8 band (e.g. \"20m\", \"40m\"). The dial only QSYs when the listener is ALREADY RUNNING with rig CAT configured - setting the band while stopped just changes the configured band for the next start. Does not transmit."
     )]
     pub async fn ft8_set_band(
         &self,
@@ -2212,7 +2212,11 @@ pub struct ExchangeParams {
 /// Like [`ExchangeParams`] but with the VARA-only `freq_hz` / `qsy_candidates`:
 /// VARA's B2F connects + tunes + exchanges in a single call, so a pre-tune + QSY
 /// walk are live here (unlike ARDOP, which tunes at a separate connect step).
+/// `deny_unknown_fields` for parity with its ARDOP twin (tuxlink-9n4cr): a
+/// typo'd or invented key must be REJECTED, not silently dropped — the agent
+/// could otherwise believe it requested behavior the radio never got.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct VaraExchangeParams {
     /// The target station/gateway callsign.
     pub target: String,
@@ -2234,6 +2238,7 @@ pub struct VaraExchangeParams {
 
 /// `{ "intent": "cms" }` — input for `vara_open_session` (tuxlink-cgna5).
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct VaraOpenSessionParams {
     /// The routing pool for the session; defaults to `cms` when omitted.
     #[serde(default)]

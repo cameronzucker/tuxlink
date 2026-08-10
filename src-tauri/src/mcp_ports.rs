@@ -1930,13 +1930,18 @@ impl WritePort for MonolithWritePort {
     async fn set_position_source(&self, source: String) -> Result<(), WritePortError> {
         // VALIDATE BEFORE GATE (FIX 4): "Gps" is the only accepted source
         // (position_set_source_impl rejects anything else with UiError::Rejected,
-        // but only after the gate). Reject an unknown source as `Invalid` here so
-        // it never reaches the gate or audits an authorized write.
-        if source != "Gps" {
+        // but only after the gate). Case-fold the check (tuxlink-9n4cr: the
+        // bench measured agents sending 'gps' and being refused by casing —
+        // a case-sensitive enum with no schema enum is a pure trap) and pass
+        // the canonical spelling downstream.
+        if !source.eq_ignore_ascii_case("gps") {
             return Err(WritePortError::Invalid(format!(
-                "unsupported position source '{source}' (only \"Gps\" is accepted)"
+                "unsupported position source '{source}' - the only position source is \
+                 \"Gps\" (any casing accepted; a manual grid is set via config_set_grid, \
+                 not a source)"
             )));
         }
+        let source = "Gps".to_string();
         let audit = write_audit_sink(self.app.clone());
         let app = self.app.clone();
         guarded_egress(
@@ -3457,10 +3462,13 @@ impl PredictionPort for MonolithPredictionPort {
 
         // VALIDATE the agent-supplied inputs BEFORE doing any work (reuse the
         // mcp-core validators): a 4/6-char Maidenhead rx_grid and a 1..=11 dial
-        // list each within 1800..=30000 kHz. A bad input is a malformed request.
-        validate_grid(&req.rx_grid).map_err(|e| PortError::Internal(e.to_string()))?;
+        // list each within 1800..=30000 kHz. A bad input is a malformed request
+        // and surfaces as invalid_request — the agent's to fix (the prior
+        // Internal mapping mis-signalled a server bug; bench measured 15
+        // MHz-for-kHz unit fumbles hitting it, tuxlink-9n4cr).
+        validate_grid(&req.rx_grid).map_err(|e| PortError::InvalidInput(e.to_string()))?;
         validate_frequencies_khz(&req.frequencies_khz)
-            .map_err(|e| PortError::Internal(e.to_string()))?;
+            .map_err(|e| PortError::InvalidInput(format!("{e} (frequencies are kHz, not MHz - 40m is ~7100)")))?;
 
         // Resolve the operator's OWN tx_grid from config — NEVER agent-supplied.
         // Mirror position_status's grid-clamp: effective_broadcast_locator honors
