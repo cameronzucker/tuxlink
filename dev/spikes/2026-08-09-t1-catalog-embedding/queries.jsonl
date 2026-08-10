@@ -1,0 +1,48 @@
+# Labeled plain-language queries against src-tauri/resources/catalog/winlink-queries.txt.
+# Hand-authored for this spike from the catalog itself — no bench corpus content.
+# kind: item (specific id(s) correct) | section (any item in section ok) | ambig (no single truth; margin-only) | none (no catalog match)
+# behavior: answer (assistant should pick confidently) | ask (assistant should surface candidates and ask)
+{"id":"aurora-tonight","q":"aurora forecast for tonight","expect":{"kind":"item","section":"AURORA","items":["AUR_TONIGHT"]},"behavior":"answer"}
+{"id":"aurora-tomorrow-para","q":"when will the northern lights be visible tomorrow night","expect":{"kind":"item","section":"AURORA","items":["AUR_TOMORROW"]},"behavior":"answer"}
+{"id":"ice-west-ak","q":"sea ice advisory for western alaska coastal waters","expect":{"kind":"item","section":"ARCTIC_ICE","items":["FZAK80"]},"behavior":"answer"}
+{"id":"metar-nice","q":"metar for nice france","expect":{"kind":"item","section":"METAR","items":["FRA_NIC_ICAO"]},"behavior":"answer"}
+{"id":"metar-dubrovnik-para","q":"airport weather report for dubrovnik","expect":{"kind":"item","section":"METAR","items":["CRO_DUB_ICAO"]},"behavior":"answer"}
+{"id":"fl-auxcomm","q":"florida auxcomm status","expect":{"kind":"item","section":"ARES_RACES","items":["FL_AUX"]},"behavior":"answer"}
+{"id":"tx-races","q":"texas races statewide communications","expect":{"kind":"item","section":"ARES_RACES","items":["TX_RACES"]},"behavior":"answer"}
+{"id":"roatan-15day","q":"15 day weather forecast for roatan","expect":{"kind":"item","section":"HONDURAS","items":["ROATAN"]},"behavior":"answer"}
+{"id":"hf-nets-cruisers","q":"hf nets for cruisers","expect":{"kind":"item","section":"HF_NETS","items":["HF_NETS"]},"behavior":"answer"}
+{"id":"keps-iss","q":"keps for the iss","expect":{"kind":"item","section":"SAT_KEPS","items":["ISS.2KEPS"]},"behavior":"answer"}
+{"id":"tle-ham","q":"two line elements for ham satellites","expect":{"kind":"item","section":"SAT_KEPS","items":["HAM.2KEPS"]},"behavior":"answer"}
+{"id":"keps-wxsats","q":"kepler elements for weather satellites","expect":{"kind":"item","section":"SAT_KEPS","items":["WX.2KEPS"]},"behavior":"answer"}
+{"id":"wwv-flux","q":"daily wwv solar flux and k index summary","expect":{"kind":"item","section":"PROPAGATION","items":["PROP_WWV"]},"behavior":"answer"}
+{"id":"drap","q":"noaa d region absorption prediction","expect":{"kind":"item","section":"PROPAGATION","items":["PROP_DRAP"]},"behavior":"answer"}
+{"id":"spacewx-3day","q":"three day space weather prediction","expect":{"kind":"item","section":"PROPAGATION","items":["PROP_3DAY"]},"behavior":"answer"}
+{"id":"cat-update-we","q":"how do I update the winlink express catalog","expect":{"kind":"item","section":"WL2K_HELP","items":["UPDA_CAT_WE"]},"behavior":"answer"}
+{"id":"custom-grib-help","q":"how to request custom grib files from saildocs","expect":{"kind":"item","section":"WL2K_HELP","items":["CUSTOM.GRIB"]},"behavior":"answer"}
+{"id":"change-call","q":"best practices when changing my callsign","expect":{"kind":"item","section":"WL2K_HELP","items":["CHANGE_CALL"]},"behavior":"answer"}
+{"id":"buoy-41009","q":"buoy report for station 41009","expect":{"kind":"item","section":"WX_BUOY","items":["NDBC41009"]},"behavior":"answer"}
+{"id":"hap-perth","q":"hourly area prediction chart for perth","expect":{"kind":"item","section":"PROPAGATION","items":["AUS_HAP_PER"]},"behavior":"answer"}
+{"id":"highseas-tropatl","q":"high seas forecast tropical atlantic","expect":{"kind":"item","section":"WX_HIGH_SEAS","items":["FZNT02.KNHC"]},"behavior":"answer"}
+{"id":"efd-caribbean","q":"extended forecast discussion for the caribbean","expect":{"kind":"item","section":"WX_US","items":["US.CARIBBEAN"]},"behavior":"answer"}
+{"id":"az-zone-se","q":"zone forecast for southeast arizona","expect":{"kind":"item","section":"WX_US_AZ","items":["AZ_ZON_SE"]},"behavior":"answer"}
+{"id":"nv-afd","q":"area forecast discussion for nevada","expect":{"kind":"item","section":"WX_US_NV","items":["NV_DIS_NV"]},"behavior":"answer"}
+{"id":"ionogram-rome","q":"ionogram from rome","expect":{"kind":"item","section":"PROPAGATION","items":["IONOG_ROME"]},"behavior":"answer"}
+{"id":"conv-outlook","q":"convective outlook for severe weather","expect":{"kind":"item","section":"WX_US","items":["CONV_OUT"]},"behavior":"answer"}
+{"id":"ice-hudson","q":"ice conditions for hudson bay","expect":{"kind":"item","section":"ARCTIC_ICE","items":["FICN15CWIS"]},"behavior":"answer"}
+{"id":"spacewx-advisory","q":"space weather advisory outlook","expect":{"kind":"item","section":"PROPAGATION","items":["PROP_ADVIS"]},"behavior":"answer"}
+{"id":"local-wx","q":"pull the weather for my local area","expect":{"kind":"ambig"},"behavior":"ask"}
+{"id":"local-wx-ctx","q":"pull the weather for my local area. station grid DM33, arizona, usa","expect":{"kind":"section","section":"WX_US_AZ"},"behavior":"ask"}
+{"id":"vague-wx","q":"weather forecast","expect":{"kind":"ambig"},"behavior":"ask"}
+{"id":"prop-generic","q":"propagation forecast","expect":{"kind":"section","section":"PROPAGATION"},"behavior":"ask"}
+{"id":"winlink-help","q":"help with winlink","expect":{"kind":"section","section":"WL2K_HELP"},"behavior":"ask"}
+{"id":"grib-generic","q":"grib files","expect":{"kind":"ambig"},"behavior":"ask"}
+{"id":"sat-pix","q":"satellite pictures","expect":{"kind":"section","section":"SAT_PIX"},"behavior":"ask"}
+{"id":"wxfax-atl","q":"weather fax for the atlantic","expect":{"kind":"section","section":"WX_FAX"},"behavior":"ask"}
+{"id":"buoy-sf","q":"buoy report near san francisco","expect":{"kind":"item","section":"WX_BUOY","items":["NDBC46026"]},"behavior":"ask"}
+{"id":"az-generic","q":"arizona weather","expect":{"kind":"section","section":"WX_US_AZ"},"behavior":"ask"}
+{"id":"nv-reno","q":"nevada forecast from reno","expect":{"kind":"item","section":"WX_US_NV","items":["NV_TAB_RENO","NV_ZON_WESNE"]},"behavior":"ask"}
+{"id":"none-pizza","q":"order a pizza to my qth","expect":{"kind":"none"},"behavior":"ask"}
+{"id":"none-capital","q":"what is the capital of france","expect":{"kind":"none"},"behavior":"ask"}
+{"id":"none-music","q":"play some music","expect":{"kind":"none"},"behavior":"ask"}
+{"id":"none-email","q":"send an email to my brother","expect":{"kind":"none"},"behavior":"ask"}
+{"id":"none-ardop","q":"restart the ardop modem","expect":{"kind":"none"},"behavior":"ask"}
