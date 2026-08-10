@@ -18,8 +18,9 @@ drafting an ICS-213, and queuing it for the operator to send.
 |---|---|
 | Read backend, modem, position, configuration, and device status | Always available |
 | Look up RMS gateways, predict HF propagation, read space weather | Always available |
-| Search the mailbox and read message or session-log content | Available, but taints the session (see below) |
+| Search the mailbox, read message, session-log, or routine-journal content | Available, but taints the session (see below) |
 | Compose and queue a message into the Outbox | Always available; queuing does not transmit |
+| Read the private P2P contact roster (`find_peers`) | Requires armed send-authority |
 | Change modem, rig, position, or privacy configuration | Requires armed send-authority |
 | Connect to the CMS, run a B2F exchange, key the radio | Requires armed send-authority |
 | Stop a connection or session | Always available |
@@ -39,16 +40,21 @@ The **Agent send** control sits in the dashboard ribbon. It has three states:
   the grant expires and the control returns to OFF; the operator re-arms to
   continue.
 - **LOCKED** — the session is tainted (see below). No transmit is possible until
-  the application restarts.
+  the operator **re-arms**, which quarantines: the agent's current conversation
+  is discarded and a fresh authorized session begins.
 
 The armed window is the operator's choice from the presets. Nothing the agent
 does extends it.
 
 ## The taint rule
 
-Reading untrusted content — message bodies, search results, the session log —
-taints the session. A tainted session locks send-authority: the **Agent send**
-control shows **LOCKED**, and clearing it requires restarting the application.
+Reading untrusted content — message bodies, search results, the session log,
+or a routine run's journal — taints the session. A tainted session locks
+send-authority: the **Agent send** control shows **LOCKED**, and clearing it
+requires the operator to re-arm. Re-arming after taint is a **quarantine**: the
+agent's conversation up to that point is discarded, so an instruction read out
+of received content can never reach a transmission — not even after the
+re-arm, because the conversation that carried it is gone.
 
 This contains prompt injection. A message body or a wire capture can carry text
 that reads like an instruction. Tainting ensures an instruction read out of

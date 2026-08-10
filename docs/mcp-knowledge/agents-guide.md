@@ -21,29 +21,49 @@ If terms such as *WARC bands*, *RMS gateway*, *grid square* (Maidenhead locator)
 or *B2F* are unfamiliar, read `tuxlink://glossary` and
 `tuxlink://glossary-supplement` for vocabulary and `tuxlink://reference/band-plan`
 for band and frequency conventions before planning a flow. The
-station-intelligence tools (`find_stations`, `predict_path`) and the transport
-guides assume this domain vocabulary; resolve it first rather than guessing.
+station-intelligence tools (`find_stations`, `predict_path`, and the arm-gated
+`find_peers`) and the transport guides assume this domain vocabulary; resolve it
+first rather than guessing.
 
 ## The MCP surface by tier
 
 ### Diagnostic reads — always available, redacted, no authorization
 
-`server_info`, `backend_status`, `modem_get_status` (reports both what is
+`server_info` (the authorization pre-check: it reports `armed`,
+`armed_remaining_secs`, **`tainted`, and `taint_reason`** — call it to learn
+your send-authority AND taint state before deciding to connect+send or
+stage-and-report), `backend_status`, `modem_get_status` (reports both what is
 `running` and what the operator has `selected`), `vara_status` (includes cmd-port
-`reachable`), `vara_probe` (deep read-only banner/VERSION check: down /
-socket-not-vara / vara-ok), `position_status`, `platform_info`, `get_wizard_completed`,
-`p2p_peer_password_status` (status only, never the password), `user_folders_list`,
-`docs_search`, `catalog_list`, `config_read`, `config_get_ardop`,
-`config_get_vara`, `packet_config_get`, the device enumerators
+`reachable`; `bandwidth` is the **configured** value, not a negotiated one),
+`vara_probe` (deep read-only banner/VERSION check: down / socket-not-vara /
+vara-ok), `position_status` (see the location-semantics note below),
+`platform_info`, `get_wizard_completed`, `rig_status` (**configuration only** —
+`vfo_hz`/`mode`/`ptt` are always null by design; a live CAT read would spawn an
+ungated rig-control server, so Tuxlink deliberately does not do it),
+`config_get_rig`, `p2p_peer_password_status` (status only, never the password),
+`user_folders_list`, `docs_search` (a snippet is **not** enough to answer from —
+follow up with `docs_read` on the hit's slug for the full page), `docs_read`,
+`catalog_list`, `config_read`, `config_get_ardop`, `config_get_vara`,
+`packet_config_get`, `vara_ini_read` (redacted), `vara_engine_available`,
+`vara_install_status`, `printer_list`, and the device enumerators
 (`packet_list_serial_devices`, `packet_list_bluetooth_devices`,
-`ardop_list_audio_devices`).
+`list_audio_devices` — station-level; `ardop_list_audio_devices` is its
+deprecated alias with identical output, prefer `list_audio_devices`).
 
-These four return **untrusted message/wire content and TAINT the session**:
-`mailbox_list`, `message_read`, `tauri_search_run`, `session_log_snapshot`. Once
-tainted, egress and writes are locked for the rest of the session; clearing the
-taint requires the operator to **re-arm**, which starts a fresh authorized
-session and **DISCARDS the current conversation** (a quarantine — not a resume).
-A plain ARM does not clear taint. See the arm/taint model below.
+**`position_status` location semantics:** it reports the **station's**
+broadcast-precision grid — precision-reduced (~4 characters) per the operator's
+privacy settings — not necessarily the operator's own location (they may be
+remote from the station), and the DTO carries no fix timestamp. If the operator
+states a location that conflicts with the returned grid, surface the conflict
+and ask; never harmonize the two into agreement.
+
+These five return **untrusted message/wire content and TAINT the session**:
+`mailbox_list`, `message_read`, `tauri_search_run`, `session_log_snapshot`, and
+`routines_journal_get`. Once tainted, egress and writes are locked for the rest
+of the session; clearing the taint requires the operator to **re-arm**, which
+starts a fresh authorized session and **DISCARDS the current conversation** (a
+quarantine — not a resume). A plain ARM does not clear taint. See the arm/taint
+model below.
 
 ### Station intelligence — reads, no taint, no authorization
 
@@ -93,6 +113,71 @@ A plain ARM does not clear taint. See the arm/taint model below.
 - `wwv_offair_available` — whether off-air WWV capture is possible (it needs rig
   CAT control to tune the dial). Call this before `wwv_capture_offair`.
 
+### Arm-gated read — the one read that requires armed send-authority
+
+`find_peers` — the operator's **private contact roster** (exact callsigns, P2P
+tiers, RF channels; telnet endpoints are never included). Unlike every other
+read, it requires armed send-authority, because the roster is the operator's
+private station data rather than public directory data. It is also the
+separator from `find_stations`: `find_stations` queries the **public** RMS
+gateway directory and takes an `intent`; `find_peers` lists the **private**
+roster and takes no parameters. A denial here currently surfaces as an
+"unavailable" error rather than the usual "not authorized" shape — treat it as
+an authorization denial, not an outage.
+
+### Routines — the automation library (20 tools)
+
+Routines are operator-authored automations (tracks of steps with triggers).
+The MCP surface covers their full lifecycle. Routine **step actions** have
+their own namespaced catalog (`data.find_stations`, `local.compose`,
+`radio.connect`, …) which does NOT map one-to-one onto the MCP tool names in
+this guide — enumerate them with `routines_actions_list`, never by guessing
+from tool names.
+
+- **Reads:** `routines_list` (summaries; carries no revision),
+  `routines_get` (the definition **plus its `revision`** and the edit
+  protocol), `routines_actions_list` (the authoring catalog: actions,
+  controls, trigger kinds, and a `definition_template`),
+  `routines_validate` (the same validator save/run use; returns findings —
+  but no revision, so fetch one via `routines_get` before editing),
+  `routines_run_status` (in-memory run state; returns null for an unknown
+  run id), and `routines_journal_get` — which returns the run's **verbatim
+  journal, may contain untrusted wire content, and TAINTS the session** like
+  a mailbox read.
+- **Revisions are content hashes, not counters.** Every mutating verb takes
+  an optional `expected_revision`; the token is a hash of the stored
+  definition bytes. Do not model it as an increasing number: an edit that
+  produces identical bytes returns the SAME token with `applied: false`,
+  which is an idempotent no-op, not a failure. On `[REVISION_CONFLICT]`,
+  re-fetch with `routines_get` and re-apply.
+- **Authoring writes** (the routine must be disabled; findings are saved,
+  not refused): `routines_save` (whole definition), `routines_step_add`,
+  `routines_step_update`, `routines_step_remove`, `routines_step_move`,
+  `routines_track_add`, `routines_track_remove`, `routines_trigger_set`,
+  `routines_meta_set` (check `applied` in the result — `ok` with
+  `applied: false` means nothing changed), `routines_rename`.
+- **Lifecycle & execution:** `routines_enable` (returns `blocked` +
+  findings instead of erroring when validation blocks it),
+  `routines_disable`, `routines_run` (a real run; refused while blocked or
+  unacknowledged-automatic), `routines_dry_run` (fake-world rehearsal;
+  refused by nothing).
+
+### Local machine actions — ungated, never transmit
+
+- `export_report` — write a markdown/text report to
+  `~/Documents/Tuxlink/reports/<filename>` and return the absolute path. The
+  way to hand the operator something outside the conversation.
+- `print_document` — print a previously-exported report via CUPS (`"ok"`
+  means the job was queued, not that paper emerged). Pair with
+  `printer_list`.
+- `point_at` — spotlight a UI element in the running app by anchor id (an
+  unknown id errors and the error lists the valid anchors).
+- `vara_install_start` — run the guided VARA installer from an operator-
+  downloaded `.exe`. Installing is not a transmission so it is not
+  arm-gated, but it **prompts for the OS password at the machine** (pkexec),
+  so it cannot proceed unattended. Check `vara_engine_available` /
+  `vara_install_status` first.
+
 ### FT-8 band monitor: receive-only, no taint, no authorization
 
 These decode the FT-8 activity on the operator's radio. They are receive-only:
@@ -121,9 +206,10 @@ behind `find_stations`' `ft8_policy` (`prefer` / `require`) corroboration.
 
 `config_set_ardop`, `config_set_vara`, `packet_config_set`, `config_set_grid`,
 `position_set_source`, `config_set_privacy`, `packet_set_listen`, `mailbox_move`,
-`message_attachment_save`. These mutate config or local state. Malformed input is
-rejected as invalid even when disarmed; the gated mutation only runs when armed and
-un-tainted.
+`message_attachment_save`, `vara_ini_apply` (validated edits to VARA.ini with a
+stop-edit-start modem bounce). These mutate config or local state. Malformed
+input is rejected as invalid even when disarmed; the gated mutation only runs
+when armed and un-tainted.
 
 ### Compose / queue — local, ungated, never transmits
 
@@ -134,9 +220,14 @@ connect.
 
 ### External egress — require armed send-authority AND un-tainted
 
-`cms_connect`, `verify_cms_connection`, `ardop_connect`, `ardop_b2f_exchange`,
-`vara_b2f_exchange`, `packet_connect`. These leave the box: they connect to the CMS
-or key the transmitter. Denied unless armed and un-tainted.
+`cms_connect` (connects to the **configured** CMS — there is no host parameter —
+and **flushes the outbox**: staged mail transmits), `verify_cms_connection`,
+`rig_tune` (CAT-tunes the dial; `freq_hz` is the audio center, do not
+pre-subtract an offset), `ardop_connect`, `ardop_b2f_exchange`,
+`vara_open_session` (opens VARA and registers the callsign; required before
+`vara_b2f_exchange`), `vara_b2f_exchange`, `packet_connect`. These leave the box:
+they connect to the CMS or key the transmitter. Denied unless armed and
+un-tainted.
 
 ### Abort — always allowed
 
@@ -151,10 +242,12 @@ config on its own.
 - **Armed send-authority is operator-only.** The operator arms it in the app's GUI.
   The agent has no tool to arm itself. Egress and write tools are denied unless the
   operator has armed authority.
-- **Reading untrusted content taints the session.** `mailbox_list`,
-  `message_read`, `tauri_search_run`, and `session_log_snapshot` return content
-  that may carry injected instructions. Calling any of them locks egress and writes
-  for the rest of the session. The lock clears ONLY when the operator **re-arms**,
+- **Reading untrusted content taints the session.** Five tools — `mailbox_list`,
+  `message_read`, `tauri_search_run`, `session_log_snapshot`, and
+  `routines_journal_get` — return content that may carry injected instructions.
+  Calling any of them locks egress and writes for the rest of the session.
+  `server_info` reports the current `tainted` state and `taint_reason`, so you
+  can check before you act rather than discovering the lock on a denial. The lock clears ONLY when the operator **re-arms**,
   which quarantines: it discards the current conversation and starts a fresh
   authorized session (a plain ARM does NOT clear taint). This contains prompt
   injection: an instruction read out of a message cannot be turned into a
@@ -198,7 +291,8 @@ Knowledge resources are served under `tuxlink://` URIs (read them with
 `read_resource`): `tuxlink://glossary` and `tuxlink://glossary-supplement`;
 playbooks `tuxlink://playbook/ardop-wont-connect`,
 `tuxlink://playbook/connection-troubleshooting`,
-`tuxlink://playbook/cms-z-password-lag`; device + transport guides
+`tuxlink://playbook/cms-z-password-lag`, `tuxlink://playbook/vara-wine-setup`,
+`tuxlink://playbook/audio-setup`; device + transport guides
 `tuxlink://device/uv-pro`, `tuxlink://guide/ptt`, `tuxlink://guide/ardop`,
 `tuxlink://guide/vara`, `tuxlink://guide/packet`,
 `tuxlink://guide/picking-a-transport`, `tuxlink://guide/emcomm-ics`; references
