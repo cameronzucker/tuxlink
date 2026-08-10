@@ -92,6 +92,7 @@ Key routing rules:
 - Architecture review → invoke plan-eng-review
 - Save progress, checkpoint, resume → invoke checkpoint
 - Code quality, health check → invoke health
+- Bounded, spec-complete, leaf-scope code task with a mechanical test gate → invoke inkling-dispatch (free local subagent lane) BEFORE spending frontier tokens; its Step-0 serving pre-flight and eligibility checklist decide, not vibes
 
 ## Brainstorming preferences
 
@@ -99,6 +100,19 @@ Key routing rules:
 - Token budget is not a concern during design phases — be thorough
 
 ## Extended capabilities available on this dev Pi
+
+### Inkling local subagent lane (`inkling-dispatch` skill)
+
+The Spark serves `inkling-small-nvfp4` (256K) at zero token cost; evidence
+(graded evals 3/3 + a real-P1 A/B vs Sonnet, `dev/evals/2026-08-09-*` and
+`2026-08-10-*`) established it as a viable background code-subagent for
+bounded, spec-complete, leaf-scope tasks with mechanical verification.
+Operator-blessed posture (2026-08-10): Inkling-authored code follows NORMAL
+code rules — parent-written spec, parent verification on R2 gates, parent
+review + commit with attribution, CI as merge gate. The full recipe
+(serving pre-flight, eligibility checklist, spec template, harness gotchas,
+touch protocol) is canonical in `.claude/skills/inkling-dispatch/SKILL.md`
+— this section is a pointer.
 
 ### OpenAI Codex CLI — for `build-robust-features`' "at least one adversarial round via Codex" requirement
 
