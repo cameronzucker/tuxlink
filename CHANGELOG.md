@@ -31,6 +31,13 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.106.0](https://github.com/cameronzucker/tuxlink/compare/v0.105.0...v0.106.0) (2026-08-10)
+
+
+### Features
+
+* **spikes:** T1 catalog-embedding spike — two-host evidence for the five-classifier ADR (efk3k Phase 1) ([20ab781](https://github.com/cameronzucker/tuxlink/commit/20ab7817c49c225b0a4aedc544825a18b9ca2231))
+
 ## [0.105.0](https://github.com/cameronzucker/tuxlink/compare/v0.104.0...v0.105.0) (2026-08-03)
 
 
