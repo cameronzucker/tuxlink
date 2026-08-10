@@ -72,8 +72,10 @@ embed the full record.
 - Zero-shot only; no fine-tuning. The 44-query set was authored by one session
   against the catalog itself (no bench corpus vendored) — bench-generated
   labeled pairs will harden these numbers and enable per-family calibration.
-- Pi gte-small was still mid-run at commit time (gte's batch path is uniquely
-  slow — reproduced on R2 where its precompute ran 4–7× bge's); its R2 rows
-  carry the model's story. Follow-up commit if the Pi row lands.
+- Pi gte-small (landed in the follow-up commit): accuracy replicates R2
+  (0.944 top-1 `sec_desc`) but its batch path is pathological on the Pi —
+  4,318s (72 min) per template precompute vs bge's 49s, 1,023ms median
+  per-query — reinforcing the model-specific batch slowness seen on R2
+  (4–7× bge) and disqualifying gte for any Pi-floor role.
 - Licenses: bge-small (MIT), MiniLM (Apache-2.0), e5 (MIT), gte (MIT) — all
   AGPLv3-compatible; weights treated as data per placement rule 4.
