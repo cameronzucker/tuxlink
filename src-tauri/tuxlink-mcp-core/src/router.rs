@@ -270,6 +270,7 @@ pub const TOOL_TIERS: &[(&str, &str)] = &[
     ("vara_open_session", "egress"),
     ("vara_probe", "diagnostic-read"),
     ("vara_status", "diagnostic-read"),
+    ("vara_stop_session", "abort"),
     ("verify_cms_connection", "diagnostic-read"),
     ("wwv_capture_offair", "station-intel"),
     ("wwv_offair_available", "diagnostic-read"),
