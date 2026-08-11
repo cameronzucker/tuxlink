@@ -3428,6 +3428,24 @@ mod tests {
             env!("CARGO_MANIFEST_DIR"),
             "/../resources/agents/tool-surface.jsonl"
         );
+        // Optional full-schema dump for the real-context (function-calling)
+        // battery: {name, description, parameters} exactly as the registry
+        // serves them. Harness input, not a parity-gated asset.
+        if let Ok(schema_path) = std::env::var("TUXLINK_DUMP_TOOL_SCHEMAS") {
+            let full: Vec<serde_json::Value> = TuxlinkMcp::tool_router()
+                .list_all()
+                .into_iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.input_schema,
+                    })
+                })
+                .collect();
+            std::fs::write(&schema_path, serde_json::to_string(&full).unwrap()).unwrap();
+            eprintln!("schemas dumped to {schema_path}");
+        }
         if std::env::var("TUXLINK_REGEN_TOOL_SURFACE").is_ok() {
             std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
             std::fs::write(path, &generated).unwrap();
