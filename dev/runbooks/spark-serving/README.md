@@ -35,25 +35,39 @@ reproduced the pinned Triton failure class the recipes exist to avoid.
   - `/api/status`, `/api/stats` (GET) — what's serving, wall power, etc.
   - `/api/fetch` — model download management; `/api/history` (GET)
 
-**Restore Inkling** (the default assistant serving) — CORRECTED
-2026-08-11: the dashboard's `/api/cluster/switch/{name}` path does NOT
-apply recipe mods, and Inkling's recipe is mod-load-bearing (the
-`inkling` tool/reasoning parser is REGISTERED by
-`mods/inkling-fix-streaming-tool-calls`; without it the API server dies
-at startup with `KeyError: invalid tool call parser: inkling` — observed
-and journald-logged today). The API switch is safe only for mod-free
-profiles (the qwen cluster profiles). Inkling restore is the RECIPE
-RUNNER, on the head:
+**Restore Inkling** (the default assistant serving) — RESOLVED
+2026-08-11 (operator directive "all other work stops until API-only
+serving is confirmed reliable"):
 
 ```
-cd ~/spark-vllm-docker && ./run-recipe.sh inkling-small-nvfp4
+curl -X POST https://inference.twin-bramble.ts.net:8443/api/cluster/switch/inkling-tp2
 ```
 
-(applies all four mods while the containers are idle, then launches TP2
-across both nodes), then watch
-`https://inference.twin-bramble.ts.net/v1/models` until
-`thinkingmachines/Inkling-Small-NVFP4` answers. Expect several minutes
-(159 GiB checkpoint). Cluster containers now launch with
+then poll `/api/status` until `serving.id` =
+`thinkingmachines/Inkling-Small-NVFP4` (several minutes; 159 GiB
+checkpoint). This works now because the switch DELEGATES: profiles
+carrying a `recipe` field (inkling-tp2 does) get stop + `docker rm -f`
+on both nodes (corpse-proof) and then `run-recipe.sh <recipe>` launched
+detached — the ONE launcher that applies the recipe's mods and pins.
+The dashboard's own docker/ray composition remains only for mod-free
+cluster profiles (q122-tp2, q235-tp2). History: the pre-fix API path
+skipped mods and died at startup (`KeyError: invalid tool call parser:
+inkling` — the parser is registered by
+`mods/inkling-fix-streaming-tool-calls`), which is why serving broke
+every time it was touched; two launchers each held half the truth.
+
+**Proven 2026-08-11 (4/4 API-only legs, each ending in a live
+completion):** Inkling cold recycle → cross-model to q122-tp2 →
+cross-model back to Inkling → idempotent Inkling→Inkling repeat.
+Caveat observed en route: the LEGACY cluster composition binds vLLM to
+the QSFP IP, so q122-tp2 is NOT reachable via the 443 front (reach it
+at `http://10.55.0.1:8000` from the head) — a legacy-path property,
+unchanged; Inkling's recipe binds 0.0.0.0 and the 443 front serves it.
+
+Implementation lives in `~/serving/spark-dashboard/app.py` (`RECIPE
+DELEGATION` block in `_do_cluster_switch`) + `profiles.json`
+(inkling-tp2: `recipe`, corrected `served_name`/`container`); timestamped
+`.bak-*` files sit beside both. Cluster containers launch with
 `--log-driver=journald` (added to `launch-cluster.sh` 2026-08-11): a
 dead container's traceback survives `--rm` —
 `journalctl CONTAINER_NAME=vllm_node --since <t>` on the node.
