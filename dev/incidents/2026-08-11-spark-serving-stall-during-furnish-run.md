@@ -89,6 +89,51 @@ any control-plane metrics history (running-sequence count over the
 window would directly confirm the pile-behind-a-stall picture). The
 serving remains untouched by agents until the operator rules.
 
+## RESOLUTION — server-side evidence (added after the operator restored cluster access)
+
+Kernel logs from BOTH nodes settle it. The client-side "pile-behind-a-stall"
+hypothesis in this doc's first draft is WITHDRAWN (contradicted by the
+proxy ledger: zero stream errors, zero long calls, no leftover threads);
+what replaced it is evidence:
+
+- **Recurring, synchronized, driver-level GPU memory exhaustion on both
+  Sparks under sustained TP2 serving.** Head and worker kernel logs show
+  identical `NVRM: NV_ERR_NO_MEMORY` (`_memdescAllocInternal`) bursts
+  culminating in **Xid 31 MMU faults inside `VLLM::Worker`**:
+  - Aug 8 16:57 MST — both nodes, DAYS before any of this session's work.
+  - Aug 10 21:33 MST (04:33Z) and Aug 10 22:44 MST (05:44Z) — both nodes,
+    ten seconds apart, DURING the narrowed overnight run; the engine
+    survived those episodes and the campaign completed.
+- Today's terminal death at 07:18 MST (14:18:18Z) left NO third kernel
+  fault on either node — the final failure was process/engine-level, and
+  its traceback auto-deleted with the `--rm` serving container. The
+  worker journal catches the control-plane monitor polling the corpse
+  (`docker top vllm_node` ~4×/sec at 07:18:10–18).
+- Client concurrency is exonerated by the complete wire ledger (strictly
+  serial, all chats 200, traffic went QUIET at the death moment — the
+  vetting gate stopped chats the instant `/v1/models` flipped 404).
+
+**Conclusion:** a pre-existing, recurring cluster condition — GPU memory
+exhaustion under sustained vLLM TP2 serving — with three documented
+episodes across four days, two predating or overlapping loads that
+completed fine. The session's three back-to-back campaigns determined
+WHEN the terminal episode landed, not WHETHER. The operator power-cycled
+the worker (fresh kernel ring); the head has NOT been rebooted and
+carries the same recurring-fault history.
+
+**Systemic fixes proposed (operator decisions):**
+1. Drop `--rm` from serving recipes (or log-driver=journald) so crash
+   corpses keep their tracebacks — today's terminal evidence died with
+   the container, twice now (same loss in the earlier docker-stop
+   incident).
+2. Client-side upstream-health circuit breaker on every bench campaign
+   (committed as a session rule; implementation accompanies any resume).
+3. Consider cycling the serving instance between campaigns rather than
+   multi-day continuous serving, until the exhaustion is root-caused
+   upstream (vLLM/driver version pinning question).
+4. If bring-up faults on the head, it likely wants the same power-cycle
+   the worker received.
+
 ## State at write time
 
 Bench runner killed (174/339 units, all completed-clean, usable for the
