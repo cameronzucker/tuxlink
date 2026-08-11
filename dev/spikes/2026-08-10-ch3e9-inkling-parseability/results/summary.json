@@ -1,0 +1,14 @@
+{
+ "slice": 120,
+ "queries": 44,
+ "formats": {
+  "jsonl": {
+   "parse": "6/6",
+   "select": "36/44"
+  },
+  "text": {
+   "parse": "6/6",
+   "select": "35/44"
+  }
+ }
+}
