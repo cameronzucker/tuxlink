@@ -546,6 +546,11 @@ pub struct PlatformInfoDto {
 pub struct LogLineDto {
     pub timestamp: String,
     pub level: String,
+    /// Where the line came from: `backend` (engine state), `transport`
+    /// (link/session events), or `wire` (raw protocol text). Previously
+    /// dropped at this boundary, leaving agents unable to tell a wire line
+    /// from an app line when diagnosing (tuxlink-9n4cr).
+    pub source: String,
     pub message: String,
 }
 

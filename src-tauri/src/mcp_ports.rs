@@ -1140,9 +1140,15 @@ impl LogPort for MonolithLogPort {
                     LogLevel::Warn => "warn",
                     LogLevel::Error => "error",
                 };
+                let source = match l.source {
+                    crate::winlink_backend::LogSource::Backend => "backend",
+                    crate::winlink_backend::LogSource::Transport => "transport",
+                    crate::winlink_backend::LogSource::Wire => "wire",
+                };
                 LogLineDto {
                     timestamp: l.timestamp_iso,
                     level: level.to_string(),
+                    source: source.to_string(),
                     message,
                 }
             })

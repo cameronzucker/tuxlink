@@ -464,6 +464,7 @@ pub mod test_support {
             Ok(vec![LogLineDto {
                 timestamp: "2026-06-26T00:00:00Z".into(),
                 level: "info".into(),
+                source: "backend".into(),
                 message: "session started".into(),
             }])
         }

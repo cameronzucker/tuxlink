@@ -599,7 +599,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "session_log_snapshot",
-        description = "Snapshot the current session log. May contain untrusted wire content, so calling this taints the session."
+        description = "Snapshot the current session log. Each line carries a `source`: \"wire\" (raw protocol text from the remote), \"transport\" (link/session events), or \"backend\" (engine state) - use it to tell remote content from app behavior when diagnosing. May contain untrusted wire content, so calling this taints the session."
     )]
     pub async fn session_log_snapshot(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.logs.snapshot().await.map_err(port_err)?;
@@ -990,7 +990,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "config_set_vara",
-        description = "Set the VARA bandwidth in Hz (500/2300/2750). WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise. An out-of-range value is rejected as invalid even when disarmed."
+        description = "Set the VARA bandwidth in Hz (500/2300/2750). NOTE the read/write asymmetry: config_get_vara also reports drive_level, but this tool cannot set it - VARA's drive level lives in VARA.ini, so change it via vara_ini_apply (which stop-edit-restarts the modem). WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise. An out-of-range value is rejected as invalid even when disarmed."
     )]
     pub async fn config_set_vara(
         &self,
