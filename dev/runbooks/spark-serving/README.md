@@ -35,11 +35,28 @@ reproduced the pinned Triton failure class the recipes exist to avoid.
   - `/api/status`, `/api/stats` (GET) — what's serving, wall power, etc.
   - `/api/fetch` — model download management; `/api/history` (GET)
 
-**Restore Inkling** (the default assistant serving):
-`POST /api/cluster/switch/inkling-tp2`, then watch
+**Restore Inkling** (the default assistant serving) — CORRECTED
+2026-08-11: the dashboard's `/api/cluster/switch/{name}` path does NOT
+apply recipe mods, and Inkling's recipe is mod-load-bearing (the
+`inkling` tool/reasoning parser is REGISTERED by
+`mods/inkling-fix-streaming-tool-calls`; without it the API server dies
+at startup with `KeyError: invalid tool call parser: inkling` — observed
+and journald-logged today). The API switch is safe only for mod-free
+profiles (the qwen cluster profiles). Inkling restore is the RECIPE
+RUNNER, on the head:
+
+```
+cd ~/spark-vllm-docker && ./run-recipe.sh inkling-small-nvfp4
+```
+
+(applies all four mods while the containers are idle, then launches TP2
+across both nodes), then watch
 `https://inference.twin-bramble.ts.net/v1/models` until
-`inkling-small-nvfp4` answers. Expect several minutes (159 GiB
-checkpoint, TP2 across both nodes).
+`thinkingmachines/Inkling-Small-NVFP4` answers. Expect several minutes
+(159 GiB checkpoint). Cluster containers now launch with
+`--log-driver=journald` (added to `launch-cluster.sh` 2026-08-11): a
+dead container's traceback survives `--rm` —
+`journalctl CONTAINER_NAME=vllm_node --since <t>` on the node.
 
 ## Recipes (the pins live here)
 
