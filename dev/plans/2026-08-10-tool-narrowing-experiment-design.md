@@ -63,7 +63,10 @@ Each assistant sees the tools presented one of four ways:
 - **Narrowed with a safety net** — full descriptions only for the
   shortlisted tools, plus a compact list of all 92 names with one-liners,
   and any tool callable by name with its description loaded on demand.
-  The shape we currently expect to ship.
+  The shape we currently expect to ship. **Hard requirement (operator,
+  2026-08-10): at minimum the Inkling tier must always be able to get
+  past the classifier to the full toolset if it needs or wants it — the
+  classifier's narrowing is never a wall for a capable model.**
 - **Narrowed, nothing else** — the shortlist only. Not a shipping
   candidate; it exists to measure how bad a miss is with no recovery path.
 
@@ -145,3 +148,10 @@ two amendments applied above: the small model serves from the Spark
 cluster, not R2 ("The R2 is not a suitable inference host"), and the
 frontier arm is GPT-5.6-Luna over OpenRouter (cheapest frontier-class;
 operator's frontier-ness caveat noted). Groundwork is a go.
+
+Third operator note (2026-08-10, during the curation iteration): the
+curated synonym vocabulary is "just a token/friction reducer" — if it is
+load-bearing as the solution, the classifier has failed as a classifier.
+The real robustness lives in the recovery paths and the reachability
+requirement above; do not chase phrasing space with hand vocabulary, and
+read curation-driven chart lifts as friction reduction, not mechanism.

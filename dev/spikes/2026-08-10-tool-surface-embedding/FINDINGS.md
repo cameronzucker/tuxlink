@@ -49,4 +49,26 @@ stays the single generator, with the same in-same-change discipline),
 then re-run this chart. The recovery-mechanism experiment still matters
 afterward — curation shrinks the miss class, it won't zero it.
 
+## Curated re-run (same night, TOOL_SYNONYMS: 40 tools)
+
+| shortlist size | mechanical | curated |
+|---|---|---|
+| 5 | 83.0% | 85.1% |
+| 8 | 85.1% | 91.5% |
+| 12 | 91.5% | **93.6%** |
+| 16 | 91.5% | 95.7% |
+
+Reject gap still SEPARATED (0.5682 vs 0.5965). Calibrated thresholds for
+the tools corpus shipped from this run (reject 0.582, ask-margin 0.008 —
+margins stay sibling-noisy, same as the catalog corpus).
+
+**Operator framing recorded mid-iteration (binding on how these numbers
+are read):** the synonym table is "just a token/friction reducer" — if
+curation is load-bearing as the solution, the classifier has failed as a
+classifier. Do not chase phrasing space with hand vocabulary. And the
+hard requirement for wiring: at minimum the Inkling tier can always get
+past the classifier to the full toolset if it needs or wants it. The
+residual miss class above is precisely why those recovery paths carry
+the real load; the curve lift is comfort, not mechanism.
+
 Session: moss-tamarack-taiga, 2026-08-10 night AZT.
