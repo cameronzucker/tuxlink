@@ -476,9 +476,30 @@ impl Provider for OpenAiProvider {
         let mut stream = resp.bytes_stream();
         let mut acc = SseAccumulator::new();
 
-        while let Some(item) = stream.next().await {
+        // A stalled SSE body produces NO error and NO bytes — the connection
+        // just sits open. Without a deadline the read below waits for the whole
+        // turn cap (tuxlink-3cal1: 1800s burned per stalled unit), and in the
+        // shipped chat it freezes Elmer for the full response-duration cap.
+        // Two deadlines bound it; see `stream_read_deadline` for which applies.
+        let deadlines = StreamDeadlines::from_env();
+        let mut seen_bytes = false;
+
+        loop {
+            let wait = deadlines.deadline_for(seen_bytes);
+            let next = match tokio::time::timeout(wait, stream.next()).await {
+                Ok(next) => next,
+                Err(_) => {
+                    return Err(ProviderError::Transport(stalled_stream_message(
+                        seen_bytes, wait,
+                    )))
+                }
+            };
+            let Some(item) = next else { break };
             let chunk = item
                 .map_err(|e| ProviderError::Transport(format!("stream read failed: {e}")))?;
+            // Any chunk at all — even a keepalive carrying no delta — proves the
+            // connection is still live, so it arms the (longer) idle deadline.
+            seen_bytes = true;
             // `feed` parses every complete SSE frame currently in the buffer and
             // invokes `on_event` for each delta. A `[DONE]` sentinel ends the
             // stream early; otherwise we keep reading until the body closes. It
@@ -499,6 +520,90 @@ impl Provider for OpenAiProvider {
         }
 
         Ok(acc.into_turn())
+    }
+}
+
+// --- SSE stall deadlines (pure, unit-testable) ------------------------------
+
+/// Default seconds allowed between the response headers arriving and the FIRST
+/// byte of the body. Deliberately generous: a 122b model at high concurrency
+/// can sit in prefill for a long time before emitting anything, and killing a
+/// slow-but-healthy prefill is worse than the stall it guards against.
+const STREAM_FIRST_BYTE_SECS: u64 = 120;
+
+/// Default seconds allowed BETWEEN byte chunks once the body is flowing. A
+/// producing stream emits continuously, so a gap this long means the path is
+/// wedged rather than that the model is thinking.
+const STREAM_IDLE_SECS: u64 = 300;
+
+/// The two stall deadlines applied to a streaming response body.
+///
+/// Both are overridable so an operator on a very slow endpoint (or a battery
+/// run against a cold model) can widen them without a rebuild. A malformed or
+/// zero value falls back to the default rather than disabling the guard —
+/// silently removing the deadline is the failure this whole struct exists to
+/// prevent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct StreamDeadlines {
+    first_byte: std::time::Duration,
+    idle: std::time::Duration,
+}
+
+impl StreamDeadlines {
+    /// Read the deadlines from the environment, falling back to the defaults.
+    fn from_env() -> Self {
+        Self {
+            first_byte: env_secs_or("ELMER_STREAM_FIRST_BYTE_SECS", STREAM_FIRST_BYTE_SECS),
+            idle: env_secs_or("ELMER_STREAM_IDLE_SECS", STREAM_IDLE_SECS),
+        }
+    }
+
+    /// Which deadline applies right now. Before any byte has arrived the
+    /// first-byte deadline governs (prefill); afterwards the idle deadline does.
+    fn deadline_for(self, seen_bytes: bool) -> std::time::Duration {
+        if seen_bytes {
+            self.idle
+        } else {
+            self.first_byte
+        }
+    }
+}
+
+/// Read a positive whole-second override from `key`, else `default`.
+fn env_secs_or(key: &str, default: u64) -> std::time::Duration {
+    parse_secs_override(std::env::var(key).ok().as_deref(), default)
+}
+
+/// Pure half of [`env_secs_or`], split out so the parsing rules are testable
+/// without mutating process environment (which races across parallel tests).
+///
+/// Zero is rejected along with garbage: a zero deadline would abort every
+/// stream instantly, turning a safety net into an outage.
+fn parse_secs_override(raw: Option<&str>, default: u64) -> std::time::Duration {
+    let secs = raw
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(default);
+    std::time::Duration::from_secs(secs)
+}
+
+/// Operator-facing text for a stalled stream. Names which deadline tripped, so
+/// "the endpoint never started" is distinguishable from "it died mid-answer".
+fn stalled_stream_message(seen_bytes: bool, waited: std::time::Duration) -> String {
+    let secs = waited.as_secs();
+    if seen_bytes {
+        format!(
+            "stream stalled: no data for {secs}s mid-response. The model endpoint \
+             or a proxy in front of it stopped sending without closing the \
+             connection. Widen with ELMER_STREAM_IDLE_SECS if the endpoint is \
+             genuinely this slow."
+        )
+    } else {
+        format!(
+            "stream stalled: no first byte within {secs}s of the response opening. \
+             The model endpoint accepted the request then sent nothing. Widen with \
+             ELMER_STREAM_FIRST_BYTE_SECS if the model needs longer to prefill."
+        )
     }
 }
 
@@ -2858,6 +2963,68 @@ mod tests {
             body.get("temperature").is_none(),
             "temperature must be absent when None; got: {body}"
         );
+    }
+
+    // --- SSE stall deadlines (tuxlink-3cal1, pure) ------------------------
+
+    #[test]
+    fn first_byte_deadline_applies_until_a_byte_arrives() {
+        let d = StreamDeadlines {
+            first_byte: std::time::Duration::from_secs(120),
+            idle: std::time::Duration::from_secs(300),
+        };
+        // Prefill window: nothing has arrived yet.
+        assert_eq!(d.deadline_for(false), std::time::Duration::from_secs(120));
+        // Once the body is flowing the longer idle window governs.
+        assert_eq!(d.deadline_for(true), std::time::Duration::from_secs(300));
+    }
+
+    #[test]
+    fn secs_override_absent_or_garbage_falls_back_to_default() {
+        let d = std::time::Duration::from_secs(120);
+        assert_eq!(parse_secs_override(None, 120), d, "unset -> default");
+        assert_eq!(parse_secs_override(Some(""), 120), d, "empty -> default");
+        assert_eq!(parse_secs_override(Some("abc"), 120), d, "garbage -> default");
+        assert_eq!(parse_secs_override(Some("-5"), 120), d, "negative -> default");
+        assert_eq!(parse_secs_override(Some("1.5"), 120), d, "non-integer -> default");
+    }
+
+    #[test]
+    fn secs_override_zero_is_rejected_not_honoured() {
+        // A zero deadline would abort every stream on the first poll, turning
+        // this guard into an outage. It must fall back, not disable the guard.
+        assert_eq!(
+            parse_secs_override(Some("0"), 120),
+            std::time::Duration::from_secs(120)
+        );
+    }
+
+    #[test]
+    fn secs_override_accepts_a_positive_value_with_whitespace() {
+        assert_eq!(
+            parse_secs_override(Some(" 45 "), 120),
+            std::time::Duration::from_secs(45)
+        );
+    }
+
+    #[test]
+    fn stall_message_distinguishes_never_started_from_died_midway() {
+        let never = stalled_stream_message(false, std::time::Duration::from_secs(120));
+        let midway = stalled_stream_message(true, std::time::Duration::from_secs(300));
+
+        assert!(never.contains("no first byte within 120s"), "got: {never}");
+        assert!(
+            never.contains("ELMER_STREAM_FIRST_BYTE_SECS"),
+            "names the knob that widens it: {never}"
+        );
+
+        assert!(midway.contains("no data for 300s"), "got: {midway}");
+        assert!(
+            midway.contains("ELMER_STREAM_IDLE_SECS"),
+            "names the knob that widens it: {midway}"
+        );
+
+        assert_ne!(never, midway, "the two stalls must be distinguishable");
     }
 
     // --- SSE streaming accumulator (no network) ---------------------------

@@ -41,6 +41,10 @@ const KNOWLEDGE_MIME: &str = "text/markdown";
 fn port_err(e: PortError) -> ErrorData {
     match e {
         PortError::InvalidInput(reason) => ErrorData::invalid_request(reason, None),
+        PortError::Denied(reason) => ErrorData::invalid_request(
+            format!("not authorized to read: {reason}. {}", denial_remedy(&reason)),
+            None,
+        ),
         other => ErrorData::internal_error(other.to_string(), None),
     }
 }
@@ -381,7 +385,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "vara_status",
-        description = "Report VARA modem status: connected, bandwidth, and state. Read-only. Also reports `reachable` (true/false/null): command-port (8300) reachability - true = the cmd port answered (or a session is Open), false = no answer, null = unknown (session busy, probe skipped rather than made to wait). cmd-reachable is NOT ready-to-send; use `vara_probe` to confirm a real VARA is answering."
+        description = "Report VARA modem status: connected, bandwidth, and state. `bandwidth` is the CONFIGURED bandwidth, not a live negotiated value. Read-only. Also reports `reachable` (true/false/null): command-port (8300) reachability - true = the cmd port answered (or a session is Open), false = no answer, null = unknown (session busy, probe skipped rather than made to wait). cmd-reachable is NOT ready-to-send; use `vara_probe` to confirm a real VARA is answering."
     )]
     pub async fn vara_status(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.status.vara_status().await.map_err(port_err)?;
@@ -422,7 +426,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "rig_status",
-        description = "Report the rig's configured state and, best-effort, its live VFO frequency/mode/PTT via a transient rigctld read (never transmits; may report nulls if the rig is unconfigured or its serial is busy with an active session). Read-only."
+        description = "Report the rig's CONFIGURED state only. `vfo_hz`, `mode`, and `ptt` are ALWAYS null by design - Tuxlink deliberately does not read the live rig here, because that would spawn an ungated CAT-control server; `configured` tells you whether rig control is set up. For the live dial, the operator's radio panel is the source of truth. Read-only; never transmits."
     )]
     pub async fn rig_status(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.status.rig_status().await.map_err(port_err)?;
@@ -465,7 +469,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "mailbox_list",
-        description = "List message metadata in a mailbox folder. Returns untrusted message senders/subjects, so calling this taints the session (send authority is locked until the operator re-arms)."
+        description = "List message metadata in a mailbox folder. `folder` is a slug from user_folders_list (system folders: inbox, outbox, sent, archive, deleted); an unknown folder is refused with the valid slugs named - it does NOT return an empty list. Returns untrusted message senders/subjects, so calling this taints the session (send authority is locked until the operator re-arms)."
     )]
     pub async fn mailbox_list(
         &self,
@@ -502,7 +506,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "user_folders_list",
-        description = "Enumerate mailbox folders and their message counts. Structural metadata; does not taint. Read-only."
+        description = "Enumerate mailbox folders and their message counts. Each folder carries `name` (display-only) and `slug` - pass the `slug` (never the display name) as the `folder` argument of mailbox_list / message_read / mailbox_move. Structural metadata; does not taint. Read-only."
     )]
     pub async fn user_folders_list(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.mailbox.folders().await.map_err(port_err)?;
@@ -748,7 +752,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "session_log_snapshot",
-        description = "Snapshot the current session log. May contain untrusted wire content, so calling this taints the session."
+        description = "Snapshot the current session log. Each line carries a `source`: \"wire\" (raw protocol text from the remote), \"transport\" (link/session events), or \"backend\" (engine state) - use it to tell remote content from app behavior when diagnosing. May contain untrusted wire content, so calling this taints the session."
     )]
     pub async fn session_log_snapshot(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.logs.snapshot().await.map_err(port_err)?;
@@ -820,7 +824,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "solar_conditions",
-        description = "Report the STORED space-weather indices (SFI/A/K) and the sunspot number used for predictions. IMPORTANT: this reads a cached snapshot - it does not fetch anything, and the data may be old. Always check the returned `source` and `updated_at_ms` before presenting these as current. `source` is: \"swpc\" (from the internet), \"rf-wwv\" or \"rf-wwv-voice\" (decoded from the radio), or \"shipped\" (a fallback that shipped with the app and has NEVER been updated - do not present shipped defaults as current conditions). If the data is stale or from shipped defaults, tell the operator and offer wwv_capture_offair, which refreshes it over their own radio with no internet. Read-only; does not taint."
+        description = "Report the STORED space-weather indices (SFI/A/K) and the sunspot number used for predictions. IMPORTANT: this reads a cached snapshot - it does not fetch anything, and the data may be old. Always check the returned `source` and `updated_at_ms` before presenting these as current. `source` is: \"swpc\" (from the internet), \"rf-wwv\" or \"rf-wwv-voice\" (decoded from the radio), or \"shipped\" (a fallback that shipped with the app and has NEVER been updated - do not present shipped defaults as current conditions; `updated_at_ms` is null in that case, because there is no update time). If the data is stale or from shipped defaults, tell the operator and offer wwv_capture_offair, which refreshes it over their own radio with no internet. Read-only; does not taint."
     )]
     pub async fn solar_conditions(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self.state.prediction.solar().await.map_err(port_err)?;
@@ -939,7 +943,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "cms_connect",
-        description = "Connect to the configured CMS (Winlink common message server). EGRESS: requires armed send-authority and an un-tainted session; denied otherwise."
+        description = "Connect to the CONFIGURED CMS (Winlink common message server) - there is no host/transport parameter; the endpoint comes from the app config (config_read shows it). Connecting runs the full exchange: staged OUTBOX MAIL TRANSMITS and inbound mail is retrieved. EGRESS: requires armed send-authority and an un-tainted session; denied otherwise."
     )]
     pub async fn cms_connect(&self) -> Result<CallToolResult, ErrorData> {
         self.state.egress.cms_connect().await.map_err(egress_err)?;
@@ -1139,7 +1143,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "config_set_vara",
-        description = "Set the VARA bandwidth in Hz (500/2300/2750). WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise. An out-of-range value is rejected as invalid even when disarmed."
+        description = "Set the VARA bandwidth in Hz (500/2300/2750). NOTE the read/write asymmetry: config_get_vara also reports drive_level, but this tool cannot set it - VARA's drive level lives in VARA.ini, so change it via vara_ini_apply (which stop-edit-restarts the modem). WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise. An out-of-range value is rejected as invalid even when disarmed."
     )]
     pub async fn config_set_vara(
         &self,
@@ -1174,7 +1178,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "packet_config_set",
-        description = "Set the packet (AX.25/KISS) connection params (ssid, tcp host/port, tx delay). WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise."
+        description = "Set the packet (AX.25/KISS) connection params. ALL FOUR fields are required on every call (ssid, tcp_host, tcp_port, txdelay_ms) - this is a whole-config set, not a partial patch, so read packet_config_get first and resend the unchanged values. WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise."
     )]
     pub async fn packet_config_set(
         &self,
@@ -1214,7 +1218,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "position_set_source",
-        description = "Set the position source (e.g. gps/manual). WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise."
+        description = "Set the position source. The ONLY source is \"Gps\" (any casing accepted); this is not an open set - a manual/fixed location is set via config_set_grid instead, not as a source. WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise."
     )]
     pub async fn position_set_source(
         &self,
@@ -1315,7 +1319,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "message_send",
-        description = "Stage a composed message in the local outbox; returns the staged message id. No transmission occurs until a later gated connect. Validates recipients/subject/body; a malformed value (e.g. a CR/LF in an address) is rejected as invalid."
+        description = "Stage a composed message in the local outbox; returns the staged message id. Text only - this tool CANNOT attach files (there is no attachment parameter; do not promise attachments). No transmission occurs until a later gated connect. Validates recipients/subject/body; a malformed value (e.g. a CR/LF in an address) is rejected as invalid."
     )]
     pub async fn message_send(
         &self,
@@ -1375,7 +1379,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "catalog_send_inquiry",
-        description = "Stage a Winlink Request Center inquiry for one or more catalog item ids (the filename ids from catalog_list) in the local outbox; returns the staged message id. Use this to request ANY catalog product - propagation forecasts, METAR airport weather, satellite keplerian data, bulletins, marine forecasts, etc., not just GRIB weather. The requested products are delivered to the mailbox after the operator next connects (Arm to send). No transmission occurs here."
+        description = "Stage a Winlink Request Center inquiry for one or more catalog item ids (the filename ids from catalog_list) in the local outbox; returns the staged message id. Every id is VALIDATED against the catalog - an id that is not a catalog_list `id` is refused with the closest real ids, so browse or confirm ids first rather than guessing. Use this to request ANY catalog product - propagation forecasts, METAR airport weather, satellite keplerian data, bulletins, marine forecasts, etc., not just GRIB weather. The requested products are delivered to the mailbox after the operator next connects (Arm to send). No transmission occurs here."
     )]
     pub async fn catalog_send_inquiry(
         &self,
@@ -1393,7 +1397,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "grib_send_request",
-        description = "Stage a GRIB weather-product request in the local outbox; returns the staged message id. No transmission occurs until a later gated connect. Validates the subject header."
+        description = "Stage a GRIB weather-product request in the local outbox; returns the staged message id. `mode` is EXACTLY \"send\" (one-shot) or \"sub\" (subscription) - natural-language words like \"forecast\"/\"gfs\" are refused. The request geometry is fixed server-side: a 10-degree box centered on lat/lon at a 2x2 grid with default times/parameters - you cannot request a different area or resolution through this tool. No transmission occurs until a later gated connect. Validates the subject header."
     )]
     pub async fn grib_send_request(
         &self,
@@ -1486,7 +1490,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "ft8_set_band",
-        description = "Set the FT-8 band (e.g. \"20m\", \"40m\"). If rig CAT control is configured this QSYs the radio's dial to that band's FT-8 frequency. Does not transmit."
+        description = "Set the FT-8 band (e.g. \"20m\", \"40m\"). The dial only QSYs when the listener is ALREADY RUNNING with rig CAT configured - setting the band while stopped just changes the configured band for the next start. Does not transmit."
     )]
     pub async fn ft8_set_band(
         &self,
@@ -2361,7 +2365,11 @@ pub struct ExchangeParams {
 /// Like [`ExchangeParams`] but with the VARA-only `freq_hz` / `qsy_candidates`:
 /// VARA's B2F connects + tunes + exchanges in a single call, so a pre-tune + QSY
 /// walk are live here (unlike ARDOP, which tunes at a separate connect step).
+/// `deny_unknown_fields` for parity with its ARDOP twin (tuxlink-9n4cr): a
+/// typo'd or invented key must be REJECTED, not silently dropped — the agent
+/// could otherwise believe it requested behavior the radio never got.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct VaraExchangeParams {
     /// The target station/gateway callsign.
     pub target: String,
@@ -2383,6 +2391,7 @@ pub struct VaraExchangeParams {
 
 /// `{ "intent": "cms" }` — input for `vara_open_session` (tuxlink-cgna5).
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct VaraOpenSessionParams {
     /// The routing pool for the session; defaults to `cms` when omitted.
     #[serde(default)]
@@ -2992,6 +3001,23 @@ mod tests {
             ErrorCode::INTERNAL_ERROR,
             "NotFound keeps its existing internal-error mapping - M2 narrows nothing else"
         );
+
+        // The one arm-gated read (find_peers) must deny in the SAME
+        // "not authorized …" shape as egress/write denials — its prior
+        // `Unavailable` mapping read as an outage and evaded client-side
+        // denial classifiers keyed on the prefix (tuxlink-9n4cr).
+        let denied = port_err(PortError::Denied(
+            "the peer roster requires armed send authority: send authority is not armed".to_string(),
+        ));
+        assert_eq!(denied.code, ErrorCode::INVALID_REQUEST);
+        assert!(denied.message.starts_with("not authorized to read:"));
+        let tainted = port_err(PortError::Denied(
+            "session is tainted by untrusted message content".to_string(),
+        ));
+        assert!(
+            tainted.message.contains("DISCARDS this conversation"),
+            "a taint denial must carry the quarantine remedy, not the arm remedy"
+        );
     }
 
     fn handler() -> TuxlinkMcp {
@@ -3189,7 +3215,7 @@ mod tests {
             a_index: Some(2.0),
             k_index: Some(3.0),
             ssn: 4.0,
-            updated_at_ms: 5,
+            updated_at_ms: Some(5),
             source: "shipped".into(),
         };
         let obj = serde_json::to_value(&dto).unwrap();

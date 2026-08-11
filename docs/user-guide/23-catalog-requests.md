@@ -229,6 +229,43 @@ A global Packet list pulled over Packet would tie up the channel for 30+
 minutes. The right answer for HF refresh is either the HTTPS path (when
 online) or a regional-filter inquiry (when supported by the catalog item).
 
+## The "AI Query" button in Winlink Express is not a catalog request
+
+Winlink Express 1.8.3.1 (July 2026) added an **AI Query** button to its Catalog
+Request screen. Operators migrating from Express sometimes look for the
+equivalent in tuxlink, so it is worth being precise about what that button is.
+
+It is not a catalog request. It reaches a third-party service run by Bart Kindt
+(ZL4FOX / SARTrack), not by Winlink or ARSFI, and `AIHELP` does not appear in the
+catalog listing at all. The button composes an ordinary Winlink message:
+
+```
+To:      AIHELP
+Subject: AI
+Body:    <free text question>
+```
+
+The reply arrives as an ordinary Winlink message. The service caps replies at
+6000 characters before compression and returns plain text only, with no links or
+images.
+
+**Tuxlink does not ship this button.** Tuxlink already lets you attach whatever
+model backend you like to Elmer, so it does not also ship a shortcut for one
+particular third-party service over the air.
+
+Nothing prevents you from using it. Because `AIHELP` is only an address, you can
+address a message to it from [Compose](19-composing.md) with the subject `AI` and
+it will work exactly as it does in Express.
+
+Two things are worth knowing before you do. The request side is not capped the
+way the reply is, so a long question costs real airtime on a narrow HF link and
+a reply is unbounded until it hits the 6000-character ceiling. And Winlink
+traffic is compressed but not encrypted, and Part 97 forbids encrypting to
+obscure meaning, so both your question and the answer are readable by anyone on
+frequency. Treat anything you type there as public, and think carefully before
+putting names, locations, medical details, or anything else about a third party
+into it.
+
 ## When catalog requests are inappropriate
 
 Catalog requests are NOT appropriate during an active emcomm event when
