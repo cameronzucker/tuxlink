@@ -1,0 +1,36 @@
+# Non-weather floor EXTENSION (2026-08-11, moss-tamarack-taiga) — operator
+# challenge: "There are a lot of non-weather things in the request center."
+# Targets the sections the 44-query calibration set left untouched
+# (WL2K_USERS, WL2K_RMS, NEWS, most of WL2K_HELP/SAT_PIX/SAT_KEPS item-level).
+# Same schema as queries.jsonl; run via TUXLINK_QUERIES against eval_floor.
+{"id":"nw-update-cat-we","q":"how do I update my catalog listing in winlink express","expect":{"kind":"item","section":"WL2K_HELP","items":["UPDA_CAT_WE","UPDATE_CAT"]},"behavior":"answer"}
+{"id":"nw-change-call","q":"I'm changing my callsign, what do I need to do on winlink","expect":{"kind":"item","section":"WL2K_HELP","items":["CHANGE_CALL"]},"behavior":"answer"}
+{"id":"nw-custom-grib-help","q":"how do I request a custom grib from saildocs","expect":{"kind":"item","section":"WL2K_HELP","items":["CUSTOM.GRIB"]},"behavior":"answer"}
+{"id":"nw-metar-help","q":"how do I read those METAR strings","expect":{"kind":"item","section":"WL2K_HELP","items":["METAR"]},"behavior":"answer"}
+{"id":"nw-position-report","q":"how do I post my position report to winlink","expect":{"kind":"item","section":"WL2K_HELP","items":["WL2K.QTH"]},"behavior":"answer"}
+{"id":"nw-photo-shrink","q":"how can I shrink a photo before attaching it to a message","expect":{"kind":"item","section":"WL2K_HELP","items":["PHOTO.REDUCE"]},"behavior":"answer"}
+{"id":"nw-user-options","q":"what user options can I set on my winlink account","expect":{"kind":"item","section":"WL2K_HELP","items":["USER.OPTIONS"]},"behavior":"answer"}
+{"id":"nw-hints-tips","q":"got any winlink tips and tricks","expect":{"kind":"item","section":"WL2K_HELP","items":["DIDUNO"]},"behavior":"answer"}
+{"id":"nw-inquiry-system","q":"how does the winlink inquiry system work","expect":{"kind":"item","section":"WL2K_HELP","items":["INQUIRIES"]},"behavior":"answer"}
+{"id":"nw-accept-list","q":"how do I manage my accept list so strangers can't email me","expect":{"kind":"item","section":"WL2K_HELP","items":["ACCEPTLIST"]},"behavior":"answer"}
+{"id":"nw-cms-up","q":"is the winlink system up right now","expect":{"kind":"item","section":"WL2K_USERS","items":["CMS_STATUS"]},"behavior":"answer"}
+{"id":"nw-mobiles-near","q":"any winlink mobile stations near my position","expect":{"kind":"item","section":"WL2K_USERS","items":["WL2K_NEARBY"]},"behavior":"answer"}
+{"id":"nw-cms-traffic","q":"how much message traffic has winlink moved lately","expect":{"kind":"item","section":"WL2K_USERS","items":["CMS_TRAFFIC"]},"behavior":"answer"}
+{"id":"nw-mobile-reports","q":"which mobile users posted reports in the last month","expect":{"kind":"item","section":"WL2K_USERS","items":["WL2K_MOBILES"]},"behavior":"answer"}
+{"id":"nw-keps-iss","q":"keps for the ISS please","expect":{"kind":"item","section":"SAT_KEPS","items":["ISS.2KEPS"]},"behavior":"answer"}
+{"id":"nw-keps-ham","q":"current keplerian elements for the ham satellites","expect":{"kind":"item","section":"SAT_KEPS","items":["HAM.2KEPS","AMSAT.KEPS"]},"behavior":"answer"}
+{"id":"nw-keps-visible","q":"TLEs for satellites I can see with the naked eye","expect":{"kind":"item","section":"SAT_KEPS","items":["VIS.2KEPS"]},"behavior":"answer"}
+{"id":"nw-gw-vara","q":"list of public VARA gateways","expect":{"kind":"item","section":"WL2K_RMS","items":["PUB_VARA"]},"behavior":"answer"}
+{"id":"nw-gw-packet","q":"where are the public packet RMS stations","expect":{"kind":"item","section":"WL2K_RMS","items":["PUB_PACKET"]},"behavior":"answer"}
+{"id":"nw-gw-pactor","q":"pactor gateway frequency list","expect":{"kind":"item","section":"WL2K_RMS","items":["PUB_PACTOR"]},"behavior":"answer"}
+{"id":"nw-gw-ardop","q":"which ardop gateways can I reach","expect":{"kind":"item","section":"WL2K_RMS","items":["PUB_ARDOP"]},"behavior":"answer"}
+{"id":"nw-hap-sydney","q":"propagation chart for Sydney","expect":{"kind":"item","section":"PROPAGATION","items":["AUS_HAP_SYD"]},"behavior":"answer"}
+{"id":"nw-hap-honiara","q":"hourly area prediction for Honiara","expect":{"kind":"item","section":"PROPAGATION","items":["SI_HAP_HON"]},"behavior":"answer"}
+{"id":"nw-satpix-alaska","q":"satellite picture of Alaska","expect":{"kind":"item","section":"SAT_PIX","items":["AKSTATE.JPG"]},"behavior":"answer"}
+{"id":"nw-satpix-aus-ir","q":"IR satellite shot of Australia","expect":{"kind":"item","section":"SAT_PIX","items":["AUSIR00.JPG","AUSIR06.JPG","AUSIR12.JPG","AUSIR18.JPG"]},"behavior":"answer"}
+{"id":"nw-satpix-plains","q":"sat image of the northern plains states","expect":{"kind":"item","section":"SAT_PIX","items":["NPLSTATE.JPG"]},"behavior":"answer"}
+{"id":"nw-fl-auxcomm","q":"Florida AUXCOMM status","expect":{"kind":"item","section":"ARES_RACES","items":["FL_AUX"]},"behavior":"answer"}
+{"id":"nw-tx-ics205","q":"the ICS-205 for Montgomery County Texas","expect":{"kind":"item","section":"ARES_RACES","items":["TX_MOCO_ARES"]},"behavior":"answer"}
+{"id":"nw-iceberg-canada","q":"iceberg report for the east coast of Canada","expect":{"kind":"item","section":"ARCTIC_ICE","items":["FICN10CWIS"]},"behavior":"answer"}
+{"id":"nw-ssa-news","q":"the Swedish ham association weekly bulletin","expect":{"kind":"item","section":"NEWS","items":["SSA_NEWS"]},"behavior":"answer"}
+{"id":"nw-none-radio","q":"set my radio to 40 meters","expect":{"kind":"none"},"behavior":"answer"}
