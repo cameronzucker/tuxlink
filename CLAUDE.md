@@ -304,6 +304,22 @@ The [`.claude/hooks/block-destructive-git.sh`](.claude/hooks/block-destructive-g
 
 **If you think you need a banned command:** stop and surface the situation to the user with a proposed non-destructive alternative.
 
+## Spark inference cluster — serving lifecycle is control-plane-only
+
+Model serving on the Spark cluster (gx10 / twin-bramble / 10.55.0.x) is
+managed through the **control-plane dashboard and its API**, never by raw
+`docker` lifecycle commands or ad-hoc scripts — even for "temporary" test
+models. The hook
+[`.claude/hooks/block-spark-oob-serving.sh`](.claude/hooks/block-spark-oob-serving.sh)
+is the canonical enforcement (same doctrine as the destructive-git hook:
+prose alone did not prevent the 2026-08-11 incident, where an out-of-band
+`docker stop` deleted the live Inkling container; the hook layer does).
+Read-only inspection (`docker ps`/`logs`/`inspect`, `curl`, `ss`) stays
+free, as do control-plane API calls — they are the intended path.
+
+Operating procedure, endpoints, profiles, and restore steps:
+[dev/runbooks/spark-serving/README.md](dev/runbooks/spark-serving/README.md).
+
 ## Git workflow — branch lifecycle state machine (ADR 0017)
 
 A branch's PR state determines whether the branch accepts further commits/pushes. Once a PR is merged or closed-without-merge, the branch is **dead** — `git commit` and `git push` to it are denied by `.githooks/pre-commit` + `.githooks/pre-push`. The discipline replaces the orphan-post-merge anti-pattern (the 2026-06-01 v1p incident) with explicit lifecycle transitions: `active → pr-open → merged-dead`, plus `follow-up` for new branches off a merged predecessor.
