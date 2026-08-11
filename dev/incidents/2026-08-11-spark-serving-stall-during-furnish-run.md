@@ -113,13 +113,42 @@ what replaced it is evidence:
   serial, all chats 200, traffic went QUIET at the death moment — the
   vetting gate stopped chats the instant `/v1/models` flipped 404).
 
-**Conclusion:** a pre-existing, recurring cluster condition — GPU memory
-exhaustion under sustained vLLM TP2 serving — with three documented
-episodes across four days, two predating or overlapping loads that
-completed fine. The session's three back-to-back campaigns determined
-WHEN the terminal episode landed, not WHETHER. The operator power-cycled
-the worker (fresh kernel ring); the head has NOT been rebooted and
-carries the same recurring-fault history.
+**Conclusion (CORRECTED after operator challenge — disambiguating normal
+from today):** The "recurring GPU memory exhaustion" framing above was
+WRONG. Near-total memory use is the NORMAL steady state (vLLM
+pre-allocates), and every kernel NVRM/Xid entry maps to a KNOWN
+launch event, not steady serving: the Aug 8 16:44–16:57 entries bracket
+that day's `vllm-cluster-worker`/`vllm_node` bring-ups (dockerd sbJoin
+16:44:18 and 16:54:08); the Aug 10 21:33/22:44 entries bracket the
+restore window after the docker-stop incident — including the Xid 31 at
+22:44:36, which is the already-documented Triton illegal-access crash of
+the WRONG-topology launch attempt (`vllm_dp` sbJoin 22:33:55), followed
+by the good `vllm_node` at 22:51:46. Zero driver events during steady
+serving, ever.
+
+**What today actually was, on the surviving evidence:** after 8.4 hours
+of stable serving (22:51 → 07:18, thousands of requests, normal
+latencies through the final 200 at 07:18:18), the engine core died IN
+USERSPACE at 07:18:18 — no kernel event on either node, no docker die
+event, both containers still running. The serving image is
+`v0.25.1-ray`: Ray auto-restarts dead actors, so the engine entered an
+in-container reload loop (model reload = minutes each) — the CYCLIC
+crashing the operator observed, with request counts climbing against
+each half-loaded engine, while the API front answered `/v1/models` with
+the model absent (the client's 404s). The operator stopped the head
+container at 07:23:40 (signal 15, force-killed 07:23:53); the worker
+container was never touched until the power-cycle.
+
+**The initial 07:18:18 cause is NOT RECOVERABLE:** the engine's
+traceback lived only in the `--rm` containers' stdout (json-file
+driver), the telemetry ring holds 30 minutes, and no host-side Ray
+session dir was mounted. Candidate causes — LABELED SPECULATION, all
+unverifiable today: an in-process CUDA/Triton fault surfacing without a
+kernel Xid, a Ray actor death from an engine assert in the v0.25.1
+tool-streaming path, or a cgroup-level OOM that skipped the journal.
+The one change that converts the next occurrence into a diagnosis:
+persist serving container logs (drop `--rm`, or docker log-driver
+journald) — this is now the top systemic fix below.
 
 **Systemic fixes proposed (operator decisions):**
 1. Drop `--rm` from serving recipes (or log-driver=journald) so crash
