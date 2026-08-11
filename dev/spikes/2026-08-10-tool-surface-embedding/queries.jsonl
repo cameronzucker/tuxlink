@@ -1,0 +1,60 @@
+# Labeled plain-language operator asks against resources/agents/tool-surface.jsonl
+# (the registry-generated tool corpus). Same schema family as the catalog set at
+# dev/spikes/2026-08-09-t1-catalog-embedding/queries.jsonl.
+# kind: tool (specific tool(s) correct) | ambig (several defensible; margin-only) | none (no tool should be called)
+# behavior: answer (pick confidently) | ask (surface candidates / clarify)
+{"id":"armed-check","q":"am I allowed to transmit right now","expect":{"kind":"tool","tools":["server_info"]},"behavior":"answer"}
+{"id":"backend-up","q":"is the winlink engine connected","expect":{"kind":"tool","tools":["backend_status"]},"behavior":"answer"}
+{"id":"radio-freq","q":"what frequency is the radio on","expect":{"kind":"tool","tools":["rig_status"]},"behavior":"answer"}
+{"id":"inbox-list","q":"show me my inbox","expect":{"kind":"tool","tools":["mailbox_list"]},"behavior":"answer"}
+{"id":"read-msg","q":"open the newest message from KD7XYZ","expect":{"kind":"tool","tools":["message_read"]},"behavior":"answer"}
+{"id":"save-attachment","q":"save the attachment from that message to disk","expect":{"kind":"tool","tools":["message_attachment_save"]},"behavior":"answer"}
+{"id":"move-to-folder","q":"file that message into my Field Day folder","expect":{"kind":"tool","tools":["mailbox_move"]},"behavior":"answer"}
+{"id":"list-folders","q":"what mail folders do I have","expect":{"kind":"tool","tools":["user_folders_list"]},"behavior":"answer"}
+{"id":"compose-send","q":"send a message to my brother's winlink address","expect":{"kind":"tool","tools":["message_send"]},"behavior":"answer"}
+{"id":"send-ics213","q":"fill out an ICS-213 form for the shelter","expect":{"kind":"tool","tools":["send_form"]},"behavior":"answer"}
+{"id":"catalog-browse","q":"what weather products can I request over winlink","expect":{"kind":"tool","tools":["catalog_list"]},"behavior":"answer"}
+{"id":"catalog-request","q":"queue a request for the arizona zone forecast","expect":{"kind":"tool","tools":["catalog_send_inquiry"]},"behavior":"answer"}
+{"id":"grib-request","q":"get me a grib file for the pacific crossing","expect":{"kind":"tool","tools":["grib_send_request"]},"behavior":"answer"}
+{"id":"cms-dial","q":"connect to winlink over the internet and send my outbox","expect":{"kind":"tool","tools":["cms_connect"]},"behavior":"answer"}
+{"id":"cms-stop","q":"abort the CMS connection","expect":{"kind":"tool","tools":["cms_abort"]},"behavior":"answer"}
+{"id":"gateway-hunt","q":"find winlink gateways I can reach from here","expect":{"kind":"tool","tools":["find_stations"]},"behavior":"answer"}
+{"id":"peer-roster","q":"which of my peers are reachable for peer to peer right now","expect":{"kind":"tool","tools":["find_peers"]},"behavior":"answer"}
+{"id":"prop-check","q":"will 40 meters work to seattle tonight","expect":{"kind":"tool","tools":["predict_path"]},"behavior":"answer"}
+{"id":"solar-now","q":"how are band conditions today","expect":{"kind":"tool","tools":["solar_conditions"]},"behavior":"answer"}
+{"id":"ardop-call","q":"call the gateway over ardop","expect":{"kind":"tool","tools":["ardop_connect"]},"behavior":"answer"}
+{"id":"ardop-mail","q":"do a full ardop mail exchange with W7MOT-6","expect":{"kind":"tool","tools":["ardop_b2f_exchange"]},"behavior":"answer"}
+{"id":"ardop-hangup","q":"drop the ardop link","expect":{"kind":"tool","tools":["modem_ardop_disconnect"]},"behavior":"answer"}
+{"id":"vara-mail","q":"exchange mail over vara hf","expect":{"kind":"tool","tools":["vara_b2f_exchange"]},"behavior":"answer"}
+{"id":"vara-installed","q":"is vara installed on this machine","expect":{"kind":"tool","tools":["vara_engine_available"]},"behavior":"answer"}
+{"id":"vara-install","q":"install vara for me","expect":{"kind":"tool","tools":["vara_install_start"]},"behavior":"answer"}
+{"id":"vara-stop","q":"stop the vara session","expect":{"kind":"tool","tools":["vara_stop_session"]},"behavior":"answer"}
+{"id":"vara-drive","q":"turn down the vara drive level","expect":{"kind":"tool","tools":["config_set_vara","vara_ini_apply"]},"behavior":"answer"}
+{"id":"packet-bt","q":"list bluetooth TNCs","expect":{"kind":"tool","tools":["packet_list_bluetooth_devices"]},"behavior":"answer"}
+{"id":"packet-dial","q":"connect to the local packet node","expect":{"kind":"tool","tools":["packet_connect"]},"behavior":"answer"}
+{"id":"packet-listen","q":"start listening for incoming packet connections","expect":{"kind":"tool","tools":["packet_set_listen"]},"behavior":"answer"}
+{"id":"ft8-monitor","q":"start monitoring ft8 to see what stations are around","expect":{"kind":"tool","tools":["ft8_start_listening"]},"behavior":"answer"}
+{"id":"ft8-heard","q":"who have we heard on ft8 in the last hour","expect":{"kind":"tool","tools":["ft8_heard_stations"]},"behavior":"answer"}
+{"id":"ft8-band","q":"switch the ft8 monitor to 20 meters","expect":{"kind":"tool","tools":["ft8_set_band"]},"behavior":"answer"}
+{"id":"grid-set","q":"update my grid square to DM43","expect":{"kind":"tool","tools":["config_set_grid"]},"behavior":"answer"}
+{"id":"gps-source","q":"use the gps for my position instead of the fixed grid","expect":{"kind":"tool","tools":["position_set_source"]},"behavior":"answer"}
+{"id":"where-am-i","q":"what does the app think my current position is","expect":{"kind":"tool","tools":["position_status"]},"behavior":"answer"}
+{"id":"routine-list","q":"what routines do I have set up","expect":{"kind":"tool","tools":["routines_list"]},"behavior":"answer"}
+{"id":"routine-run","q":"run my morning weather routine now","expect":{"kind":"tool","tools":["routines_run"]},"behavior":"answer"}
+{"id":"routine-history","q":"did my nightly check-in routine run last night","expect":{"kind":"tool","tools":["routines_journal_get","routines_run_status"]},"behavior":"answer"}
+{"id":"routine-build","q":"make me a routine that fetches solar conditions every morning","expect":{"kind":"tool","tools":["routines_save"]},"behavior":"answer"}
+{"id":"print-msg","q":"print that message out","expect":{"kind":"tool","tools":["print_document"]},"behavior":"answer"}
+{"id":"export-log","q":"export a report of this session for the after-action review","expect":{"kind":"tool","tools":["export_report"]},"behavior":"answer"}
+{"id":"show-ui","q":"point me to where the compose button is in the app","expect":{"kind":"tool","tools":["point_at"]},"behavior":"answer"}
+{"id":"session-log","q":"show me the raw session log from that last connection","expect":{"kind":"tool","tools":["session_log_snapshot"]},"behavior":"answer"}
+{"id":"docs-lookup","q":"how do I set up a digirig with this app","expect":{"kind":"tool","tools":["docs_search","docs_read"]},"behavior":"answer"}
+{"id":"tune-radio","q":"tune the radio to 7.101 MHz","expect":{"kind":"tool","tools":["rig_tune"]},"behavior":"answer"}
+{"id":"wwv-check","q":"capture WWV off air and check the space weather broadcast","expect":{"kind":"tool","tools":["wwv_capture_offair"]},"behavior":"answer"}
+{"id":"ambig-status","q":"what's the status","expect":{"kind":"ambig"},"behavior":"ask"}
+{"id":"ambig-connect","q":"connect","expect":{"kind":"ambig"},"behavior":"ask"}
+{"id":"ambig-config","q":"change my settings","expect":{"kind":"ambig"},"behavior":"ask"}
+{"id":"ambig-stop","q":"stop everything","expect":{"kind":"ambig"},"behavior":"ask"}
+{"id":"none-joke","q":"tell me a joke about hams","expect":{"kind":"none"},"behavior":"ask"}
+{"id":"none-license","q":"what are the requirements for a general class license","expect":{"kind":"none"},"behavior":"ask"}
+{"id":"none-antenna","q":"how long should a 40m dipole be","expect":{"kind":"none"},"behavior":"ask"}
+{"id":"none-dinner","q":"what should I make for dinner","expect":{"kind":"none"},"behavior":"ask"}

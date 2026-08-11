@@ -1,0 +1,32 @@
+# T1 request classifier (ADR 0030, ch3e9 step 2).
+#
+# CPU embedding retrieval over the enriched Winlink catalog: candle-native
+# bge-small (the mandatory offline floor - the 60-300MB T1 RAM budget is
+# unreachable through a Python stack), two T0-owned thresholds, and the
+# corpus-generic advisory DTO. Classifiers ADVISE; deterministic policy
+# DECIDES - nothing in this crate gates anything.
+#
+# Workspace member, NOT yet a dependency of the tuxlink app: step-3 wiring
+# (Elmer flow + any MCP-surface change) is the operator-gated seam per the
+# ch3e9 plan, and keeping the app edge unlinked also keeps candle's MSRV
+# (above the app's declared 1.75) out of the app's dependency closure until
+# that wiring decision is made.
+[package]
+name = "tuxlink-classify"
+version = "0.0.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[dependencies]
+# Native inference floor. CPU-only: no accelerate/cuda/mkl features - the
+# deployment floor is a Pi / small x86 box, and the T1 spike showed 2-4
+# intra-op threads is the knee (RAYON_NUM_THREADS governs).
+candle-core = "0.9"
+candle-nn = "0.9"
+candle-transformers = "0.9"
+# HF tokenizer.json loader (WordPiece for the BERT family).
+tokenizers = "0.21"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
