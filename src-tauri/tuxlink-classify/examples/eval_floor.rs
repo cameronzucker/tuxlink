@@ -54,7 +54,7 @@ struct Query {
     behavior: String,
 }
 
-fn median(xs: &mut Vec<f32>) -> f32 {
+fn median(xs: &mut [f32]) -> f32 {
     if xs.is_empty() {
         return f32::NAN;
     }
