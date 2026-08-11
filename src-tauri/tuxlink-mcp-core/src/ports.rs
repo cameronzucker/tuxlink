@@ -46,6 +46,14 @@ pub enum PortError {
     /// never as an internal error, which would mis-signal a server bug.
     #[error("invalid input: {0}")]
     InvalidInput(String),
+    /// The caller is not authorized for this READ (arm/taint gate). Carries
+    /// the guard's denial reason; the router surfaces it in the same
+    /// "not authorized …" shape as egress/write denials so client-side
+    /// denial classifiers recognize it. `find_peers` is the one arm-gated
+    /// read — its denial previously shipped as `Unavailable` and read as an
+    /// outage instead of an authorization refusal (tuxlink-9n4cr).
+    #[error("not authorized: {0}")]
+    Denied(String),
     /// An internal error occurred fulfilling the request.
     #[error("internal error: {0}")]
     Internal(String),
@@ -94,7 +102,13 @@ pub struct ParsedMessageDto {
 /// A mailbox folder + its message count.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FolderDto {
+    /// Display name (user folders may carry spaces/case, e.g. "ARES Drills").
     pub name: String,
+    /// The folder reference `mailbox_list` / `message_read` / `mailbox_move`
+    /// accept. Previously only the display name was returned, which those
+    /// tools cannot consume — the round-trip either errored or ok-emptied
+    /// (tuxlink-9n4cr). Always pass THIS, not `name`.
+    pub slug: String,
     pub count: u32,
 }
 
@@ -532,6 +546,11 @@ pub struct PlatformInfoDto {
 pub struct LogLineDto {
     pub timestamp: String,
     pub level: String,
+    /// Where the line came from: `backend` (engine state), `transport`
+    /// (link/session events), or `wire` (raw protocol text). Previously
+    /// dropped at this boundary, leaving agents unable to tell a wire line
+    /// from an app line when diagnosing (tuxlink-9n4cr).
+    pub source: String,
     pub message: String,
 }
 
@@ -857,8 +876,11 @@ pub struct SolarSnapshotDto {
     pub k_index: Option<f64>,
     /// Sunspot number used for predictions.
     pub ssn: f64,
-    /// When this snapshot was last updated (unix ms).
-    pub updated_at_ms: u64,
+    /// When this snapshot was last updated (unix ms). `None` when the values
+    /// have NEVER been updated (`source: "shipped"`) — the previous shape
+    /// stamped "now" on shipped data, making never-updated values look fresh
+    /// to an agent told to judge freshness by this field (tuxlink-9n4cr).
+    pub updated_at_ms: Option<u64>,
     /// Provenance of the data (e.g. `"shipped"`, `"noaa"`).
     pub source: String,
 }

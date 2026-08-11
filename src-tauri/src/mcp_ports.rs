@@ -516,12 +516,36 @@ fn map_message_meta(m: crate::ui_commands::MessageMetaDto) -> MessageMetaDto {
     }
 }
 
+/// "unknown folder" refusal text naming every valid folder reference
+/// (tuxlink-9n4cr): before this check `mailbox_list` returned ok-empty for any
+/// slug-shaped guess (three ok-on-missing layers down to `list_dir`'s
+/// `Ok(vec![])`), which validated invented taxonomies — and tainted the
+/// session for nothing.
+fn unknown_folder_msg(slug: &str, user_slugs: &[String]) -> String {
+    let mut valid: Vec<&str> = vec!["inbox", "outbox", "sent", "archive", "deleted"];
+    valid.extend(user_slugs.iter().map(String::as_str));
+    format!(
+        "unknown folder '{slug}' - valid folders: {}. Use user_folders_list's `slug` values.",
+        valid.join(", ")
+    )
+}
+
 #[async_trait]
 impl MailboxPort for MonolithMailboxPort {
     async fn list(&self, folder: &str) -> Result<Vec<MessageMetaDto>, PortError> {
         let backend = self.backend()?;
         let parsed = crate::ui_commands::parse_folder_ref(folder)
             .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
+        if let crate::native_mailbox::FolderRef::User(slug) = &parsed {
+            let user = backend
+                .list_user_folders()
+                .await
+                .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
+            if !user.iter().any(|f| &f.slug == slug) {
+                let slugs: Vec<String> = user.into_iter().map(|f| f.slug).collect();
+                return Err(PortError::InvalidInput(unknown_folder_msg(slug, &slugs)));
+            }
+        }
         let metas = crate::ui_core::mailbox::list_mailbox(&backend, parsed)
             .await
             .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
@@ -588,10 +612,12 @@ impl MailboxPort for MonolithMailboxPort {
                 .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
             out.push(FolderDto {
                 name: name.to_string(),
+                slug: name.to_string(),
                 count: u32::try_from(metas.len()).unwrap_or(u32::MAX),
             });
         }
-        // User-created folders.
+        // User-created folders. `slug` is the reference the other mailbox
+        // tools accept; `display_name` is presentation-only (tuxlink-9n4cr).
         let user = backend
             .list_user_folders()
             .await
@@ -603,6 +629,7 @@ impl MailboxPort for MonolithMailboxPort {
                 .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
             out.push(FolderDto {
                 name: f.display_name,
+                slug: f.slug,
                 count: u32::try_from(metas.len()).unwrap_or(u32::MAX),
             });
         }
@@ -1113,9 +1140,15 @@ impl LogPort for MonolithLogPort {
                     LogLevel::Warn => "warn",
                     LogLevel::Error => "error",
                 };
+                let source = match l.source {
+                    crate::winlink_backend::LogSource::Backend => "backend",
+                    crate::winlink_backend::LogSource::Transport => "transport",
+                    crate::winlink_backend::LogSource::Wire => "wire",
+                };
                 LogLineDto {
                     timestamp: l.timestamp_iso,
                     level: level.to_string(),
+                    source: source.to_string(),
                     message,
                 }
             })
@@ -1903,13 +1936,18 @@ impl WritePort for MonolithWritePort {
     async fn set_position_source(&self, source: String) -> Result<(), WritePortError> {
         // VALIDATE BEFORE GATE (FIX 4): "Gps" is the only accepted source
         // (position_set_source_impl rejects anything else with UiError::Rejected,
-        // but only after the gate). Reject an unknown source as `Invalid` here so
-        // it never reaches the gate or audits an authorized write.
-        if source != "Gps" {
+        // but only after the gate). Case-fold the check (tuxlink-9n4cr: the
+        // bench measured agents sending 'gps' and being refused by casing —
+        // a case-sensitive enum with no schema enum is a pure trap) and pass
+        // the canonical spelling downstream.
+        if !source.eq_ignore_ascii_case("gps") {
             return Err(WritePortError::Invalid(format!(
-                "unsupported position source '{source}' (only \"Gps\" is accepted)"
+                "unsupported position source '{source}' - the only position source is \
+                 \"Gps\" (any casing accepted; a manual grid is set via config_set_grid, \
+                 not a source)"
             )));
         }
+        let source = "Gps".to_string();
         let audit = write_audit_sink(self.app.clone());
         let app = self.app.clone();
         guarded_egress(
@@ -2021,10 +2059,40 @@ impl WritePort for MonolithWritePort {
         // refs. mailbox_move validates them via parse_folder_ref but only after
         // the gate; reject an unknown from/to as `Invalid` here so a malformed
         // move never reaches the gate or audits an authorized write.
-        crate::ui_commands::parse_folder_ref(&from)
+        let parsed_from = crate::ui_commands::parse_folder_ref(&from)
             .map_err(|e| WritePortError::Invalid(format!("invalid 'from' folder: {e:?}")))?;
-        crate::ui_commands::parse_folder_ref(&to)
+        let parsed_to = crate::ui_commands::parse_folder_ref(&to)
             .map_err(|e| WritePortError::Invalid(format!("invalid 'to' folder: {e:?}")))?;
+        // Slug-shaped but UNREGISTERED user folders also refuse pre-gate
+        // (tuxlink-9n4cr): a move to a nonexistent folder previously passed
+        // validation and reported bare "ok".
+        {
+            let state = self.app.state::<crate::app_backend::BackendState>();
+            if let Some(backend) = state.current() {
+                let mut user_slugs: Option<Vec<String>> = None;
+                for (label, parsed) in [("from", &parsed_from), ("to", &parsed_to)] {
+                    if let crate::native_mailbox::FolderRef::User(slug) = parsed {
+                        let slugs = match &user_slugs {
+                            Some(s) => s,
+                            None => {
+                                let user = backend.list_user_folders().await.map_err(|e| {
+                                    WritePortError::Failed(redact_err(format!("{e:?}")))
+                                })?;
+                                user_slugs =
+                                    Some(user.into_iter().map(|f| f.slug).collect());
+                                user_slugs.as_ref().unwrap()
+                            }
+                        };
+                        if !slugs.iter().any(|s| s == slug) {
+                            return Err(WritePortError::Invalid(format!(
+                                "'{label}' folder: {}",
+                                unknown_folder_msg(slug, slugs)
+                            )));
+                        }
+                    }
+                }
+            }
+        }
         let audit = write_audit_sink(self.app.clone());
         let app = self.app.clone();
         guarded_egress(
@@ -2298,6 +2366,50 @@ impl ComposePort for MonolithComposePort {
         // own body-composition validation.
         for fname in &item_ids {
             validate_address(fname)?;
+        }
+        // VALIDATE each id against the bundled catalog (tuxlink-9n4cr): before
+        // this check a hallucinated id staged a REAL outbound inquiry that
+        // transmitted on the next connect and silently returned nothing. An
+        // unknown id is the agent's to fix — refuse as Invalid and name the
+        // closest real ids so the retry can be exact.
+        let catalog = crate::catalog::commands::catalog_list()
+            .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))?;
+        let known: std::collections::BTreeSet<&str> =
+            catalog.iter().map(|e| e.filename.as_str()).collect();
+        let unknown: Vec<&str> = item_ids
+            .iter()
+            .map(String::as_str)
+            .filter(|id| !known.contains(id))
+            .collect();
+        if !unknown.is_empty() {
+            let mut suggestions: Vec<&str> = Vec::new();
+            for id in &unknown {
+                let tokens: Vec<String> = id
+                    .split(['_', '-', '.'])
+                    .filter(|t| t.len() >= 3)
+                    .map(str::to_ascii_uppercase)
+                    .collect();
+                for entry in &catalog {
+                    let hay = entry.filename.to_ascii_uppercase();
+                    if tokens.iter().any(|t| hay.contains(t)) && !suggestions.contains(&entry.filename.as_str())
+                    {
+                        suggestions.push(entry.filename.as_str());
+                        if suggestions.len() >= 5 {
+                            break;
+                        }
+                    }
+                }
+            }
+            let hint = if suggestions.is_empty() {
+                "Browse catalog_list for the valid ids.".to_string()
+            } else {
+                format!("Closest known ids: {}.", suggestions.join(", "))
+            };
+            return Err(WritePortError::Invalid(format!(
+                "unknown catalog item id(s): {}. Ids must match a catalog_list `id` exactly - \
+                 an unknown id would stage a real transmission that returns nothing. {hint}",
+                unknown.join(", ")
+            )));
         }
         let mid = crate::catalog::commands::catalog_send_inquiry(
             item_ids,
@@ -3252,12 +3364,7 @@ impl StationPort for MonolithStationPort {
     async fn find_peers(&self) -> Result<PeerListDto, PortError> {
         self.guard
             .authorize(EgressAuthority::Agent)
-            .map_err(|d| {
-                PortError::Unavailable(format!(
-                    "the peer roster requires armed send authority: {d}. Ask the \
-                     operator to ARM the Agent-send control, then retry."
-                ))
-            })?;
+            .map_err(|d| PortError::Denied(format!("the peer roster requires armed send authority: {d}")))?;
         let precision = self.resolve_grid_precision();
         let store = self
             .app
@@ -3290,7 +3397,7 @@ impl StationPort for MonolithStationPort {
 /// source is reported as `"shipped"` — never an error (offline-first; absent
 /// solar data is a fallback, not a failure).
 fn load_solar_snapshot_dto() -> SolarSnapshotDto {
-    use crate::catalog::stations_cache::{Clock, SystemClock};
+    use crate::catalog::stations_cache::SystemClock;
     use crate::propagation::commands::utc_year_month;
     use crate::propagation::solar_update::SolarSnapshot;
     use crate::propagation::ssn::SsnForecast;
@@ -3301,7 +3408,6 @@ fn load_solar_snapshot_dto() -> SolarSnapshotDto {
 
     // Current UTC year/month drives the SSN lookup (same as a prediction).
     let clock = SystemClock;
-    let now_ms = clock.now_millis();
     let (year, month) = utc_year_month(&clock);
 
     let forecast = match &config_dir {
@@ -3323,7 +3429,7 @@ fn load_solar_snapshot_dto() -> SolarSnapshotDto {
                 a_index,
                 k_index,
                 ssn,
-                updated_at_ms: snap.updated_at_ms,
+                updated_at_ms: Some(snap.updated_at_ms),
                 source: snap.source,
             }
         }
@@ -3333,9 +3439,11 @@ fn load_solar_snapshot_dto() -> SolarSnapshotDto {
             k_index: None,
             ssn,
             // No live snapshot on disk: the SSN comes from the bundled (or
-            // operator-persisted) forecast table; stamp "now" so the freshness
-            // caption is sensible and label the provenance "shipped".
-            updated_at_ms: now_ms,
+            // operator-persisted) forecast table. These values have NEVER
+            // been updated, so the freshness stamp is honestly absent —
+            // stamping "now" here made shipped data look current to an agent
+            // told to judge freshness by this field.
+            updated_at_ms: None,
             source: "shipped".to_string(),
         },
     }
@@ -3360,10 +3468,13 @@ impl PredictionPort for MonolithPredictionPort {
 
         // VALIDATE the agent-supplied inputs BEFORE doing any work (reuse the
         // mcp-core validators): a 4/6-char Maidenhead rx_grid and a 1..=11 dial
-        // list each within 1800..=30000 kHz. A bad input is a malformed request.
-        validate_grid(&req.rx_grid).map_err(|e| PortError::Internal(e.to_string()))?;
+        // list each within 1800..=30000 kHz. A bad input is a malformed request
+        // and surfaces as invalid_request — the agent's to fix (the prior
+        // Internal mapping mis-signalled a server bug; bench measured 15
+        // MHz-for-kHz unit fumbles hitting it, tuxlink-9n4cr).
+        validate_grid(&req.rx_grid).map_err(|e| PortError::InvalidInput(e.to_string()))?;
         validate_frequencies_khz(&req.frequencies_khz)
-            .map_err(|e| PortError::Internal(e.to_string()))?;
+            .map_err(|e| PortError::InvalidInput(format!("{e} (frequencies are kHz, not MHz - 40m is ~7100)")))?;
 
         // Resolve the operator's OWN tx_grid from config — NEVER agent-supplied.
         // Mirror position_status's grid-clamp: effective_broadcast_locator honors

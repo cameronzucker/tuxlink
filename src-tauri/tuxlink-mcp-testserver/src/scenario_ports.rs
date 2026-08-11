@@ -274,6 +274,7 @@ impl MailboxPort for ScenarioMailbox {
             .iter()
             .map(|f| FolderDto {
                 name: f.name.clone(),
+                slug: f.name.clone(),
                 count: f.messages.len() as u32,
             })
             .collect())

@@ -316,6 +316,7 @@ pub mod test_support {
         async fn folders(&self) -> Result<Vec<FolderDto>, PortError> {
             Ok(vec![FolderDto {
                 name: "Inbox".into(),
+                slug: "inbox".into(),
                 count: 1,
             }])
         }
@@ -463,6 +464,7 @@ pub mod test_support {
             Ok(vec![LogLineDto {
                 timestamp: "2026-06-26T00:00:00Z".into(),
                 level: "info".into(),
+                source: "backend".into(),
                 message: "session started".into(),
             }])
         }
@@ -804,7 +806,8 @@ pub mod test_support {
                 a_index: Some(7.0),
                 k_index: Some(2.0),
                 ssn: 70.0,
-                updated_at_ms: 0,
+                // shipped == never updated == no timestamp (the DTO invariant).
+                updated_at_ms: None,
                 source: "shipped".into(),
             })
         }
