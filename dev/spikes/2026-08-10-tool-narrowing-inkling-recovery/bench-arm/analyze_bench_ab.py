@@ -80,11 +80,13 @@ def main():
             print(f"{'':12s} delivered-rate {s.get('delivered',0)/stot:5.1%} -> "
                   f"{n.get('delivered',0)/ntot:5.1%}")
 
-    print("\n== per-cell disagreements (attempt buckets, stock vs narrowed) ==")
+    print("\n== per-cell disagreements (common attempts only, stock vs narrowed) ==")
     diffs = 0
     for c in both:
-        sb = sorted(b for (cc, a), b in stock.items() if cc == c)
-        nb = sorted(b for (cc, a), b in narrow.items() if cc == c)
+        attempts = sorted({a for (cc, a) in stock if cc == c}
+                          & {a for (cc, a) in narrow if cc == c})
+        sb = sorted(stock[(c, a)] for a in attempts)
+        nb = sorted(narrow[(c, a)] for a in attempts)
         if sb != nb:
             diffs += 1
             print(f"  {c:28s} [{tier.get(c,'?'):12s}] stock={sb} narrowed={nb}")
