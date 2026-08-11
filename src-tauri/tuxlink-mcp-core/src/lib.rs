@@ -806,7 +806,8 @@ pub mod test_support {
                 a_index: Some(7.0),
                 k_index: Some(2.0),
                 ssn: 70.0,
-                updated_at_ms: 0,
+                // shipped == never updated == no timestamp (the DTO invariant).
+                updated_at_ms: None,
                 source: "shipped".into(),
             })
         }

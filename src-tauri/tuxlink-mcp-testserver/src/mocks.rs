@@ -655,7 +655,7 @@ impl PredictionPort for MockPrediction {
             a_index: Some(7.0),
             k_index: Some(2.0),
             ssn: 70.0,
-            updated_at_ms: 0,
+            updated_at_ms: Some(0),
             source: "bundled".into(),
         })
     }
