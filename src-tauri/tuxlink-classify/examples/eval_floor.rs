@@ -72,7 +72,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => Pooling::Cls,
     };
 
-    let queries: Vec<Query> = std::fs::read_to_string(QUERIES_PATH)?
+    // TUXLINK_QUERIES points the eval at an alternate labeled query set
+    // (e.g. the non-weather floor extension) without touching the calibration
+    // set the shipped thresholds were measured on.
+    let queries_path =
+        std::env::var("TUXLINK_QUERIES").unwrap_or_else(|_| QUERIES_PATH.to_string());
+    let queries: Vec<Query> = std::fs::read_to_string(&queries_path)?
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
