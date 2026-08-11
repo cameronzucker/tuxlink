@@ -50,6 +50,33 @@ impl ThresholdTable {
 mod tests {
     use super::*;
 
+    /// The shipped calibration asset. Provenance for the values:
+    /// dev/evals/2026-08-10-ch3e9-t1-floor-calibration.md (R2 run, measured
+    /// reject gap + margin classes — never invented numbers).
+    const SHIPPED: &str =
+        include_str!("../../resources/catalog/classify-thresholds.json");
+
+    /// Recalibration tooth: the shipped table must carry an entry for the
+    /// CURRENT (corpus, model, template) triple. Bumping
+    /// EMBED_TEMPLATE_VERSION (or swapping the model) without running the
+    /// calibration eval and updating the asset fails here — ADR 0030's
+    /// "threshold rot" watched failure mode, enforced.
+    #[test]
+    fn shipped_table_is_calibrated_for_current_template() {
+        let table = ThresholdTable::from_json(SHIPPED).expect("asset parses");
+        let th = table
+            .lookup(
+                "winlink-catalog",
+                "bge-small-en-v1.5",
+                crate::enriched::EMBED_TEMPLATE_VERSION,
+            )
+            .expect("calibration entry for the current template");
+        // Sanity bounds, not re-derivation: a floor outside the measured
+        // reject gap or a non-positive margin means the asset was mangled.
+        assert!(th.reject_floor > 0.0 && th.reject_floor < 1.0);
+        assert!(th.ask_margin > 0.0 && th.ask_margin < 0.5);
+    }
+
     #[test]
     fn table_roundtrip_and_lookup() {
         let json = r#"{"winlink-catalog/bge-small-en-v1.5/enriched-v1":

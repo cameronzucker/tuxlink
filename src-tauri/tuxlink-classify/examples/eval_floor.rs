@@ -111,7 +111,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let margin_v = margin.unwrap_or(f32::NAN);
 
         let (scored, hit) = match q.expect.kind.as_str() {
-            "item" => (true, q.expect.items.iter().any(|i| *i == top.id)),
+            "item" => (true, q.expect.items.contains(&top.id)),
             "section" => (true, q.expect.section.as_deref() == Some(top.section.as_str())),
             _ => (false, false),
         };
