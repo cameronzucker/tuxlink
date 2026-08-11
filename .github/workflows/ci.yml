@@ -25,9 +25,21 @@ jobs:
         include:
           - runner: ubuntu-latest
             arch: amd64
+            rustflags: ""
+          # +fp16 is required to ASSEMBLE gemm-f16 0.19's NEON fp16 inline asm
+          # (candle matmul dep of tuxlink-classify): the kernels are runtime-
+          # dispatched but the assembler enforces the compile-time baseline,
+          # and the generic aarch64 target lacks fullfp16. Scoped to verify
+          # ONLY — these runners (Neoverse-class) execute fp16 natively, and
+          # verify ships no artifacts. build-linux stays on the generic
+          # baseline (it never compiles the classify crate), so shipped .debs
+          # keep running on Armv8.0 parts like the Pi 4's Cortex-A72.
           - runner: ubuntu-24.04-arm
             arch: arm64
+            rustflags: "-C target-feature=+fp16"
     runs-on: ${{ matrix.runner }}
+    env:
+      RUSTFLAGS: ${{ matrix.rustflags }}
     # The amd64 cold clippy --all-targets + test sits right at 30 min on
     # ubuntu-latest (arm64 finishes in ~14). With the system-dep apt closure now
     # cached (tuxlink-4est), the common run spends seconds on deps; 55 leaves the
