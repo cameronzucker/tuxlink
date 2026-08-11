@@ -99,9 +99,13 @@ def load_jsonl(path):
     return out
 
 
-def chat(endpoint, model, key, messages, tools, max_tokens=2000, retries=2):
-    body = json.dumps({"model": model, "max_tokens": max_tokens,
-                       "messages": messages, "tools": tools}).encode()
+def chat(endpoint, model, key, messages, tools, max_tokens=2000, retries=2,
+         temperature=None):
+    payload = {"model": model, "max_tokens": max_tokens,
+               "messages": messages, "tools": tools}
+    if temperature is not None:
+        payload["temperature"] = temperature
+    body = json.dumps(payload).encode()
     headers = {"Content-Type": "application/json"}
     if key:
         headers["Authorization"] = f"Bearer {key}"
@@ -132,6 +136,7 @@ def main():
     ap.add_argument("--model", default="inkling-small-nvfp4")
     ap.add_argument("--api-key-env", default="")
     ap.add_argument("--label", required=True)
+    ap.add_argument("--temperature", type=float, default=None)
     args = ap.parse_args()
     key = os.environ.get(args.api_key_env) if args.api_key_env else None
     outdir = HERE / "results-v3" / args.label
