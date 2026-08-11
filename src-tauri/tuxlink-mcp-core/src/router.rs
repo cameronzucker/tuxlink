@@ -3385,19 +3385,35 @@ mod tests {
                     synonyms.extend(extra.iter().map(|s| s.to_string()));
                 }
                 synonyms.dedup();
-                let row = serde_json::json!({
-                    "id": name,
-                    "section": tier,
-                    "title": one_liner,
-                    "intent": desc,
-                    "synonyms": synonyms,
-                    "taints": crate::router::TAINTING_TOOLS.contains(&name.as_str()),
-                    "arm_required": matches!(
+                // A Serialize STRUCT, not json!: struct fields emit in
+                // declaration order regardless of serde_json's
+                // `preserve_order` feature, which workspace feature
+                // unification can flip between a `-p` build and the full
+                // workspace build — json! bytes differed between R2 and CI.
+                #[derive(serde::Serialize)]
+                struct Row<'a> {
+                    id: &'a str,
+                    section: &'a str,
+                    title: &'a str,
+                    intent: &'a str,
+                    synonyms: &'a [String],
+                    taints: bool,
+                    arm_required: bool,
+                }
+                let row = serde_json::to_string(&Row {
+                    id: name,
+                    section: tier,
+                    title: &one_liner,
+                    intent: desc,
+                    synonyms: &synonyms,
+                    taints: crate::router::TAINTING_TOOLS.contains(&name.as_str()),
+                    arm_required: matches!(
                         tier,
                         "arm-gated-read" | "remediation-write" | "egress"
                     ),
-                });
-                (tier.to_string(), name.clone(), row.to_string())
+                })
+                .expect("row serializes");
+                (tier.to_string(), name.clone(), row)
             })
             .collect();
         rows.sort();
