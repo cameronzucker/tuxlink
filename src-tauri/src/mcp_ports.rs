@@ -3397,7 +3397,7 @@ impl StationPort for MonolithStationPort {
 /// source is reported as `"shipped"` — never an error (offline-first; absent
 /// solar data is a fallback, not a failure).
 fn load_solar_snapshot_dto() -> SolarSnapshotDto {
-    use crate::catalog::stations_cache::{Clock, SystemClock};
+    use crate::catalog::stations_cache::SystemClock;
     use crate::propagation::commands::utc_year_month;
     use crate::propagation::solar_update::SolarSnapshot;
     use crate::propagation::ssn::SsnForecast;
