@@ -187,6 +187,7 @@ operationally significant:
 | Accept List / spam controls | Not yet — manage Winlink account-side Accept List rules outside tuxlink for now |
 | In-app import / export / archive conversion | Not yet — copy `native-mbox/` for backup; Express/Pat conversion remains a manual or one-time-script migration task |
 | Background auto-fetch, unattended connects, and traffic statistics | Not provided — tuxlink is currently attended-operation-first, with the session log as the per-session record |
+| "AI Query" button | Not planned — Express's button reaches a third-party service by addressing a message to `AIHELP`. Tuxlink already lets you attach any model backend to Elmer, so it does not ship a shortcut for one over-the-air service. The address still works from Compose; see [Catalog requests](23-catalog-requests.md) |
 
 The mapping the other way — features tuxlink has that Express does not —
 includes the per-session consent affordance (above), the privacy-default

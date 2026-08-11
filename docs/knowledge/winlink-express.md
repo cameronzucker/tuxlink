@@ -70,6 +70,63 @@ Winlink Express has the original Winlink Standard Templates / HTML forms system
 (ICS-213, Winlink Check-In, etc.). Forms are selected when composing, filled in a
 browser window, and the completed form is attached to the message.
 
+## The "AI Query" button
+
+Winlink Express 1.8.3.1 (2026-07-24) added an **AI Query** button to the Catalog
+Request screen. It reaches a **third-party** service run by Bart Kindt
+(ZL4FOX / SARTrack). It is not operated by Winlink or ARSFI, and the Winlink
+changelog is explicit about that.
+
+Mechanically the button is **just an email**. It composes an ordinary Winlink
+message and drops it in the Outbox:
+
+```
+To:      AIHELP
+Subject: AI
+Body:    <the operator's free text>
+```
+
+The answer comes back as an ordinary Winlink message. There is no protocol
+extension, no API key, no conversation threading, and no client-side rate
+limiting anywhere in the client.
+
+What the dialog tells the operator:
+
+- "Replies are limited to 6000 characters before compression."
+- "Results are plain text only, no links, URLs or images."
+- "The usual Winlink message restrictions apply."
+
+Points that matter when advising an operator:
+
+- **The 6000-character cap is on the reply, not the request.** It is enforced by
+  the service, not the client. The request side is effectively uncapped at the
+  WinForms default of ~32,767 characters, and that path skips the message-size
+  check that normal composing goes through.
+- **There is no conversation state.** Every submission is a fresh message with a
+  constant subject and no thread identifier, so a follow-up question cannot
+  cheaply carry context from the previous answer.
+- **It is not a catalog item.** The button sits on the Catalog Request screen but
+  `AIHELP` is a separate address, absent from the catalog listing that
+  `INQUIRY@winlink.org` serves. Do not describe it as a catalog request.
+- **Replies are unauthenticated.** An inbound message claiming to be from
+  `AIHELP` carries no proof of origin beyond a `From:` header.
+- **Traffic is not private.** Winlink messages are compressed, not encrypted, and
+  Part 97 forbids encrypting to obscure meaning. Over HF, both the question and
+  the answer are receivable by anyone on frequency.
+
+**Unknown, and do not guess:** which model or vendor backs the service, what the
+per-callsign daily request limit actually is, and whether query text is retained
+or logged. The client names none of these, the bundled `RMS Express.chm` does not
+document the feature at all, and no authoritative public documentation was found.
+If an operator needs these facts, point them at the service operator.
+
+**Tuxlink has no equivalent button, by decision.** Tuxlink already lets operators
+attach arbitrary model backends to Elmer, so it does not also ship a button for
+one third-party radio-side service, and it does not warn about it either. Because
+`AIHELP` is only an address, an operator who wants the service can reach it from
+Tuxlink's normal Compose window today by addressing a message to `AIHELP` with
+the subject `AI`. Nothing blocks it and nothing special is required.
+
 ## When the answer is "that's a Tuxlink thing"
 
 Winlink Express is a Windows application with its own settings dialogs and its own
@@ -96,3 +153,17 @@ This matters because the Pat page on the same subject *is* verified from the bin
 and its source, and the two pages should not be assumed to carry equal certainty. If
 an operator needs a Winlink Express detail to be certain, say that it should be
 confirmed against their installation rather than asserting it.
+
+**The "AI Query" section is a different tier: verified from the binary.** The
+Winlink Express 1.8.4.0 installer was unpacked and `RMS Express.exe` (sha256
+`0e734b45f8fefbe7f89220de461720106dd15ed8a26322860bd65599df1ed34d`) decompiled on
+2026-08-10. The recipient, subject, body handling, and absence of any size check
+are read directly from the `AIQuery` form's submit handler; the character limits
+and "plain text only" wording are the dialog's own label text; the third-party
+attribution is verbatim from the bundled `Winlink_Express_Revision_History.txt`.
+The string `AIHELP` occurs exactly once in the whole assembly, which is why the
+"no special send path" claim is safe to make.
+
+Treat the explicitly-flagged unknowns in that section (model, daily limit,
+retention) as genuinely unknown rather than as gaps to fill by inference. They
+were searched for and not found.
