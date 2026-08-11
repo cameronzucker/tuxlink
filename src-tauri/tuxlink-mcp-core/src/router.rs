@@ -276,6 +276,57 @@ pub const TOOL_TIERS: &[(&str, &str)] = &[
     ("wwv_offair_available", "diagnostic-read"),
 ];
 
+/// Curated retrieval vocabulary merged into the generated tool-surface
+/// corpus on top of the mechanical synonyms (name tokens + tier words).
+/// Added when the 2026-08-10 shortlist-size chart showed every hard miss
+/// was a vocabulary gap (rig_status never says "frequency"; routines_save
+/// never says "create"). Subset discipline, enforced by the corpus test:
+/// every name here must be a registered tool; not every tool needs an
+/// entry. Editing this changes the embed text — regenerate the corpus AND
+/// recalibrate its thresholds in the same change (ADR 0030).
+pub const TOOL_SYNONYMS: &[(&str, &[&str])] = &[
+    ("ardop_connect", &["call", "dial", "link up", "connect to gateway"]),
+    ("catalog_list", &["browse products", "what can I request", "available downloads"]),
+    ("catalog_send_inquiry", &["request a product", "order", "fetch by id"]),
+    ("cms_abort", &["stop", "cancel", "hang up"]),
+    ("cms_connect", &["internet", "telnet", "send my outbox", "check mail online", "dial winlink"]),
+    ("config_set_grid", &["grid square", "my location", "maidenhead", "update location"]),
+    ("docs_read", &["how to", "guide", "manual", "instructions", "help page", "setup"]),
+    ("docs_search", &["how do I", "help", "documentation", "look up", "setup", "configure"]),
+    ("export_report", &["after action", "save report", "session report"]),
+    ("find_peers", &["who is reachable", "peer to peer", "p2p partners", "roster"]),
+    ("find_stations", &["gateways", "rms list", "who can I reach", "station finder"]),
+    ("ft8_heard_stations", &["who did we hear", "spots", "reception report"]),
+    ("grib_send_request", &["weather model", "wind file", "saildocs grib"]),
+    ("mailbox_list", &["inbox", "my mail", "messages", "unread"]),
+    ("mailbox_move", &["move message", "file into folder", "archive", "organize mail"]),
+    ("message_attachment_save", &["download attachment", "save file", "save to disk"]),
+    ("message_read", &["open message", "read mail", "view message", "show me the message"]),
+    ("message_send", &["compose", "write a message", "email", "new message", "send mail", "stage to outbox"]),
+    ("modem_ardop_disconnect", &["hang up", "drop the link", "stop ardop"]),
+    ("packet_connect", &["node", "bbs", "vhf connect", "tnc connect"]),
+    ("packet_set_listen", &["listen", "accept incoming", "monitor for connections"]),
+    ("point_at", &["show me where", "highlight", "where is the button", "guide me in the app"]),
+    ("position_set_source", &["use gps", "position source", "fixed grid or gps"]),
+    ("position_status", &["where am I", "current position", "location fix"]),
+    ("predict_path", &["propagation", "will the band work", "can I reach", "path prediction", "voacap"]),
+    ("print_document", &["print", "hard copy", "printer"]),
+    ("rig_status", &["frequency", "what frequency", "vfo", "dial", "radio settings", "rig info"]),
+    ("rig_tune", &["tune", "change frequency", "qsy", "set the dial"]),
+    ("routines_journal_get", &["did it run", "run history", "routine log", "last night's run"]),
+    ("routines_list", &["my routines", "what routines", "automations", "scheduled tasks"]),
+    ("routines_run", &["run now", "execute", "trigger", "kick off"]),
+    ("routines_save", &["create a routine", "make a routine", "new routine", "build an automation", "schedule a task"]),
+    ("send_form", &["ics-213", "ics form", "fill out a form", "template", "forms"]),
+    ("server_info", &["am I armed", "can I transmit", "authorization", "taint status"]),
+    ("session_log_snapshot", &["raw log", "what happened", "connection log", "wire log"]),
+    ("solar_conditions", &["band conditions", "space weather", "solar indices", "sfi"]),
+    ("tauri_search_run", &["search the app", "find in messages", "search everything"]),
+    ("vara_engine_available", &["is vara installed", "vara present", "vara available"]),
+    ("vara_stop_session", &["stop vara", "hang up vara", "cancel session"]),
+    ("wwv_capture_offair", &["wwv", "off air", "time station", "space weather broadcast"]),
+];
+
 /// The Tuxlink MCP server handler. Cloned per the rmcp serve loop; the inner
 /// [`McpState`] is `Arc`-shared so all clones see the same live guard state.
 #[derive(Clone)]
@@ -3289,6 +3340,21 @@ mod tests {
              stale: {stale:?}"
         );
 
+        // Curated synonyms: subset discipline — every entry names a real
+        // tool (a rename/removal that orphans one fails here).
+        let curated: std::collections::BTreeMap<&str, &[&str]> = crate::router::TOOL_SYNONYMS
+            .iter()
+            .map(|(n, s)| (*n, *s))
+            .collect();
+        let orphaned: Vec<&&str> = curated
+            .keys()
+            .filter(|n| !registered.contains(**n))
+            .collect();
+        assert!(
+            orphaned.is_empty(),
+            "TOOL_SYNONYMS entries for unregistered tools: {orphaned:?}"
+        );
+
         // One row per tool, EnrichedEntry-compatible plus the flag fields.
         // Sorted by (tier, name) like the catalog asset; one-liner = first
         // sentence, word-boundary-truncated to keep the inventory compact.
@@ -3315,6 +3381,9 @@ mod tests {
                     .map(str::to_string)
                     .collect();
                 synonyms.extend(tier.split('-').map(str::to_string));
+                if let Some(extra) = curated.get(name.as_str()) {
+                    synonyms.extend(extra.iter().map(|s| s.to_string()));
+                }
                 synonyms.dedup();
                 let row = serde_json::json!({
                     "id": name,
