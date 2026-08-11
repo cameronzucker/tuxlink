@@ -1,5 +1,13 @@
 # Overnight handoff — moss-tamarack-taiga, 2026-08-11 (Inkling-only measurement night)
 
+UPDATE (morning): the bench A/B COMPLETED and is analyzed — see
+`FINDINGS-BENCH-AB.md` (floor/routines/collaborator/elmer-ultra improve
+narrowed; elmer diagnostics regress via argument-blind by-name calls;
+step-3 hypothesis = furnish the schema on first by-name call). Judge was
+272/288 at the findings write and still draining — `python3
+bench-arm/analyze_bench_ab.py` refreshes every table. PR #1338 marked
+ready, merging on green. The section below is the mid-night snapshot.
+
 Written mid-night as compaction insurance; the bench A/B is IN FLIGHT.
 If you are a fresh session: the operator is asleep; the standing directive
 is his pre-sleep message — "Please just figure out if we're breaking
