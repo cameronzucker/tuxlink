@@ -1,0 +1,10 @@
+Frozen 2026-08-10 (operator direction): the five-classifier epic (tuxlink-efk3k) is reshaping the MCP tool surface and Elmer behavior — no releases until the epic concludes and the operator removes this file.
+
+Context: the tool-surface fix sweep (tuxlink-9n4cr) and the classifier
+architecture (ADR 0030) land across multiple PRs; a nightly release cut
+mid-stream would ship a half-migrated agent surface. Feature-branch PRs
+merge as normal; this pauses only the release-please merge + promotion,
+per CLAUDE.md "Commit and release discipline".
+
+Lift: delete this file (operator act), then releases resume on the next
+nightly cron or via `gh workflow run release-merge.yml`.
