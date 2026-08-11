@@ -72,6 +72,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut true_top1_min = f32::MAX;
     let mut answer_margins: Vec<f32> = vec![];
     let mut ask_margins: Vec<f32> = vec![];
+    // Optional shortlist dump for downstream harnesses (the Inkling
+    // recovery spike consumes this): one JSON object per query with the
+    // full top-k candidates and the correct tools' rank.
+    let mut dump: Vec<String> = vec![];
 
     for q in &queries {
         let (cands, margin) = index.rank(&q.q, None, *KS.last().unwrap(), &backend)?;
@@ -107,6 +111,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             margin_v,
             cands.iter().take(5).map(|c| c.id.as_str()).collect::<Vec<_>>().join(",")
         );
+        dump.push(
+            serde_json::json!({
+                "id": q.id,
+                "q": q.q,
+                "kind": q.expect.kind,
+                "behavior": q.behavior,
+                "correct": q.expect.tools,
+                "rank": rank,
+                "shortlist": cands.iter().map(|c| serde_json::json!({
+                    "id": c.id, "title": c.title, "score": c.score
+                })).collect::<Vec<_>>(),
+            })
+            .to_string(),
+        );
+    }
+
+    if let Ok(path) = std::env::var("TUXLINK_DUMP_SHORTLISTS") {
+        std::fs::write(&path, dump.join("\n") + "\n")?;
+        eprintln!("shortlists dumped to {path}");
     }
 
     let ask_max = ask_margins.iter().copied().fold(f32::MIN, f32::max);
