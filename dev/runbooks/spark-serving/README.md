@@ -11,9 +11,17 @@ reproduced the pinned Triton failure class the recipes exist to avoid.
 
 ## The control plane (spark-dashboard)
 
-- **Source:** `~/serving/spark-dashboard/app.py` on the head node
-  (FastAPI; systemd unit `spark-dashboard.service`; logs in
-  `uvicorn.log` / `dashboard.nohup` beside it).
+- **Topology: one instance PER NODE, loosely linked.** Each Spark runs
+  its own copy of `~/serving/spark-dashboard/app.py` (FastAPI; systemd
+  unit `spark-dashboard.service`, though instances are sometimes run
+  out-of-unit via nohup — check `ss` for uvicorn on 8090, not just
+  `systemctl is-active`). The HEAD instance (the node with
+  `cluster.json`) is the cluster orchestrator: its `/api/cluster/*`
+  endpoints drive the worker over ssh. The worker's instance manages
+  solo serving on that node only and answers "not the cluster head" to
+  cluster calls. There is NO config sync between them — the two
+  `app.py` copies were observed divergent (2026-08-11); edits must be
+  applied per node, and take effect on that node's next restart.
 - **UI:** https://inference.twin-bramble.ts.net:8443 (tailnet-only;
   tailscale-serve fronts local port 8090).
 - **Profiles:** `~/serving/spark-dashboard/profiles.json` — named serving
