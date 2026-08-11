@@ -15,7 +15,7 @@
 //! ```
 
 use serde::Deserialize;
-use tuxlink_classify::{CandleBert, CatalogIndex, EmbeddingBackend, Pooling, EMBED_TEMPLATE_VERSION};
+use tuxlink_classify::{CandleBert, CatalogIndex, Pooling, EMBED_TEMPLATE_VERSION};
 
 const TOOL_CORPUS: &str = include_str!("../../resources/agents/tool-surface.jsonl");
 const QUERIES_PATH: &str = concat!(
