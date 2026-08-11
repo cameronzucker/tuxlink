@@ -38,12 +38,20 @@ Three artifacts, all in this repo:
 
 Give the same tasks to three assistants:
 
-- the **small CPU model** on R2 (the same ~1.7B class from the operator's
-  CPU-viability hand-poke, for comparability) — the tier narrowing must
-  rescue;
+- the **small model** — the same ~1.7B class from the operator's
+  CPU-viability hand-poke, for comparability; the tier narrowing must
+  rescue. Served from the Spark cluster beside Inkling if it fits
+  (operator amendment 2026-08-10: R2 is not a suitable inference host).
+  Serving it on fast hardware does not distort the questions asked here:
+  CPU wall-clock pain is already established by the CPU-viability eval,
+  and this experiment measures capability-tier behavior and token
+  counts, which the serving host doesn't change;
 - **Inkling** on the Spark — the shipped default, so it gets the fullest
   comparison;
-- **one frontier model** over OpenRouter — the capable-model reference.
+- **GPT-5.6-Luna** over OpenRouter as the frontier arm (operator
+  amendment 2026-08-10: the cheapest frontier-class option; its
+  frontier-ness is "a bit questionable" per the operator — remember that
+  caveat when reading its row as the capable-model ceiling).
 
 Each assistant sees the tools presented one of four ways:
 
@@ -116,8 +124,8 @@ The operator rules on the numbers; nothing auto-decides.
 ## Where it runs, in what order
 
 Groundwork in this repo. Task adaptation and runs in the bench repo
-(private; sanitized exports only). Serving: R2 for the small CPU model,
-the Spark for Inkling (already up), OpenRouter for the frontier arm.
+(private; sanitized exports only). Serving: the Spark cluster for both
+the small model and Inkling (already up), OpenRouter for GPT-5.6-Luna.
 Order: groundwork → the cheap token-cost measurements → the full Inkling
 comparison → the reduced small-CPU and frontier rows → analysis and a
 decision brief.
@@ -131,6 +139,9 @@ misses happen in the field — the groundwork chart measures that. Inkling
 is graded on final content only with generous token limits (its
 reasoning-first wire shape, established in the parseability spike).
 
-Session: moss-tamarack-taiga, 2026-08-10. Status: DRAFT — operator
-validates the questions, the setups, the task mix, the measurements, and
-the decision rules before groundwork starts.
+Session: moss-tamarack-taiga, 2026-08-10. Status: **APPROVED by the
+operator 2026-08-10** ("The design is otherwise sound and approved") with
+two amendments applied above: the small model serves from the Spark
+cluster, not R2 ("The R2 is not a suitable inference host"), and the
+frontier arm is GPT-5.6-Luna over OpenRouter (cheapest frontier-class;
+operator's frontier-ness caveat noted). Groundwork is a go.
