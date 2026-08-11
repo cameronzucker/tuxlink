@@ -25,11 +25,15 @@ pub struct GeoFacts {
     pub lon: Option<f64>,
 }
 
-/// One enriched catalog item — the JSONL object shape the 2026-08-10
+/// One enriched corpus item — the JSONL object shape the 2026-08-10
 /// parseability spike validated against the served backend (42/44 select,
 /// 6/6 structural parse, zero hallucinated ids).
+///
+/// Tolerant reader by design (no `deny_unknown_fields`): corpus assets are
+/// shared artifacts — the tool-surface corpus carries extra flag fields
+/// (`taints`, `arm_required`) for its inventory/docs consumers, and this
+/// crate embeds only the fields it knows.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct EnrichedEntry {
     pub id: String,
     pub section: String,

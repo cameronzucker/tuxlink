@@ -174,6 +174,107 @@ pub const TAINTING_TOOLS: &[&str] = &[
     "routines_journal_get",
 ];
 
+/// Machine-readable tier for every registered tool — the authority the
+/// agents-guide's tier sections, the generated tool-surface corpus
+/// (classifier narrowing + the tool-inventory surface + first-party docs),
+/// and any per-tier policy derive from. Tier slugs mirror the guide's
+/// section taxonomy. A registered tool missing here (or a stale entry) fails
+/// the parity bijection test in the app crate — extend BOTH in the same
+/// change, like `TAINTING_TOOLS` above.
+pub const TOOL_TIERS: &[(&str, &str)] = &[
+    ("ardop_b2f_exchange", "egress"),
+    ("ardop_connect", "egress"),
+    ("ardop_list_audio_devices", "diagnostic-read"),
+    ("backend_status", "diagnostic-read"),
+    ("catalog_list", "diagnostic-read"),
+    ("catalog_send_inquiry", "compose-queue"),
+    ("cms_abort", "abort"),
+    ("cms_connect", "egress"),
+    ("config_get_ardop", "diagnostic-read"),
+    ("config_get_rig", "diagnostic-read"),
+    ("config_get_vara", "diagnostic-read"),
+    ("config_read", "diagnostic-read"),
+    ("config_set_ardop", "remediation-write"),
+    ("config_set_grid", "remediation-write"),
+    ("config_set_privacy", "remediation-write"),
+    ("config_set_vara", "remediation-write"),
+    ("docs_read", "diagnostic-read"),
+    ("docs_search", "diagnostic-read"),
+    ("export_report", "local-action"),
+    ("find_peers", "arm-gated-read"),
+    ("find_stations", "station-intel"),
+    ("ft8_heard_stations", "ft8-monitor"),
+    ("ft8_list_audio_devices", "ft8-monitor"),
+    ("ft8_set_band", "ft8-monitor"),
+    ("ft8_start_listening", "ft8-monitor"),
+    ("ft8_status", "ft8-monitor"),
+    ("ft8_stop_listening", "ft8-monitor"),
+    ("get_wizard_completed", "diagnostic-read"),
+    ("grib_send_request", "compose-queue"),
+    ("list_audio_devices", "diagnostic-read"),
+    ("mailbox_list", "diagnostic-read"),
+    ("mailbox_move", "remediation-write"),
+    ("message_attachment_save", "remediation-write"),
+    ("message_read", "diagnostic-read"),
+    ("message_send", "compose-queue"),
+    ("modem_ardop_disconnect", "abort"),
+    ("modem_get_status", "diagnostic-read"),
+    ("p2p_peer_password_status", "diagnostic-read"),
+    ("packet_config_get", "diagnostic-read"),
+    ("packet_config_set", "remediation-write"),
+    ("packet_connect", "egress"),
+    ("packet_list_bluetooth_devices", "diagnostic-read"),
+    ("packet_list_serial_devices", "diagnostic-read"),
+    ("packet_set_listen", "remediation-write"),
+    ("platform_info", "diagnostic-read"),
+    ("point_at", "local-action"),
+    ("position_set_source", "remediation-write"),
+    ("position_status", "diagnostic-read"),
+    ("predict_path", "station-intel"),
+    ("print_document", "local-action"),
+    ("printer_list", "diagnostic-read"),
+    ("rig_status", "diagnostic-read"),
+    ("rig_tune", "egress"),
+    ("routines_actions_list", "routines"),
+    ("routines_disable", "routines"),
+    ("routines_dry_run", "routines"),
+    ("routines_enable", "routines"),
+    ("routines_get", "routines"),
+    ("routines_journal_get", "routines"),
+    ("routines_list", "routines"),
+    ("routines_meta_set", "routines"),
+    ("routines_rename", "routines"),
+    ("routines_run", "routines"),
+    ("routines_run_status", "routines"),
+    ("routines_save", "routines"),
+    ("routines_step_add", "routines"),
+    ("routines_step_move", "routines"),
+    ("routines_step_remove", "routines"),
+    ("routines_step_update", "routines"),
+    ("routines_track_add", "routines"),
+    ("routines_track_remove", "routines"),
+    ("routines_trigger_set", "routines"),
+    ("routines_validate", "routines"),
+    ("send_form", "compose-queue"),
+    ("server_info", "diagnostic-read"),
+    ("session_log_snapshot", "diagnostic-read"),
+    ("solar_conditions", "station-intel"),
+    ("tauri_search_run", "diagnostic-read"),
+    ("user_folders_list", "diagnostic-read"),
+    ("vara_b2f_exchange", "egress"),
+    ("vara_engine_available", "diagnostic-read"),
+    ("vara_ini_apply", "remediation-write"),
+    ("vara_ini_read", "diagnostic-read"),
+    ("vara_install_start", "local-action"),
+    ("vara_install_status", "diagnostic-read"),
+    ("vara_open_session", "egress"),
+    ("vara_probe", "diagnostic-read"),
+    ("vara_status", "diagnostic-read"),
+    ("verify_cms_connection", "diagnostic-read"),
+    ("wwv_capture_offair", "station-intel"),
+    ("wwv_offair_available", "diagnostic-read"),
+];
+
 /// The Tuxlink MCP server handler. Cloned per the rmcp serve loop; the inner
 /// [`McpState`] is `Arc`-shared so all clones see the same live guard state.
 #[derive(Clone)]
@@ -3136,6 +3237,126 @@ mod tests {
     }
 
     // --- Routines (spec §13 + edit-verb spec D1): the 20-tool MCP surface, no consent-grant ---
+
+    /// The tool-surface corpus (ch3e9 groundwork; operator-approved design
+    /// 2026-08-10). One registry-generated artifact with three consumers:
+    /// the request classifier's tool corpus, the tool-inventory surface,
+    /// and the first-party docs. Runtime enumeration (`list_all`) is the
+    /// source — descriptions come back unescaped, unlike source parsing.
+    ///
+    /// Regenerate: `TUXLINK_REGEN_TOOL_SURFACE=1 cargo test -p
+    /// tuxlink-mcp-core tool_surface_corpus` (on a host that builds — R2 or
+    /// CI-class). Without the env var the test verifies the committed asset
+    /// byte-for-byte: registry drift without regeneration fails here, and a
+    /// regenerated corpus means downstream threshold recalibration
+    /// (ADR 0030 threshold-rot rule).
+    #[test]
+    fn tool_surface_corpus_matches_registry() {
+        let mut tools: Vec<(String, String)> = TuxlinkMcp::tool_router()
+            .list_all()
+            .into_iter()
+            .map(|t| {
+                (
+                    t.name.to_string(),
+                    t.description.map(|d| d.to_string()).unwrap_or_default(),
+                )
+            })
+            .collect();
+        tools.sort();
+
+        // Bijection with TOOL_TIERS — same discipline as TAINTING_TOOLS.
+        let tiered: std::collections::BTreeMap<&str, &str> =
+            crate::router::TOOL_TIERS.iter().copied().collect();
+        assert_eq!(
+            tiered.len(),
+            crate::router::TOOL_TIERS.len(),
+            "duplicate name in TOOL_TIERS"
+        );
+        let registered: std::collections::BTreeSet<&str> =
+            tools.iter().map(|(n, _)| n.as_str()).collect();
+        let untierd: Vec<&&str> = registered
+            .iter()
+            .filter(|n| !tiered.contains_key(**n))
+            .collect();
+        let stale: Vec<&&str> = tiered
+            .keys()
+            .filter(|n| !registered.contains(**n))
+            .collect();
+        assert!(
+            untierd.is_empty() && stale.is_empty(),
+            "TOOL_TIERS out of sync with the registry — missing: {untierd:?}, \
+             stale: {stale:?}"
+        );
+
+        // One row per tool, EnrichedEntry-compatible plus the flag fields.
+        // Sorted by (tier, name) like the catalog asset; one-liner = first
+        // sentence, word-boundary-truncated to keep the inventory compact.
+        let mut rows: Vec<(String, String, String)> = tools
+            .iter()
+            .map(|(name, desc)| {
+                assert!(
+                    !desc.trim().is_empty(),
+                    "tool `{name}` has an empty description — every tool \
+                     ships agent-facing text"
+                );
+                let tier = tiered[name.as_str()];
+                let first = desc.split_inclusive(". ").next().unwrap_or(desc).trim();
+                let one_liner = if first.chars().count() <= 160 {
+                    first.to_string()
+                } else {
+                    let cut: String = first.chars().take(157).collect();
+                    let cut = cut.rsplit_once(' ').map(|(a, _)| a).unwrap_or(&cut);
+                    format!("{cut}...")
+                };
+                let mut synonyms: Vec<String> = name
+                    .split('_')
+                    .filter(|w| w.len() >= 3)
+                    .map(str::to_string)
+                    .collect();
+                synonyms.extend(tier.split('-').map(str::to_string));
+                synonyms.dedup();
+                let row = serde_json::json!({
+                    "id": name,
+                    "section": tier,
+                    "title": one_liner,
+                    "intent": desc,
+                    "synonyms": synonyms,
+                    "taints": crate::router::TAINTING_TOOLS.contains(&name.as_str()),
+                    "arm_required": matches!(
+                        tier,
+                        "arm-gated-read" | "remediation-write" | "egress"
+                    ),
+                });
+                (tier.to_string(), name.clone(), row.to_string())
+            })
+            .collect();
+        rows.sort();
+        let generated: String = rows
+            .iter()
+            .map(|(_, _, json)| json.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../resources/agents/tool-surface.jsonl"
+        );
+        if std::env::var("TUXLINK_REGEN_TOOL_SURFACE").is_ok() {
+            std::fs::create_dir_all(std::path::Path::new(path).parent().unwrap()).unwrap();
+            std::fs::write(path, &generated).unwrap();
+            eprintln!("wrote {path} ({} tools)", rows.len());
+        } else {
+            let committed = std::fs::read_to_string(path).unwrap_or_default();
+            assert_eq!(
+                committed, generated,
+                "resources/agents/tool-surface.jsonl is stale vs the \
+                 registry — regenerate with TUXLINK_REGEN_TOOL_SURFACE=1 \
+                 cargo test -p tuxlink-mcp-core tool_surface_corpus, and \
+                 recalibrate downstream thresholds (ADR 0030)"
+            );
+        }
+    }
 
     /// spec §13: the design-time transmit acknowledgment (spec §4) is a UI
     /// act only — there is no MCP tool that can grant it. Assert both the
