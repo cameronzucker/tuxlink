@@ -21,6 +21,7 @@
 //! tiers). That policy lives with the caller — nothing here enforces it.
 
 pub mod backend;
+#[cfg(feature = "t1-candle")]
 pub mod candle_bert;
 pub mod dto;
 pub mod enriched;
@@ -29,6 +30,7 @@ pub mod index;
 pub mod thresholds;
 
 pub use backend::{EmbeddingBackend, Pooling};
+#[cfg(feature = "t1-candle")]
 pub use candle_bert::CandleBert;
 pub use dto::{Advisory, AdvisoryVerdict, Candidate, ClassifyResult};
 pub use enriched::{embed_text, EnrichedEntry, GeoFacts, EMBED_TEMPLATE_VERSION};

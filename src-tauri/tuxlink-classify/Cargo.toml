@@ -22,11 +22,38 @@ publish = false
 # Native inference floor. CPU-only: no accelerate/cuda/mkl features - the
 # deployment floor is a Pi / small x86 box, and the T1 spike showed 2-4
 # intra-op threads is the knee (RAYON_NUM_THREADS governs).
-candle-core = "0.9"
-candle-nn = "0.9"
-candle-transformers = "0.9"
+candle-core = { version = "0.9", optional = true }
+candle-nn = { version = "0.9", optional = true }
+candle-transformers = { version = "0.9", optional = true }
 # HF tokenizer.json loader (WordPiece for the BERT family).
-tokenizers = "0.21"
+tokenizers = { version = "0.21", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+
+[features]
+default = ["t1-candle"]
+# The candle-backed T1 embedding tier, made OPTIONAL 2026-08-11 so the pure
+# layers of this crate (the inbox conversion schema, enriched index,
+# thresholds, advisory DTO, and the EmbeddingBackend trait) can be depended
+# on by the app WITHOUT dragging an ML stack into its dependency closure.
+# That closure was the stated reason the whole crate was kept out of the app
+# — which left the conversion schema unreachable by the code that needs it.
+# candle is used by exactly one module (`candle_bert`); everything else is
+# serde + string rules. Default-on, so existing builds and the evals are
+# unchanged; a consumer wanting only the pure schema uses
+# `default-features = false`.
+t1-candle = [
+    "dep:candle-core",
+    "dep:candle-nn",
+    "dep:candle-transformers",
+    "dep:tokenizers",
+]
+
+[[example]]
+name = "eval_tools"
+required-features = ["t1-candle"]
+
+[[example]]
+name = "eval_floor"
+required-features = ["t1-candle"]
