@@ -21,16 +21,23 @@
 //! tiers). That policy lives with the caller — nothing here enforces it.
 
 pub mod backend;
+#[cfg(feature = "t1-candle")]
 pub mod candle_bert;
 pub mod dto;
 pub mod enriched;
+pub mod inbox;
 pub mod index;
 pub mod thresholds;
 
 pub use backend::{EmbeddingBackend, Pooling};
+#[cfg(feature = "t1-candle")]
 pub use candle_bert::CandleBert;
 pub use dto::{Advisory, AdvisoryVerdict, Candidate, ClassifyResult};
 pub use enriched::{embed_text, EnrichedEntry, GeoFacts, EMBED_TEMPLATE_VERSION};
+pub use inbox::{
+    convert, Callsign, Conversion, ConvertedMessage, Grid, Payload, RawMessage, Summary150,
+    Triage, TriageClass,
+};
 pub use index::CatalogIndex;
 pub use thresholds::{ThresholdKey, ThresholdTable, Thresholds};
 
