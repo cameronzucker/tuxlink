@@ -28,7 +28,8 @@ pub enum StoreError {
     #[error("routine not found: {0}")]
     NotFound(String),
     #[error(
-        "routine name {0:?} is invalid — kebab-case, starts a-z, chars [a-z0-9-], length 1-64"
+        "routine name {0:?} is invalid — kebab-case, chars [a-z0-9-], must start with a \
+         letter or digit (band names like \"20m-net\" are fine), length 1-64"
     )]
     InvalidName(String),
 }
@@ -66,7 +67,16 @@ fn valid_name(name: &str) -> bool {
     let Some(first) = chars.next() else {
         return false;
     };
-    if !first.is_ascii_lowercase() {
+    // A LEADING DIGIT IS ALLOWED. Requiring `[a-z]` first rejected every
+    // band-named routine — `20m-gateway-cycle`, `40m-net`, `80m-checkin` — and
+    // band names are the most natural way an operator names a routine in this
+    // domain. The v26 bench run hit this (tuxlink-0rc3h).
+    //
+    // This does not weaken the traversal guard, which is the rule's actual
+    // purpose: `.` and `/` are excluded by the character set below, so no
+    // leading digit can begin `..` or `/`. A leading `-` stays banned so a name
+    // can never be mistaken for a flag by anything that shells out.
+    if !(first.is_ascii_lowercase() || first.is_ascii_digit()) {
         return false;
     }
     chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
@@ -479,6 +489,24 @@ mod tests {
         assert!(valid_name("morning-ics-cycle"));
         assert!(valid_name("a"));
         assert!(valid_name("a1-b2-c3"));
+
+        // Band-named routines. These are how operators actually name things,
+        // and the old leading-[a-z] rule rejected all of them (tuxlink-0rc3h).
+        assert!(valid_name("20m-gateway-cycle"));
+        assert!(valid_name("40m-net"));
+        assert!(valid_name("80m-checkin"));
+        assert!(valid_name("160m"));
+        assert!(valid_name("6"));
+
+        // The traversal guard is unchanged, which is the rule's real job.
+        assert!(!valid_name("../config"));
+        assert!(!valid_name("2../config"));
+        assert!(!valid_name("a/b"));
+        assert!(!valid_name("20m/../../etc"));
+        assert!(!valid_name("."));
+        assert!(!valid_name(".."));
+        // A leading dash could be read as a flag by anything that shells out.
+        assert!(!valid_name("-rf"));
         assert!(
             valid_name(&"a".repeat(64)),
             "64 chars is the boundary, must pass"
