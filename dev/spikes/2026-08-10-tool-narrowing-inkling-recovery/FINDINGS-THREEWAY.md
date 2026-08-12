@@ -109,10 +109,13 @@ Repair (this session): all bench workspace binaries rebuilt to one
 vintage; 13 furnish + 52 narrowed harness-killed units archived
 (`harness-failed-units-backup-*.tgz` in each run dir) and re-run via
 `--resume`; both runners closed with "339 unit(s) — 339 model-attributable,
-0 infrastructure". Remaining unjudged: 3 narrowed units where the judge's
-truth auditor failed 3× on grounding (AS-CHECKIN-GAP/attempt-3,
-AS-FALLBACK-CLEAN/attempt-1, COLLAB-FAMILY-CLEAR/attempt-2) — noted, not
-material to any tier conclusion.
+0 infrastructure". Remaining unjudged: 6 narrowed units where the judge's
+truth auditor failed 3× on grounding-quote matching (AS-CHECKIN-GAP/3,
+AS-FALLBACK-CLEAN/1, COLLAB-FAMILY-CLEAR/2, AS-FALLBACK-ALERT/1,
+AS-FALLBACK-ALERT/2, AS-OUTBOUND-DAILY/3) — all in the repaired connect
+class, consistent with the auditor's quote matcher choking on the
+routine-branch prose in fresh `routines_save` results (bench work item 3).
+Noted; not material to any tier conclusion.
 
 Model-attributable non-completions retained as findings, not re-run:
 AS-TRIAGE-INBOX 3× needs_operator (furnish only: the model read tainted
