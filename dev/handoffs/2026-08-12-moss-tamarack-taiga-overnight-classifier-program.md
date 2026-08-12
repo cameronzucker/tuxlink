@@ -108,6 +108,62 @@ Read this section first, then act. Do not re-derive what is below.
 - **Sparks:** Inkling TP2 serving, healthy, reached directly at
   `https://inference.twin-bramble.ts.net/v1/chat/completions`.
 
+## 4b. SESSION CONTINUATION — what happened after the anchor was written
+
+Appended, not rewritten: everything above remains the record as of `e1054b80`.
+
+**Operator intervened twice mid-session** (he was still up):
+
+1. *"Start thinking about how we're going to actually host all these
+   classifiers too. How does that work in setup? We don't have any plan for
+   that right now."* — correct, there was none. ADR 0030 settles WHERE
+   inference runs and says nothing about where the WEIGHTS come from.
+2. I routed that to `office-hours`; he stopped it: *"No office-hours it's
+   nearly 1 AM. If it needs that we'll put a pin in and get to it in the
+   morning once the supporting elements are built and tested by you. Then we
+   can decide on the human-centric UX bits which need me."* Saved as memory
+   `feedback_build_substrate_first_ux_with_operator`. **The rule: build and
+   test the substrate autonomously, defer the human-centric half to a session
+   he is present for.**
+
+**Built + tested (commits `77d387a0`, `4df66de5`, `cc23ee1f`):**
+`src-tauri/tuxlink-classify/src/hosting.rs` — the model resolution layer.
+`CandleBert::load` took a directory and trusted it; nothing decided WHICH
+directory, so a missing file surfaced as an opaque candle io error. Now:
+ordered search path (env override → XDG → `/usr/share/tuxlink/models`),
+completeness + optional `manifest.json` byte-length verification, explicit
+Incomplete/Absent reporting that names files and locations, shadowed-root
+disclosure, capped-and-disclosed root list, and model-id validation before any
+path is built (`../../etc` escaped the root — latent, fixed).
+
+Deliberately: pure `std`, no HTTP client, so "we never silently download
+weights" is provable by dependency absence; and NOT behind `t1-candle`, so a
+`--no-default-features` build can still report that T1 is unavailable.
+
+Verified on R2 (rustc 1.97.1), both feature configs: 49 tests pass, clippy
+`-D warnings` clean on each. Plus an `#[ignore]`d end-to-end test against REAL
+bge-small weights proving the locator's output actually loads in candle and
+embeds to 384-dim unit vectors with sane semantics — the unit tests use
+two-byte fake files and only prove the locator agrees with itself.
+
+**NOT wired into the app, on purpose.** Linking it is one whole feature WITH
+the setup surface (ADR 0022, no inert half), and the setup surface is the
+pinned operator decision. Do not link it before that call.
+
+**Measured numbers for the morning decision** (bd `tuxlink-13ofm`):
+- bge-small-en-v1.5 required payload ≈ **134 MB** (`model.safetensors`
+  133,466,304 B + `tokenizer.json` 711,396 B + `config.json` 743 B).
+- MiniLM-L6 alternate ≈ 90 MB; gte-small 65 MB and e5-small 129 MB were both
+  rejected by the T1 spike on rejection-gap grounds, so they are not options.
+- Existing bundled-asset precedent: `resources/basemap/world-z0-6.pmtiles` =
+  44,615,273 B, shipped via the `tauri.conf.json` resources glob;
+  `resources/` totals 55 MB today. Bundling bge-small takes that to ~189 MB,
+  and the ECT low-floor `.deb` inherits it.
+
+**Correction landed:** the claim that the crate sat outside the app because
+"candle's MSRV exceeds the app's 1.75" is FALSE and is now corrected in both
+the crate manifest and `inbox.rs`. candle 0.9 declares no `rust-version`.
+
 ## 5. Open operator-facing items (do not decide unilaterally)
 
 - **MSRV** (`tuxlink-qt7zi`) — policy; needs the Codex agreement first.
@@ -116,3 +172,23 @@ Read this section first, then act. Do not re-derive what is below.
   (#1313 dompurify, #1312 mermaid); fast merge whenever he wants them.
 - **Taint gate scope for local-only writes** — resolved in principle: the
   answer is the classifier program, not loosening the gate.
+- **Classifier model hosting + setup surface** (`tuxlink-13ofm`, NEW) — the
+  substrate is built and tested; the three decisions are his: (1) bundle
+  weights in the `.deb` vs first-run download vs operator-supplied path,
+  (2) what the setup surface says about classifiers, including when weights
+  are absent, (3) whether size-only integrity suffices or a digest is wanted
+  — note a `.deb`-bundled model is already covered by dpkg integrity while a
+  sideloaded one is not, so this follows from (1).
+
+**A design note for whoever picks up role 4.** Addendum 2's stack is
+`quarantined reader → typed schema-validated extraction → PER-DATUM taint
+provenance → deterministic consent gate → scoped grants`. The schema (step 2)
+shipped. Step 3 is the piece that answers the operator's complaint that the
+taint gate refuses correct model behaviour: `tuxlink-security`'s `EgressGuard`
+holds ONE session-global sticky taint flag, so any read locks everything.
+Per-datum provenance means actions gate on the taint of their INPUTS and
+retain full capability on untainted parameters — addendum 2 is explicit that
+this *refines, not replaces*, the mailbox-read-locks-send doctrine. It is
+deterministic and needs no model, so it is not blocked on the hosting
+decision. It IS a change to a security boundary and wants an adversarial round
+plus operator awareness before it lands; do not do it unreviewed.
