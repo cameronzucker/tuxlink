@@ -8,9 +8,17 @@
 #
 # Workspace member, NOT yet a dependency of the tuxlink app: step-3 wiring
 # (Elmer flow + any MCP-surface change) is the operator-gated seam per the
-# ch3e9 plan, and keeping the app edge unlinked also keeps candle's MSRV
-# (above the app's declared 1.75) out of the app's dependency closure until
-# that wiring decision is made.
+# ch3e9 plan.
+#
+# A prior version of this comment also claimed the crate was held out because
+# "candle's MSRV is above the app's declared 1.75". That was never verified and
+# is FALSE: candle 0.9 declares no `rust-version` at all. The app's own
+# `rust-version = "1.75"` is a scaffold artifact that nothing builds or tests
+# against (CI uses `dtolnay/rust-toolchain@stable`) — under review in
+# bd tuxlink-qt7zi, operator-decided, do not act on it here. The ML stack is
+# kept out of the app's dependency closure by the `t1-candle` feature below,
+# which is a real mechanism with a CI check behind it, not by leaving the
+# crate unlinked.
 [package]
 name = "tuxlink-classify"
 version = "0.0.0"
