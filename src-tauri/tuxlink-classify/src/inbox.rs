@@ -388,6 +388,7 @@ pub fn sanitize_attachment_name(raw: &str) -> String {
 /// Structured, non-content message metadata. Always crossable — it holds no
 /// untrusted free text except the sanitized `attachment_names`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct Envelope {
     /// Opaque, locally derived handle for the message. The inbound Winlink
     /// MID is attacker-chosen (64 chars of `[A-Za-z0-9_-]` swallows
@@ -413,6 +414,7 @@ pub struct Envelope {
 /// Grammar-validated origin. `None` fields mean the raw value failed its
 /// grammar and was withheld rather than crossed as free text.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct Provenance {
     pub sender_callsign: Option<Callsign>,
     pub via_gateway: Option<Callsign>,
@@ -422,6 +424,7 @@ pub struct Provenance {
 /// A byte range into the QUARANTINED copy — cites hostile content by
 /// location so the privileged side can spotlight it without containing it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[non_exhaustive]
 pub struct Span {
     pub start: u32,
     pub end: u32,
@@ -430,6 +433,7 @@ pub struct Span {
 /// Triage verdict + the injection signal, both advisory (ADR 0030: the
 /// classifier advises, deterministic policy decides).
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[non_exhaustive]
 pub struct Triage {
     pub class: TriageClass,
     pub class_score: f32,
@@ -447,20 +451,24 @@ pub struct Triage {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "class", rename_all = "snake_case")]
 pub enum Payload {
+    #[non_exhaustive]
     CatalogResponse {
         catalog_item_id: String,
         summary_150: Summary150,
     },
+    #[non_exhaustive]
     WeatherProduct {
         product_kind: ProductKind,
         valid_from: Option<String>,
         valid_to: Option<String>,
         area_grid: Option<Grid>,
     },
+    #[non_exhaustive]
     FormSubmission {
         form_id: String,
         field_count: u32,
     },
+    #[non_exhaustive]
     PositionOrService {
         grid: Option<Grid>,
         report_kind: ReportKind,
@@ -469,6 +477,7 @@ pub enum Payload {
     /// classes whose only structured extraction is the bounded summary.
     /// (nts_traffic/dx_bulletin get richer payloads when their T0 grammars
     /// are authored; summary-only is the honest first cut.)
+    #[non_exhaustive]
     SummaryOnly {
         summary_150: Summary150,
     },
@@ -476,6 +485,7 @@ pub enum Payload {
 
 /// A fully typed message the privileged agent may read.
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[non_exhaustive]
 pub struct ConvertedMessage {
     pub envelope: Envelope,
     pub provenance: Provenance,
@@ -485,10 +495,52 @@ pub struct ConvertedMessage {
 
 /// The conversion boundary output. Either the full typed extraction crossed,
 /// or only the envelope did (fail closed).
+///
+/// # A `Conversion` cannot be forged from outside this crate
+///
+/// Removing `Deserialize` from the boundary types was necessary but NOT
+/// sufficient: the aggregates still had public fields and public variants, so
+/// any caller could assemble a "validated" value by hand with attacker-chosen
+/// identifiers, `f32::NAN` scores and inverted spans, and every guarantee the
+/// schema advertises would evaporate (Codex verification round, 2026-08-12,
+/// tuxlink-krl6n finding 1).
+///
+/// Every crossing struct and variant is now `#[non_exhaustive]`, so
+/// [`convert`] is the only way to obtain one. This is proven rather than
+/// asserted: the doctest below is compiled as an EXTERNAL crate, which is
+/// exactly the boundary `#[non_exhaustive]` binds at, and it must FAIL to
+/// compile.
+///
+/// ```compile_fail
+/// use tuxlink_classify::inbox::{Conversion, Envelope, QuarantineReason};
+///
+/// // Hand-assembling a quarantine verdict must not compile outside the crate.
+/// let envelope: Envelope = unimplemented!();
+/// let forged = Conversion::QuarantinedEnvelopeOnly {
+///     envelope,
+///     reason: QuarantineReason::PayloadValidation,
+/// };
+/// ```
+///
+/// The supported way in, which does compile:
+///
+/// ```
+/// use std::collections::BTreeSet;
+/// use tuxlink_classify::inbox::{convert, Conversion, PathKind, RawMessage};
+///
+/// let raw = RawMessage {
+///     message_id: "MSG1", folder: "inbox", received_at: "2026-08-12T00:00:00Z",
+///     size_bytes: 5, sender: "N7CPZ", via_gateway: None, path_kind: PathKind::Cms,
+///     subject: "hi", body: "hello", attachment_names: &[], has_form_xml: false,
+/// };
+/// let conv = convert(&raw, &BTreeSet::new(), &BTreeSet::new());
+/// assert!(matches!(conv, Conversion::Converted(_)));
+/// ```
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum Conversion {
     Converted(ConvertedMessage),
+    #[non_exhaustive]
     QuarantinedEnvelopeOnly {
         envelope: Envelope,
         reason: QuarantineReason,
@@ -765,6 +817,7 @@ const TOOL_MARKERS: &[&str] = &[
 /// The injection signal: an advisory score, the spans that matched, and
 /// whether the span list hit [`SPAN_LIST_MAX`].
 #[derive(Debug, Clone, PartialEq, Serialize)]
+#[non_exhaustive]
 pub struct InjectionSignal {
     pub score: f32,
     pub spans: Vec<Span>,
