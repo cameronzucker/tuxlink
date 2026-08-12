@@ -24,6 +24,7 @@ pub mod backend;
 pub mod candle_bert;
 pub mod dto;
 pub mod enriched;
+pub mod inbox;
 pub mod index;
 pub mod thresholds;
 
@@ -31,6 +32,10 @@ pub use backend::{EmbeddingBackend, Pooling};
 pub use candle_bert::CandleBert;
 pub use dto::{Advisory, AdvisoryVerdict, Candidate, ClassifyResult};
 pub use enriched::{embed_text, EnrichedEntry, GeoFacts, EMBED_TEMPLATE_VERSION};
+pub use inbox::{
+    convert, Callsign, Conversion, ConvertedMessage, Grid, Payload, RawMessage, Summary150,
+    Triage, TriageClass,
+};
 pub use index::CatalogIndex;
 pub use thresholds::{ThresholdKey, ThresholdTable, Thresholds};
 
