@@ -94,6 +94,23 @@ pub struct Rejected {
     pub reason: Reason,
 }
 
+/// Characters permitted in a model id. Deliberately narrow: model ids name a
+/// SUBDIRECTORY, so anything that can traverse (`/`, `\`, `..`) or resolve
+/// oddly (leading `.`, NUL, whitespace) is refused rather than sanitized.
+/// Rejecting is safe here because the id set is small, known, and
+/// code/config-owned — silently rewriting an id would instead load weights
+/// the caller did not ask for.
+fn model_id_is_safe(model_id: &str) -> bool {
+    !model_id.is_empty()
+        && model_id.len() <= 128
+        && model_id != "."
+        && model_id != ".."
+        && !model_id.starts_with('.')
+        && model_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
 /// Why one candidate directory was unusable. Ordered roughly by how alarming
 /// it is: a directory that simply isn't there is routine, a size mismatch is
 /// not.
@@ -115,6 +132,9 @@ pub enum Reason {
     /// something wrote that directory badly, and silently downgrading to
     /// "presence only" would hide it.
     BadManifest(String),
+    /// The model id itself is not a safe single path segment. Reported once,
+    /// against no particular root, because nothing was searched.
+    UnsafeModelId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -215,6 +235,9 @@ fn describe_rejections(rejected: &[Rejected]) -> String {
                         .join(", ")
                 ),
                 Reason::BadManifest(e) => format!("unreadable manifest.json: {e}"),
+                Reason::UnsafeModelId => {
+                    "model id is not a safe path segment; nothing was searched".to_string()
+                }
             };
             format!("{} [{}]", r.dir.display(), why)
         })
@@ -267,6 +290,20 @@ impl ModelLocator {
     /// usable copy wins; broken earlier candidates are reported via
     /// [`Located::shadowed`] rather than discarded.
     pub fn locate(&self, model_id: &str) -> ModelStatus {
+        // A model id names one subdirectory. `root.join("../../etc")` would
+        // escape the search root entirely, so the id is validated BEFORE any
+        // path is built rather than trusted because "ids come from config".
+        if !model_id_is_safe(model_id) {
+            return ModelStatus::Absent {
+                model_id: model_id.to_string(),
+                rejected: vec![Rejected {
+                    dir: PathBuf::new(),
+                    reason: Reason::UnsafeModelId,
+                }],
+                roots_truncated: self.roots_truncated,
+            };
+        }
+
         let mut rejected: Vec<Rejected> = Vec::new();
 
         for root in &self.roots {
@@ -632,6 +669,45 @@ mod tests {
             other => panic!("expected Absent, got {other:?}"),
         }
         assert!(status.summary().contains("truncated"));
+    }
+
+    #[test]
+    fn traversing_model_ids_are_refused_before_any_path_is_built() {
+        // `root.join("../../etc")` escapes the search root. Validate the id
+        // rather than trusting it because "ids come from config".
+        let root = scratch("traversal");
+        write_model(&root, "m");
+        let loc = ModelLocator::new([root.clone()]);
+
+        for bad in [
+            "../../etc",
+            "..",
+            ".",
+            "a/b",
+            "a\\b",
+            "/absolute",
+            ".hidden",
+            "",
+            "has space",
+            "nul\0byte",
+        ] {
+            let status = loc.locate(bad);
+            match &status {
+                ModelStatus::Absent { rejected, .. } => assert_eq!(
+                    rejected[0].reason,
+                    Reason::UnsafeModelId,
+                    "expected {bad:?} to be refused as an unsafe id"
+                ),
+                other => panic!("expected Absent for {bad:?}, got {other:?}"),
+            }
+        }
+
+        // The ordinary case still resolves, including dotted version ids.
+        assert!(loc.locate("m").is_ready());
+        assert!(model_id_is_safe("bge-small-en-v1.5"));
+        assert!(model_id_is_safe("all_MiniLM-L6-v2"));
+        // Over-long ids are refused too (128 is well past any real model id).
+        assert!(!model_id_is_safe(&"a".repeat(129)));
     }
 
     #[test]
