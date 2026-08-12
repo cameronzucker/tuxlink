@@ -841,10 +841,11 @@ impl SseAccumulator {
 
     /// Finalize into a [`ModelTurn`]. If any tool calls accumulated, they win
     /// (mirroring `parse_completion`'s precedence): each accumulated `arguments`
-    /// string is parsed to a `Value`, with an unparseable/empty string becoming
-    /// `Value::Null` so the runner's COR-3 re-prompts (identical to the
-    /// non-stream contract). Otherwise the concatenated content becomes a `Text`
-    /// turn.
+    /// string is parsed to a `Value` (with end-of-stream truncation repair —
+    /// see [`parse_streamed_arguments`]); a still-unparseable/empty string
+    /// becomes `Value::Null` so the runner's COR-3 re-prompts (identical to
+    /// the non-stream contract). Otherwise the concatenated content becomes a
+    /// `Text` turn.
     fn into_turn(self) -> ModelTurn {
         if !self.tool_calls.is_empty() {
             let calls = self
@@ -852,7 +853,7 @@ impl SseAccumulator {
                 .into_values()
                 .map(|p| ToolCall {
                     name: p.name,
-                    args: serde_json::from_str::<Value>(&p.arguments).unwrap_or(Value::Null),
+                    args: parse_streamed_arguments(&p.arguments),
                     provider_meta: p.extra_content,
                 })
                 .collect();
@@ -873,6 +874,74 @@ impl SseAccumulator {
     /// Token usage captured from the streamed final chunk, if the server sent one.
     fn usage(&self) -> Option<(u32, u32)> {
         self.usage
+    }
+}
+
+/// Parse a streamed `arguments` accumulation, repairing end-of-stream
+/// truncation. Some serving stacks lose a tool call's final argument
+/// fragment when its closing characters share the last decode step with the
+/// stop token (observed 2026-08-11: Inkling/vLLM streams ending
+/// `..."rx_grid":"FN31` — the `"}}` token was swallowed at the stop
+/// boundary; replaying the identical request non-streamed returned complete
+/// JSON, so the model produced the arguments and the wire dropped them).
+/// When the accumulated text does not parse, append the minimal closing
+/// characters and accept the result only if it parses to an OBJECT — tool
+/// arguments are always object-rooted, so anything else still falls through
+/// to `Value::Null` and the runner's COR-3 re-prompt, exactly as before.
+fn parse_streamed_arguments(raw: &str) -> Value {
+    if let Ok(v) = serde_json::from_str::<Value>(raw) {
+        return v;
+    }
+    repair_truncated_object(raw).unwrap_or(Value::Null)
+}
+
+/// Close an unterminated JSON object: scan string/escape state and the
+/// open-bracket stack, then append (in order) a `"` completing a dangling
+/// escape, a `"` closing an open string, and the unclosed braces/brackets.
+/// Returns the parsed value only when the repaired text is a JSON object.
+fn repair_truncated_object(raw: &str) -> Option<Value> {
+    if !raw.trim_start().starts_with('{') {
+        return None;
+    }
+    let mut stack: Vec<char> = Vec::new();
+    let mut in_string = false;
+    let mut escape = false;
+    for ch in raw.chars() {
+        if escape {
+            escape = false;
+            continue;
+        }
+        if in_string {
+            match ch {
+                '\\' => escape = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' => stack.push('}'),
+            '[' => stack.push(']'),
+            '}' | ']' => {
+                stack.pop();
+            }
+            _ => {}
+        }
+    }
+    let mut repaired = String::from(raw);
+    if escape {
+        repaired.push('"');
+    }
+    if in_string || escape {
+        repaired.push('"');
+    }
+    while let Some(c) = stack.pop() {
+        repaired.push(c);
+    }
+    match serde_json::from_str::<Value>(&repaired) {
+        Ok(v @ Value::Object(_)) => Some(v),
+        _ => None,
     }
 }
 
@@ -1698,6 +1767,54 @@ mod tests {
     use super::*;
     use serde_json::json;
     use tuxlink_agent_runner::ToolSpec;
+
+    // --- streamed-argument truncation repair ---------------------------------
+
+    /// The exact wire shape observed 2026-08-11: the serving stack swallowed
+    /// the final `"}}` token at the stop boundary, leaving the accumulated
+    /// arguments unterminated. Repair must produce the object the model
+    /// actually emitted.
+    #[test]
+    fn streamed_arguments_truncated_tail_is_repaired() {
+        let raw = r#"{"frequencies_khz":[7.0,7.1,7.2,7.3],"rx_grid":"FN31"#;
+        assert_eq!(
+            parse_streamed_arguments(raw),
+            json!({"frequencies_khz": [7.0, 7.1, 7.2, 7.3], "rx_grid": "FN31"})
+        );
+    }
+
+    /// Truncation mid-structure (open array, open object) closes in stack
+    /// order; truncation on a dangling escape completes the escape before
+    /// closing the string.
+    #[test]
+    fn streamed_arguments_nested_and_escape_truncations_repair() {
+        assert_eq!(
+            parse_streamed_arguments(r#"{"a":{"b":[1,2"#),
+            json!({"a": {"b": [1, 2]}})
+        );
+        assert_eq!(
+            parse_streamed_arguments("{\"s\":\"x\\"),
+            json!({"s": "x\""})
+        );
+    }
+
+    /// Complete arguments pass through untouched, and garbage that no closer
+    /// suffix can save still becomes `Null` — the COR-3 re-prompt contract is
+    /// unchanged for genuinely malformed calls.
+    #[test]
+    fn streamed_arguments_complete_and_garbage_contracts_hold() {
+        assert_eq!(
+            parse_streamed_arguments(r#"{"drive_level": 80}"#),
+            json!({"drive_level": 80})
+        );
+        assert_eq!(parse_streamed_arguments(""), Value::Null);
+        assert_eq!(parse_streamed_arguments("not json at all"), Value::Null);
+        // A repaired non-object (bare truncated array) must NOT be accepted.
+        assert_eq!(parse_streamed_arguments("[1, 2"), Value::Null);
+        // Trailing key-without-value cannot be closed into valid JSON; the
+        // repair declines rather than fabricating a value.
+        assert_eq!(parse_streamed_arguments(r#"{"key":"#), Value::Null);
+    }
 
     // --- ApiKey redaction ----------------------------------------------------
 
