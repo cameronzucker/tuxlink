@@ -1622,6 +1622,29 @@ impl AbortPort for MonolithAbortPort {
 }
 
 // ---------------------------------------------------------------------------
+/// Parameter bandwidth for `mailbox_move`, shared by the call site and its
+/// test so the classification cannot drift away from what is asserted.
+///
+/// All three are bounded by validation that runs BEFORE the gate: `from`/`to`
+/// must resolve to a known system folder or a REGISTERED user slug, and `id`
+/// must name a message already in the mailbox. If anyone adds a free-text
+/// parameter to this call, `mailbox_move_inputs_are_all_bounded` fails and the
+/// per-datum permission has to be re-argued rather than silently inherited.
+const MAILBOX_MOVE_INPUTS: &[tuxlink_security::provenance::Input<'static>] = &[
+    tuxlink_security::provenance::Input {
+        name: "from",
+        bandwidth: tuxlink_security::provenance::Bandwidth::ClosedEnum,
+    },
+    tuxlink_security::provenance::Input {
+        name: "to",
+        bandwidth: tuxlink_security::provenance::Bandwidth::ClosedEnum,
+    },
+    tuxlink_security::provenance::Input {
+        name: "id",
+        bandwidth: tuxlink_security::provenance::Bandwidth::SystemIssued,
+    },
+];
+
 // Write port (phase 3.4) — GATED Agent config/state writes.
 //
 // EVERY method VALIDATES the agent-supplied input FIRST (a malformed value is
@@ -2095,10 +2118,26 @@ impl WritePort for MonolithWritePort {
         }
         let audit = write_audit_sink(self.app.clone());
         let app = self.app.clone();
-        guarded_egress(
+        // PER-DATUM GATE, not the egress gate. Moving a message between local
+        // folders transmits nothing, and every parameter here is bounded by
+        // construction because the validation above already ran:
+        //   from / to — must have resolved to a known system folder or a
+        //     REGISTERED user slug, so the choice is 1-of-N over folders that
+        //     already exist.
+        //   id — must name a message already in the mailbox; an invented id
+        //     fails the lookup.
+        // So a tainted session performing this move gives an attacker a choice
+        // among options we already enumerated, not an arbitrary effect. The
+        // operator's grant is still required, and transmission is untouched.
+        //
+        // This is the measured case: the v26 run refused 9 mailbox_move calls,
+        // every one in a session the operator had ARMED (tuxlink-0rc3h).
+        use tuxlink_security::provenance::guarded_local_write;
+        guarded_local_write(
             &self.guard,
             EgressAuthority::Agent,
             "mailbox_move",
+            MAILBOX_MOVE_INPUTS,
             &audit,
             || async move {
                 // ui_commands.rs:1426 mailbox_move (validates folders via
@@ -5772,6 +5811,52 @@ mod tests {
                 );
                 assert!(m.contains("WARNINGS"), "{code} must disclaim blocking: {m}");
             }
+        }
+
+        /// `mailbox_move` is permitted under taint ONLY because every
+        /// parameter is bounded. This asserts that against the same constant
+        /// the call site uses, so adding a free-text parameter later fails here
+        /// instead of silently widening what a tainted session may do.
+        ///
+        /// The measured case: 9 mailbox_move calls were refused in the v26 run,
+        /// every one in a session the operator had ARMED (tuxlink-0rc3h).
+        #[test]
+        fn mailbox_move_inputs_are_all_bounded() {
+            use tuxlink_security::provenance::{
+                authorize_action, ActionClass, SessionState,
+            };
+            use tuxlink_security::EgressAuthority;
+
+            assert!(
+                super::super::MAILBOX_MOVE_INPUTS
+                    .iter()
+                    .all(|i| i.bandwidth.is_bounded()),
+                "a free-text parameter would make this move unsafe under taint"
+            );
+
+            // Armed and tainted: the exact v26 deadlock state. Must proceed.
+            assert!(authorize_action(
+                EgressAuthority::Agent,
+                ActionClass::LocalWrite,
+                SessionState {
+                    tainted: true,
+                    armed: true
+                },
+                super::super::MAILBOX_MOVE_INPUTS,
+            )
+            .is_ok());
+
+            // But the operator's grant is still required.
+            assert!(authorize_action(
+                EgressAuthority::Agent,
+                ActionClass::LocalWrite,
+                SessionState {
+                    tainted: true,
+                    armed: false
+                },
+                super::super::MAILBOX_MOVE_INPUTS,
+            )
+            .is_err());
         }
 
         /// A top-level rejection must carry the WHOLE valid envelope, not a
