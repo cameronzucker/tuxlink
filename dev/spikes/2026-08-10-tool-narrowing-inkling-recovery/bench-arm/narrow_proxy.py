@@ -50,6 +50,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ARGS = None
 FIXTURE = None
+SCHEMAS = {}  # name -> {name, description, parameters}; loaded from --schemas
 LOCK = threading.Lock()
 
 NARROW_SYSTEM = (
@@ -103,6 +104,30 @@ def narrow_rewrite(body):
         if ((t.get("function") or {}).get("name")) in keep_set
     ]
 
+    # SCHEMA FURNISHING (the lazy-schema contract's second half): production
+    # semantics are "sticky for the session" — derived here STATELESSLY from
+    # the transcript the request itself carries. Any tool the model has
+    # already called by name (outside the shortlist+pins) gets its FULL
+    # schema injected into this turn's array, so the first call may bounce
+    # on guessed arguments but every subsequent call composes against the
+    # real parameters. This is the fix for the argument-blind bounce class
+    # (predict_path / routines_save) FINDINGS-BENCH-AB identified.
+    furnished = []
+    if SCHEMAS:
+        for m in body.get("messages") or []:
+            if m.get("role") != "assistant":
+                continue
+            for tc in m.get("tool_calls") or []:
+                n = (tc.get("function") or {}).get("name")
+                if (n and n not in keep_set and n not in furnished
+                        and n in SCHEMAS):
+                    furnished.append(n)
+        for n in furnished:
+            s = SCHEMAS[n]
+            body["tools"].append({"type": "function", "function": {
+                "name": s["name"], "description": s.get("description", ""),
+                "parameters": s.get("parameters", {})}})
+
     shortlist_txt = "\n".join(
         f"- {c['id']}: {c['title']}" for c in cell["shortlist"])
     sys_text = NARROW_SYSTEM.format(
@@ -124,6 +149,7 @@ def narrow_rewrite(body):
         "tools_before": before,
         "tools_after": len(body["tools"]),
         "system_placement": placement,
+        "furnished": furnished,
     }
 
 
@@ -298,8 +324,14 @@ if __name__ == "__main__":
     ap.add_argument("--fixture", required=True)
     ap.add_argument("--model-map", action="append", default=[],
                     help="old=new served-model-name mapping (repeatable)")
+    ap.add_argument("--schemas", default=None,
+                    help="tool-schemas.json (full registry dump); enables "
+                         "furnish-on-by-name-call")
     ARGS = ap.parse_args()
     ARGS.model_map = dict(m.split("=", 1) for m in ARGS.model_map)
+    if ARGS.schemas:
+        with open(os.path.expanduser(ARGS.schemas)) as f:
+            SCHEMAS = {s["name"]: s for s in json.load(f)}
     ARGS.ledger = os.path.expanduser(ARGS.ledger)
     os.makedirs(ARGS.ledger, exist_ok=True)
     with open(os.path.expanduser(ARGS.fixture)) as f:

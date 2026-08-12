@@ -1,5 +1,56 @@
 # Overnight handoff — moss-tamarack-taiga, 2026-08-11 (Inkling-only measurement night)
 
+COMPACTION-4 ANCHOR (2026-08-11 ~11:00 MST) — the post-overnight arc,
+newest state first. Read this section, then the sections below for the
+overnight evidence base.
+
+1. WHERE THE REAL WORK STANDS: operator ordered fix→re-test→verify→then
+   other classifiers. The FIX (schema furnishing on by-name calls —
+   stateless from the transcript, in bench-arm/narrow_proxy.py) is
+   implemented, smoke-proven, committed on THIS branch
+   (bd-tuxlink-ch3e9/furnish-retest, PR not yet opened — open on
+   verification). The RE-TEST run `inkling-v25-furnish` is RESUMING on
+   R2 right now with the runner's native --resume (174 pre-crash units
+   preserved + 165 remaining; ~1.5-2h), judge (Pi, contract v25 +
+   gpt-5.6-luna-high) alive and trailing, and a REAL circuit breaker:
+   the monitor probes serving health every 2 min and kills the runner
+   after 3 consecutive failures. WAKE PLAN on completion: judge drains →
+   `python3 bench-arm/analyze_bench_ab.py` (three-way read: stock
+   inkling-v25-full / narrowed / furnished; THE question = do the elmer
+   diagnostic cells recover while floor/routines/collab gains hold) →
+   findings commit → PR ready+merge on green → THEN the other
+   classifiers (content brief below).
+2. THE DETOUR, RESOLVED: (a) the Spark serving died at 07:18 MST
+   mid-re-test; initial cause UNRECOVERABLE (--rm ate the traceback;
+   every candidate theory was either withdrawn under evidence or ruled
+   speculation — operator: "stop guessing"; incident doc has the full
+   disambiguation of normal-condition noise vs today);
+   (b) `--log-driver=journald` now on all cluster containers — the next
+   death names itself; (c) operator work-stop "reliably serve inkling
+   via API only, all else stops" RESOLVED: the dashboard switch now
+   DELEGATES to the recipe runner (mods applied), stale profile fixed,
+   PROVEN 4/4 API-only switch legs with live completions. Canonical:
+   dev/runbooks/spark-serving/README.md + the incident doc. Operator
+   granted STANDING Spark permission ("your inference back end").
+3. CLASSIFIER LANES (paused for the detour, resume after the A/B):
+   content classifier (8zq7u, claimed) has a full design brief at
+   dev/plans/2026-08-11-content-classifier-design-brief.md with TWO
+   OPERATOR DECISIONS pending: (i) the triage class list, (ii)
+   summary_150 free-text vs no-free-text in the conversion schema.
+   Trend/security/grant roles now exist as issues (1zn1e / vcjo2 /
+   ct6zu) wired to the epic.
+4. RUNNING PROCESSES: R2 bench_runner (furnish resume) + two idle
+   narrow proxies (8892/8893) + bench-dashboard systemd unit (durable,
+   linger on); Pi: contract_judge watch (furnish store), breaker
+   monitor, this session's watchers. Sparks: Inkling TP2 serving
+   (fresh from proof leg 4).
+5. CAUTIONS THAT BLED TODAY: one git op per call (chained once — don't);
+   pgrep self-match (bracket trick); foreground-run flaky launchers to
+   see their real error; verification probes must target the endpoint a
+   profile ACTUALLY binds (q122 = QSFP IP, not the 443 front); ledger
+   404s split by path before reading as outage (battery meter polls hit
+   OpenRouter/ollama endpoints vLLM never had).
+
 UPDATE (morning): the bench A/B COMPLETED and is analyzed — see
 `FINDINGS-BENCH-AB.md` (floor/routines/collaborator/elmer-ultra improve
 narrowed; elmer diagnostics regress via argument-blind by-name calls;
