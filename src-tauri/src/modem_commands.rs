@@ -1192,7 +1192,10 @@ pub async fn ardop_open_session(
     let ardop_ui = config_get_ardop();
     if ardop_ui.capture_device.is_empty() || ardop_ui.playback_device.is_empty() {
         return Err(
-            "ARDOP audio devices not configured — open Settings → ARDOP first".into(),
+            "ARDOP audio devices not configured. Set them first: call \
+             ardop_list_audio_devices then config_set_ardop, or open Settings → \
+             ARDOP in the app."
+                .into(),
         );
     }
 
@@ -1830,7 +1833,10 @@ pub async fn modem_ardop_connect(
     let ardop_ui = config_get_ardop();
     if ardop_ui.capture_device.is_empty() || ardop_ui.playback_device.is_empty() {
         return Err(
-            "ARDOP audio devices not configured — open Settings → ARDOP first".into(),
+            "ARDOP audio devices not configured. Set them first: call \
+             ardop_list_audio_devices then config_set_ardop, or open Settings → \
+             ARDOP in the app."
+                .into(),
         );
     }
 
@@ -2032,7 +2038,10 @@ pub async fn modem_ardop_b2f_exchange(
         // missing, the operator didn't open a session first. (TODO
         // tuxlink-17u9: arbiter-aware `take_transport_for_outbound`.)
         let mut transport = session.take_transport().ok_or_else(|| {
-            "ARDOP session not open — press Open Session (ARDOP HF) before Send/Receive"
+            // Names the TOOL as well as the button: this reaches agents over
+            // MCP, where "press Open Session" is a dead end (tuxlink-0rc3h).
+            "ARDOP session not open. Open one first: call ardop_connect, or press \
+             Open Session (ARDOP HF) in the app, then retry Send/Receive."
                 .to_string()
         })?;
 

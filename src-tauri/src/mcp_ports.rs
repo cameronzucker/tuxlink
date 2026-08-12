@@ -60,7 +60,7 @@ use tuxlink_mcp_core::ports::{
 };
 use tuxlink_mcp_core::validate::{
     validate_address, validate_attachment_dest, validate_body, validate_drive_level,
-    validate_frequencies_khz, validate_grid, validate_history_hours, validate_subject,
+    normalize_frequencies_khz, validate_grid, validate_history_hours, validate_subject,
     validate_vara_bandwidth,
 };
 use tuxlink_security::{guarded_egress, EgressAudit, EgressAuthority, EgressGuard};
@@ -3473,8 +3473,14 @@ impl PredictionPort for MonolithPredictionPort {
         // Internal mapping mis-signalled a server bug; bench measured 15
         // MHz-for-kHz unit fumbles hitting it, tuxlink-9n4cr).
         validate_grid(&req.rx_grid).map_err(|e| PortError::InvalidInput(e.to_string()))?;
-        validate_frequencies_khz(&req.frequencies_khz)
-            .map_err(|e| PortError::InvalidInput(format!("{e} (frequencies are kHz, not MHz - 40m is ~7100)")))?;
+        // ACCEPT the MHz spelling instead of lecturing about it. tuxlink-9n4cr
+        // saw 15 unit fumbles here and responded by appending "(frequencies are
+        // kHz, not MHz)" to the error. The v26 run then produced 23 more, every
+        // single predict_path failure in 405 units. The hint was read by nobody
+        // because the model had already sent the call. The ranges do not
+        // overlap, so normalizing is unambiguous, not a guess (tuxlink-0rc3h).
+        let frequencies_khz = normalize_frequencies_khz(&req.frequencies_khz)
+            .map_err(|e| PortError::InvalidInput(e.to_string()))?;
 
         // Resolve the operator's OWN tx_grid from config — NEVER agent-supplied.
         // Mirror position_status's grid-clamp: effective_broadcast_locator honors
@@ -3505,7 +3511,10 @@ impl PredictionPort for MonolithPredictionPort {
         let prediction = crate::propagation::commands::propagation_predict_path(
             tx_grid.clone(),
             req.rx_grid,
-            req.frequencies_khz,
+            // NORMALIZED, not the raw request field: a 7.104 MHz spelling has
+            // been converted to 7104 kHz above, and the prediction must run on
+            // the converted value.
+            frequencies_khz,
             gateway_antenna,
             state,
         )

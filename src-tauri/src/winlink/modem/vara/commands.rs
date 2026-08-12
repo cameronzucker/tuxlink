@@ -2581,7 +2581,14 @@ pub async fn modem_vara_b2f_exchange(
     // needs to drop into a yield branch on notify before the wire-in
     // is deadlock-safe).
     let mut transport = session.take_transport().ok_or_else(|| {
-        "VARA session not open — press Open Session (VARA HF/FM) before Send/Receive".to_string()
+        // Names the TOOL, not only the button. This string reaches agents over
+        // MCP, and an agent cannot press anything: telling it to "press Open
+        // Session" is a dead end even though `vara_open_session` exists and
+        // would fix it. 10 of 13 vara_b2f_exchange failures in the v26 bench
+        // were this (tuxlink-0rc3h).
+        "VARA session not open. Open one first: call vara_open_session, or press \
+         Open Session (VARA HF/FM) in the app, then retry Send/Receive."
+            .to_string()
     })?;
 
     // Codex Phase 3-4 boundary P2 #4 (tuxlink-u1r7): mark the exchange
