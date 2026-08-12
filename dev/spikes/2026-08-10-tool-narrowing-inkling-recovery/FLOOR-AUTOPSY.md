@@ -186,8 +186,13 @@ the production surface, seam by seam:
   parity); startup binary-vintage assert; ledger raw-stream capture;
   point_at confirm under load; solar seed with real indices; grant
   seeding parity across plan generations; judge truth-auditor grounding.
-- Product (operator decisions): taint-gate coverage for local-only writes
-  (attachment save, mailbox move); `catalog_list` result narrowing.
+- Product: the taint-gate friction on local-only writes is NOT a gate
+  toggle to decide — operator ruling 2026-08-11: the specced inbox/content
+  classifier (tuxlink-8zq7u, ADR 0030) is the mechanism that makes acting
+  on untrusted mail safe with granularity; the blanket write-lock is the
+  placeholder that exists because it is not built yet. Building it is the
+  answer to this entire failure cluster. Separately: `catalog_list` result
+  narrowing (144KB unfiltered dumps are hostile to any agent).
 - Serving: the parser tail-repair mod is live; upstream the fix to the
   parser proper rather than carrying it as a mod indefinitely.
 
