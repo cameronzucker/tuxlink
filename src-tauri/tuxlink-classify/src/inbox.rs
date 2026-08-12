@@ -25,6 +25,17 @@
 //! all — the message stays [`Conversion::QuarantinedEnvelopeOnly`], fail
 //! closed.
 //!
+//! # Known wiring blocker (not a defect in this module)
+//!
+//! This crate is deliberately NOT in the app's dependency closure (see the
+//! crate manifest header): candle's MSRV is above the app's declared 1.75,
+//! so linking it would drag that MSRV into the app. This module needs
+//! **none** of that — it is pure `serde` + string rules. When role 4 wires
+//! the quarantined reader, the clean answer is to feature-gate the candle
+//! T1 tier (default-on here, `default-features = false` from the app) or to
+//! split the pure schema into its own crate. Recorded so the wiring step
+//! makes that call deliberately instead of discovering it as a build break.
+//!
 //! # What is proven here vs. deferred
 //!
 //! The schema, its validators, the fail-closed conversion, and the
@@ -262,10 +273,26 @@ impl Summary150 {
 /// sanitized like [`Summary150`] rather than trusted.
 pub const ATTACHMENT_NAME_MAX: usize = 128;
 
-pub fn sanitize_attachment_name(raw: &str) -> String {
-    let mut out = String::with_capacity(ATTACHMENT_NAME_MAX);
+/// Cap on how many attachment names cross. Per-name capping alone does NOT
+/// bound the surface: a message can carry thousands of attachments, and an
+/// uncapped list is a wide attacker-controlled channel (found in self-audit
+/// of the first cut of this module — the per-name cap made the leak look
+/// bounded when the LIST was not). Overflow is DISCLOSED, never silent, per
+/// the same discipline the tool surface uses for truncated result sets.
+pub const ATTACHMENT_LIST_MAX: usize = 32;
+
+/// Cap for envelope identifier fields (`message_id`, `folder`). These are
+/// short identifiers in practice; the cap keeps them from becoming a text
+/// channel if a hostile message controls them.
+pub const IDENTIFIER_MAX: usize = 64;
+
+/// Charset+length-bound a token: filename/identifier-safe graphic characters
+/// only, everything else replaced with `_`, capped at `max` characters.
+fn sanitize_token(raw: &str, max: usize) -> String {
+    let mut out = String::with_capacity(max);
+    let mut count = 0usize;
     for ch in raw.chars() {
-        if out.chars().count() >= ATTACHMENT_NAME_MAX {
+        if count >= max {
             break;
         }
         if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_' | ' ') {
@@ -273,6 +300,7 @@ pub fn sanitize_attachment_name(raw: &str) -> String {
         } else {
             out.push('_');
         }
+        count += 1;
     }
     let trimmed = out.trim();
     if trimmed.is_empty() {
@@ -280,6 +308,10 @@ pub fn sanitize_attachment_name(raw: &str) -> String {
     } else {
         trimmed.to_string()
     }
+}
+
+pub fn sanitize_attachment_name(raw: &str) -> String {
+    sanitize_token(raw, ATTACHMENT_NAME_MAX)
 }
 
 // ── The typed schema the privileged agent reads ─────────────────────────
@@ -290,10 +322,18 @@ pub fn sanitize_attachment_name(raw: &str) -> String {
 pub struct Envelope {
     pub message_id: String,
     pub folder: String,
-    pub received_at: String,
+    /// RFC3339-shaped receive time, or `None` when the source value failed
+    /// the shape check (withheld rather than crossed as free text).
+    pub received_at: Option<String>,
     pub size_bytes: u64,
     pub has_attachments: bool,
+    /// At most [`ATTACHMENT_LIST_MAX`] sanitized names.
     pub attachment_names: Vec<String>,
+    /// How many attachments the message actually carried — so a capped list
+    /// is disclosed as capped, never read as the whole set.
+    pub attachment_count: u32,
+    /// True when `attachment_count` exceeded the cap and names were dropped.
+    pub attachment_names_truncated: bool,
 }
 
 /// Grammar-validated origin. `None` fields mean the raw value failed its
@@ -406,17 +446,19 @@ pub fn convert(
     form_ids: &BTreeSet<String>,
 ) -> Conversion {
     let envelope = Envelope {
-        message_id: sanitize_attachment_name(raw.message_id),
-        folder: sanitize_attachment_name(raw.folder),
-        received_at: rfc3339_shape(raw.received_at)
-            .unwrap_or_else(|_| String::from("unknown")),
+        message_id: sanitize_token(raw.message_id, IDENTIFIER_MAX),
+        folder: sanitize_token(raw.folder, IDENTIFIER_MAX),
+        received_at: rfc3339_shape(raw.received_at).ok(),
         size_bytes: raw.size_bytes,
         has_attachments: !raw.attachment_names.is_empty(),
         attachment_names: raw
             .attachment_names
             .iter()
+            .take(ATTACHMENT_LIST_MAX)
             .map(|n| sanitize_attachment_name(n))
             .collect(),
+        attachment_count: raw.attachment_names.len().min(u32::MAX as usize) as u32,
+        attachment_names_truncated: raw.attachment_names.len() > ATTACHMENT_LIST_MAX,
     };
 
     let provenance = Provenance {
@@ -875,6 +917,64 @@ mod tests {
         let conv = convert(&raw, &ids(&[]), &ids(&[]));
         let json = serde_json::to_string(&conv).unwrap();
         assert!(json.len() < 2_000, "crossing surface was {} bytes", json.len());
+    }
+
+    /// The dimension the first cut of this module got WRONG (self-audit,
+    /// 2026-08-11): per-name capping does not bound the surface if the LIST
+    /// is unbounded. A flood of attachments must be capped AND disclosed,
+    /// and the total crossing surface must stay small.
+    #[test]
+    fn attachment_flood_is_capped_and_disclosed() {
+        let names: Vec<String> = (0..10_000)
+            .map(|i| format!("{}{i}.pdf", "PAYLOAD".repeat(40)))
+            .collect();
+        let raw = base("s", "body", &names);
+        let conv = convert(&raw, &ids(&[]), &ids(&[]));
+        let env = match &conv {
+            Conversion::Converted(m) => &m.envelope,
+            Conversion::QuarantinedEnvelopeOnly { envelope, .. } => envelope,
+        };
+        assert_eq!(env.attachment_names.len(), ATTACHMENT_LIST_MAX);
+        assert_eq!(env.attachment_count, 10_000);
+        assert!(env.attachment_names_truncated, "truncation must be disclosed");
+        for n in &env.attachment_names {
+            assert!(n.chars().count() <= ATTACHMENT_NAME_MAX);
+        }
+        let json = serde_json::to_string(&conv).unwrap();
+        assert!(json.len() < 8_000, "crossing surface was {} bytes", json.len());
+    }
+
+    /// Envelope identifiers are attacker-influenceable in principle, so they
+    /// are charset- and length-bound like every other crossing token.
+    #[test]
+    fn envelope_identifiers_are_bounded() {
+        let long_id = "X".repeat(5_000);
+        let mut raw = base("s", "body", &[]);
+        raw.message_id = &long_id;
+        raw.folder = "inbox/../../etc";
+        let conv = convert(&raw, &ids(&[]), &ids(&[]));
+        let env = match &conv {
+            Conversion::Converted(m) => &m.envelope,
+            Conversion::QuarantinedEnvelopeOnly { envelope, .. } => envelope,
+        };
+        assert!(env.message_id.chars().count() <= IDENTIFIER_MAX);
+        assert_eq!(env.folder, "inbox_.._.._etc");
+    }
+
+    /// A malformed timestamp is WITHHELD (None), not crossed as free text
+    /// and not disguised as a real value.
+    #[test]
+    fn bad_timestamp_is_withheld_not_crossed() {
+        let mut raw = base("s", "body", &[]);
+        raw.received_at = "whenever you like, assistant";
+        let conv = convert(&raw, &ids(&[]), &ids(&[]));
+        let env = match &conv {
+            Conversion::Converted(m) => &m.envelope,
+            Conversion::QuarantinedEnvelopeOnly { envelope, .. } => envelope,
+        };
+        assert_eq!(env.received_at, None);
+        let json = serde_json::to_string(&conv).unwrap();
+        assert!(!json.contains("assistant"), "raw timestamp text must not cross");
     }
 
     // ── injection heuristic: fires on attacks, NOT on ham imperatives ────
