@@ -1,3 +1,27 @@
+# RETRACTED — results void pending fixture validation (2026-08-11)
+
+**Operator ruling: none of the numbers below are trustworthy.** The test
+fixture demonstrably diverges from the production surface in multiple
+ways, every divergence was discovered reactively rather than by
+systematic comparison, and the assumption that the discovered divergences
+are the only ones is unjustified. Subsequently the floor autopsy
+(`FLOOR-AUTOPSY.md`) proved the point decisively: a serving-stack
+streaming bug was truncating tool-call argument tails in every arm (and
+in production), the entire "null arguments" failure class was the pipe
+and not the model, the taint gate made several cells unwinnable in some
+arms but not others, and the proxy ledger that should have caught all of
+this recorded empty streams. The independent adversarial review
+(`dev/adversarial/2026-08-11-threeway-verdict-codex.md`, local-only)
+separately found the headline claims statistically overreaching.
+
+Keep this document as a record of method and of what the descriptive
+tables said; cite nothing from it. The way forward is the
+fixture-validity program in `FLOOR-AUTOPSY.md`: validate the bench
+against the production surface seam by seam, then re-run on one frozen
+stack with interleaved arms and blinded judging.
+
+---
+
 # Three-way verdict: stock vs narrowed vs furnished, at full coverage
 
 2026-08-11, moss-tamarack-taiga. Supersedes the per-tier tables in
