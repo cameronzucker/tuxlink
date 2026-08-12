@@ -710,6 +710,65 @@ mod tests {
         assert!(!model_id_is_safe(&"a".repeat(129)));
     }
 
+    /// End-to-end against REAL weights: the locator must hand candle a
+    /// directory candle can actually load. A resolver whose output the loader
+    /// rejects is worse than no resolver, and unit tests over fake files
+    /// cannot catch that — they only prove the locator agrees with itself.
+    ///
+    /// Ignored by default because it needs ~134MB of weights on disk; CI has
+    /// none. Run where a model is materialized:
+    ///
+    /// ```text
+    /// TUXLINK_CLASSIFY_MODEL_PATH=$HOME/classify-models \
+    ///   cargo test --features t1-candle -- --ignored locator_output_actually_loads
+    /// ```
+    #[test]
+    #[ignore = "needs real weights on disk; see doc comment for the invocation"]
+    #[cfg(feature = "t1-candle")]
+    fn locator_output_actually_loads_and_embeds() {
+        use crate::backend::{EmbeddingBackend, Pooling};
+        use crate::candle_bert::CandleBert;
+
+        let status = ModelLocator::from_env().locate("bge-small-en-v1.5");
+        let located = match &status {
+            ModelStatus::Ready(l) => l,
+            other => panic!("locator found nothing: {}\n{other:?}", status.summary()),
+        };
+
+        // bge is a CLS-pooling family; getting this wrong silently costs
+        // accuracy while still "working", so the e2e check asserts real
+        // vector behaviour rather than just a successful load.
+        let bert = CandleBert::load(&located.dir, Pooling::Cls, "bge-small-en-v1.5")
+            .expect("candle rejected the directory the locator returned");
+
+        let vecs = bert
+            .embed(&[
+                "request a weather forecast for Arizona".to_string(),
+                "weather bulletin for the southwest".to_string(),
+                "replace the antenna feedline connector".to_string(),
+            ])
+            .expect("embed failed");
+
+        assert_eq!(vecs.len(), 3);
+        assert_eq!(vecs[0].len(), 384, "bge-small is a 384-dim model");
+
+        // L2-normalised, per the EmbeddingBackend contract (dot == cosine).
+        for v in &vecs {
+            let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+            assert!((norm - 1.0).abs() < 1e-3, "vector not unit-length: {norm}");
+        }
+
+        let dot = |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| x * y).sum::<f32>();
+        let related = dot(&vecs[0], &vecs[1]);
+        let unrelated = dot(&vecs[0], &vecs[2]);
+        assert!(
+            related > unrelated,
+            "two weather queries ({related:.3}) should be closer than \
+             weather vs antenna hardware ({unrelated:.3}) — a loaded-but-wrong \
+             model can still produce unit vectors"
+        );
+    }
+
     #[test]
     fn env_precedence_override_then_xdg_then_system() {
         let roots = default_roots(Some("/opt/a:/opt/b"), Some("/xdg"), Some("/home/op"));
