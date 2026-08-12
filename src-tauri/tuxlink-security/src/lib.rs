@@ -17,6 +17,11 @@
 //! `crate::ui_core::security`.
 
 use std::sync::Mutex;
+/// Per-datum input provenance (efk3k addendum 2): authorize an action against
+/// the taint of its INPUTS, not only a session-wide flag. Refines the
+/// mailbox-read-locks-send doctrine; deliberately leaves transmission alone.
+pub mod provenance;
+
 use thiserror::Error;
 
 /// Who is requesting an egress (anything that leaves the box: RF emit, internet
@@ -202,6 +207,31 @@ impl EgressGuard {
         match g.armed_until {
             Some(deadline) => deadline.saturating_sub((self.now_unix)()),
             None => 0,
+        }
+    }
+
+    /// Taint + armed flags for the per-datum gate, read under ONE lock and
+    /// FAIL-CLOSED on poison exactly as [`EgressGuard::authorize`] does.
+    ///
+    /// Read the two flags SEPARATELY on purpose. [`decide`] checks taint before
+    /// arming, so a tainted-and-unarmed session reports `Tainted`, and a
+    /// per-datum layer that merely relaxed the `Tainted` verdict would let an
+    /// unarmed session write. The operator's grant is never inferred from the
+    /// absence of a taint denial.
+    ///
+    /// Unlike [`EgressGuard::armed_remaining`], which `unwrap`s the lock, this
+    /// never panics: a poisoned guard reports tainted-and-unarmed, so the
+    /// per-datum path denies rather than dying.
+    pub fn provenance_state(&self) -> provenance::SessionState {
+        match self.inner.lock() {
+            Ok(g) => provenance::SessionState {
+                tainted: g.tainted,
+                armed: matches!(g.armed_until, Some(deadline) if (self.now_unix)() < deadline),
+            },
+            Err(_poisoned) => provenance::SessionState {
+                tainted: true,
+                armed: false,
+            },
         }
     }
 
