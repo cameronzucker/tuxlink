@@ -367,6 +367,58 @@ jobs:
     with:
       deb_artifact_prefix: linux-bundles
 
+  # tuxlink-13ofm: attach the classifier weights this release's binary pins.
+  # The in-binary digest table (tuxlink-classify/src/pins.rs) is the single
+  # source of truth: this job fetches the upstream files, verifies them against
+  # `print_pins` output — the app's own constants, via the one shared table —
+  # and uploads them under the asset names the app derives
+  # (`<model-id>--<file>`). Serving weights the binary would refuse is
+  # impossible by construction; a drifted pin fails HERE, in CI, not on a
+  # user's Pi mid-setup. Arch-independent, so one job, no matrix.
+  classifier-weights:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Rust (to read the pins the app enforces)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Fetch upstream weights
+        run: |
+          set -euo pipefail
+          mkdir -p weights
+          fetch () { # $1=url $2=dest — patient: a flaky upstream should not
+                     # half-publish a release when a retry would have done.
+            for i in 1 2 3; do
+              if curl -fSL --retry 3 --retry-delay 5 --connect-timeout 30 \
+                   -o "$2" "$1"; then return 0; fi
+              echo "fetch attempt $i failed for $1"; sleep 15
+            done
+            return 1
+          }
+          base="https://huggingface.co/BAAI/bge-small-en-v1.5/resolve/main"
+          fetch "$base/config.json"       weights/bge-small-en-v1.5--config.json
+          fetch "$base/tokenizer.json"    weights/bge-small-en-v1.5--tokenizer.json
+          fetch "$base/model.safetensors" weights/bge-small-en-v1.5--model.safetensors
+
+      - name: Verify against the release pins (the app's own table)
+        run: |
+          set -euo pipefail
+          cargo run -p tuxlink-classify --example print_pins \
+            --no-default-features --locked \
+            --manifest-path src-tauri/Cargo.toml > weights/PINS
+          echo "Pinned digests:"; cat weights/PINS
+          cd weights && sha256sum -c PINS
+
+      - name: Upload weights assets
+        uses: softprops/action-gh-release@v3
+        with:
+          files: weights/bge-small-en-v1.5--*
+          fail_on_unmatched_files: true
+          prerelease: true
+
   # tuxlink-kcf0: a release is "all arches present, or it's incomplete". A
   # transient crates.io failure in one matrix leg (v0.69.0 amd64) half-published
   # silently — arm64 assets up, amd64 missing, no loud signal. This gate runs
@@ -374,9 +426,11 @@ jobs:
   # fails the run unless BOTH arches' assets are on the release, turning a
   # half-publish into a red X with a clear "re-run the failed leg" message. The
   # per-arch SHA256SUMS is the strongest signal: each leg computes + uploads its
-  # own only after its deb/rpm/appimage succeed.
+  # own only after its deb/rpm/appimage succeed. tuxlink-13ofm extended the
+  # same completeness bar to the classifier-weights assets: the app's
+  # version-matched default download URL must never 404 on a published release.
   release-assets-complete:
-    needs: build-linux
+    needs: [build-linux, classifier-weights]
     if: ${{ always() && startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     steps:
@@ -400,6 +454,11 @@ jobs:
           # Primary artifact present for each arch (stable .deb arch naming).
           require '^tuxlink_.*_amd64\.deb$'
           require '^tuxlink_.*_arm64\.deb$'
+          # Classifier weights (tuxlink-13ofm): the app's version-matched
+          # default download source points at THESE names on THIS release.
+          require '^bge-small-en-v1\.5--config\.json$'
+          require '^bge-small-en-v1\.5--tokenizer\.json$'
+          require '^bge-small-en-v1\.5--model\.safetensors$'
           if [ "$missing" -ne 0 ]; then
             echo "::error::Release $TAG is half-published — a build-linux leg failed to upload. Re-run the failed job to complete it."
             exit 1

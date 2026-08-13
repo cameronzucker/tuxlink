@@ -158,14 +158,14 @@ mod tests {
 
     /// Corpus instance #2: the registry-generated tool surface parses
     /// through the same reader (tolerant of its extra flag fields) and
-    /// carries all 92 tools with non-empty retrieval text. The
-    /// registry-side byte-parity gate lives in tuxlink-mcp-core; this is
-    /// the consumer-side parse gate.
+    /// carries all 95 tools with non-empty retrieval text (92 + the three
+    /// classify_weights tools, tuxlink-13ofm). The registry-side byte-parity
+    /// gate lives in tuxlink-mcp-core; this is the consumer-side parse gate.
     #[test]
     fn tool_surface_corpus_parses_as_corpus_two() {
         const TOOLS: &str = include_str!("../../resources/agents/tool-surface.jsonl");
         let entries = parse_jsonl(TOOLS).expect("tool corpus parses");
-        assert_eq!(entries.len(), 92, "tool corpus row count");
+        assert_eq!(entries.len(), 95, "tool corpus row count");
         for e in &entries {
             assert!(!e.title.trim().is_empty(), "{}: empty one-liner", e.id);
             assert!(!e.intent.trim().is_empty(), "{}: empty description", e.id);

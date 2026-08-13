@@ -123,9 +123,15 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
       return { ...state, step: 'vara_provision' };
 
     case 'ADVANCE_FROM_VARA_PROVISION':
-      // VARA provisioning → complete. Fires on provision-done, skip, or self-skip
-      // (unsupported hardware / unbundled engine). Provisioning writes no wizard
-      // config, so this only advances the step.
+      // VARA provisioning → classifier weights (tuxlink-13ofm). Fires on
+      // provision-done, skip, or self-skip (unsupported hardware / unbundled
+      // engine). Provisioning writes no wizard config, so this only advances.
+      return { ...state, step: 'classifier_weights' };
+
+    case 'ADVANCE_FROM_CLASSIFIER_WEIGHTS':
+      // Classifier weights → complete. Fires on Continue (ready), "Continue
+      // setup while it downloads" (the persistent job carries on; the Elmer
+      // panel is the gate surface), or Skip. Writes no wizard config.
       return { ...state, step: 'complete' };
 
     default:

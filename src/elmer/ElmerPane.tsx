@@ -47,6 +47,8 @@ import { sanitizeHtml } from '../shell/sanitizeHtml';
 import { StreamingStatusCard } from './StreamingStatusCard';
 import { useThinkingPulse } from './useThinkingPulse';
 import { useStreamAutoFollow } from './useStreamAutoFollow';
+import { ClassifierWeights } from '../classify/ClassifierWeights';
+import { useWeightsJob } from '../classify/useWeightsJob';
 import './ElmerPane.css';
 
 // ---------------------------------------------------------------------------
@@ -1081,6 +1083,21 @@ export const ElmerPane = memo(function ElmerPane({
     modelConfig !== null &&
     !modelConfig.onboarded;
 
+  // tuxlink-13ofm: the Elmer panel is the post-wizard gate surface for the
+  // classifier-weights job — it shows the same persistent job the wizard step
+  // showed (progress / retry / switch source / sideload) until the weights
+  // are ready, at which point the banner disappears (and the Rust side fired
+  // the desktop notification).
+  const { status: weightsStatus } = useWeightsJob();
+  // Visible while weights are missing OR while a job needs attention — a
+  // failed replacement over an existing install must stay visible even
+  // though `ready` is still true (Codex P2).
+  const weightsJobState = weightsStatus?.job?.state;
+  const weightsGateVisible =
+    weightsStatus != null &&
+    (!weightsStatus.ready ||
+      (weightsJobState !== undefined && weightsJobState !== 'complete'));
+
   // G3: Eagerly load config on mount so the empty-state "Connect a model"
   // button can be shown without the operator needing to open the disclosure first.
   useEffect(() => {
@@ -1390,6 +1407,19 @@ export const ElmerPane = memo(function ElmerPane({
       {isOffline && (
         <div className="elmer-offline-banner" data-testid="elmer-offline-banner" role="alert">
           The local Elmer model is not reachable. Verify the endpoint is running.
+        </div>
+      )}
+
+      {/* tuxlink-13ofm: classifier-weights gate — the panel-variant surface of
+          the same persistent job the wizard step renders. Visible until the
+          weights are ready; completion flips this surface off. */}
+      {weightsGateVisible && (
+        <div
+          className="elmer-weights-gate"
+          data-testid="elmer-weights-gate"
+          role="note"
+        >
+          <ClassifierWeights variant="panel" />
         </div>
       )}
 

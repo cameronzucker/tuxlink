@@ -5,6 +5,7 @@ pub mod basemap;
 pub mod bootstrap;
 pub mod tiles;
 pub mod catalog;
+pub mod classify_weights;
 pub mod connection_history;
 pub mod contacts;
 pub mod compose_window;
@@ -1953,6 +1954,18 @@ pub fn run() {
                         app.manage(std::sync::Arc::new(basemap_state));
                     }
 
+                    // Classifier weights job (tuxlink-13ofm): load any
+                    // persisted job, then put a restart-interrupted transfer
+                    // back to work — the operator's original start was the
+                    // consent, and the resumed job is immediately visible in
+                    // the wizard step / Elmer panel.
+                    {
+                        app.manage(std::sync::Arc::new(
+                            crate::classify_weights::WeightsState::init(),
+                        ));
+                        crate::classify_weights::resume_on_boot(app.handle());
+                    }
+
                     // tuxlink-dx57 U2: persistent station-list cache. Seeds from
                     // disk on launch so a cold offline start shows last-known-good
                     // results. TTL and min-refetch are identical to the former
@@ -3185,6 +3198,12 @@ pub fn run() {
             crate::basemap::commands::basemap_download_pack,
             crate::basemap::commands::basemap_cancel_download,
             crate::basemap::commands::basemap_delete_pack,
+            // Classifier weights job (tuxlink-13ofm): wizard step + Elmer
+            // panel gate + the persistent download/sideload job behind them.
+            crate::classify_weights::classify_weights_status,
+            crate::classify_weights::classify_weights_download_start,
+            crate::classify_weights::classify_weights_download_cancel,
+            crate::classify_weights::classify_weights_sideload_import,
             // Main-UI cluster commands. Task 12 (tuxlink-zsm) created
             // `mailbox_list`; Tasks 13/14/16 appended their command fns to
             // `ui_commands.rs` but deferred registration to this single

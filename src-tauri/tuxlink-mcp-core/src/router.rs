@@ -272,6 +272,9 @@ pub const TOOL_TIERS: &[(&str, &str)] = &[
     ("solar_conditions", "station-intel"),
     ("tauri_search_run", "diagnostic-read"),
     ("user_folders_list", "diagnostic-read"),
+    ("classify_weights_cancel", "local-action"),
+    ("classify_weights_download", "local-action"),
+    ("classify_weights_status", "diagnostic-read"),
     ("vara_b2f_exchange", "egress"),
     ("vara_engine_available", "diagnostic-read"),
     ("vara_ini_apply", "remediation-write"),
@@ -935,6 +938,48 @@ impl TuxlinkMcp {
             .state
             .provision
             .vara_install_start(installer_path)
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "classify_weights_status",
+        description = "Report whether the on-device classifier model (T1 weights, ~134 MB) is installed and usable: `ready`, the integrity tier (`digest-pinned` = every byte verified against this release's pinned sha256 values at install time), where it lives, and the state of the acquisition job if one is running or finished (waiting/downloading/verifying/complete/failed with an operator-phrased reason). When absent, `summary` names every directory that was searched. Read-only, offline, does not taint. To acquire the weights, call classify_weights_download."
+    )]
+    pub async fn classify_weights_status(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self
+            .state
+            .provision
+            .classify_weights_status()
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "classify_weights_download",
+        description = "Start (or retry after failure) the classifier-weights download (~134 MB, three files) from this Tuxlink version's release source. NON-TRANSMIT local provisioning - never keys a radio, no send authority needed. The job is persistent: it survives app restart, resumes partial transfers, auto-retries network failures with backoff, and fires a desktop notification when done - so call classify_weights_status to follow it rather than re-invoking this. Every downloaded byte is verified against sha256 digests pinned in this release BEFORE installing; a mismatched file is refused by name. There is no source parameter - pointing the fetch elsewhere is an operator act in the UI. Rejects a second concurrent job."
+    )]
+    pub async fn classify_weights_download(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self
+            .state
+            .provision
+            .classify_weights_download()
+            .await
+            .map_err(port_err)?;
+        Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
+    }
+
+    #[tool(
+        name = "classify_weights_cancel",
+        description = "Cancel the running classifier-weights job. Partial `.part` files stay on disk as the resume point for a later classify_weights_download; they can never be mistaken for installed weights (only digest-verified files are installed under final names). Returns the resulting status."
+    )]
+    pub async fn classify_weights_cancel(&self) -> Result<CallToolResult, ErrorData> {
+        let dto = self
+            .state
+            .provision
+            .classify_weights_cancel()
             .await
             .map_err(port_err)?;
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
@@ -2595,6 +2640,7 @@ pub struct VaraInstallParams {
     /// Filesystem path to the user-downloaded VARA HF installer `.exe`.
     pub installer_path: String,
 }
+
 
 /// Input for `export_report` (tuxlink-z2nwx, Contract 3).
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]

@@ -40,24 +40,24 @@ function renderStep() {
 afterEach(() => vi.clearAllMocks());
 
 describe('<StepVaraProvision> (wizard wrapper)', () => {
-  it('self-skips to complete on non-x86_64 hardware', async () => {
+  it('self-skips onward (to classifier_weights) on non-x86_64 hardware', async () => {
     (invoke as Mock).mockImplementation((cmd: string) =>
       cmd === 'platform_info'
         ? Promise.resolve({ varaSupported: false })
         : Promise.resolve(true),
     );
     renderStep();
-    await waitFor(() => expect(screen.getByTestId('probe-step').textContent).toBe('complete'));
+    await waitFor(() => expect(screen.getByTestId('probe-step').textContent).toBe('classifier_weights'));
   });
 
-  it('self-skips to complete when the engine is not bundled', async () => {
+  it('self-skips onward (to classifier_weights) when the engine is not bundled', async () => {
     (invoke as Mock).mockImplementation((cmd: string) =>
       cmd === 'platform_info'
         ? Promise.resolve({ varaSupported: true })
         : Promise.resolve(false),
     );
     renderStep();
-    await waitFor(() => expect(screen.getByTestId('probe-step').textContent).toBe('complete'));
+    await waitFor(() => expect(screen.getByTestId('probe-step').textContent).toBe('classifier_weights'));
   });
 
   it('renders the shared flow when VARA is supported + bundled', async () => {
@@ -71,7 +71,7 @@ describe('<StepVaraProvision> (wizard wrapper)', () => {
     expect(screen.getByTestId('probe-step').textContent).toBe('vara_provision');
   });
 
-  it('advances to complete when the shared flow signals done', async () => {
+  it('advances onward (to classifier_weights) when the shared flow signals done', async () => {
     (invoke as Mock).mockImplementation((cmd: string) =>
       cmd === 'platform_info'
         ? Promise.resolve({ varaSupported: true })
@@ -79,6 +79,6 @@ describe('<StepVaraProvision> (wizard wrapper)', () => {
     );
     renderStep();
     fireEvent.click(await screen.findByTestId('vara-provision-stub'));
-    await waitFor(() => expect(screen.getByTestId('probe-step').textContent).toBe('complete'));
+    await waitFor(() => expect(screen.getByTestId('probe-step').textContent).toBe('classifier_weights'));
   });
 });

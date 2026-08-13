@@ -159,6 +159,11 @@ tuxlink-mcp-core = { path = "tuxlink-mcp-core" }
 tux-rig = { path = "tux-rig" }
 tuxlink-agent-runner = { path = "tuxlink-agent-runner" }
 tuxlink-agent-frontend = { path = "tuxlink-agent-frontend" }
+# Classifier program (tuxlink-13ofm): PURE layers only — the weights pins,
+# locator, and conversion schema. `default-features = false` keeps candle and
+# the whole ML stack out of the app's dependency closure; inference wiring is
+# a later, operator-gated seam (ch3e9 step 3).
+tuxlink-classify = { path = "tuxlink-classify", default-features = false }
 # Routines (tuxlink-ofw4s plan 2): deterministic station automation engine —
 # Tauri-free leaf crate mounted under src/routines/ (spec §6/§9/§14).
 tuxlink-routines = { path = "tuxlink-routines" }

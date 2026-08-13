@@ -830,6 +830,33 @@ pub mod test_support {
         }
     }
 
+    /// Canned classifier-weights status for the mocks: weights absent, with
+    /// an optional job in `state` (`waiting` / `failed`).
+    fn mock_weights_status(
+        job_state: Option<&str>,
+    ) -> crate::ports::ClassifyWeightsStatusDto {
+        crate::ports::ClassifyWeightsStatusDto {
+            model_id: "bge-small-en-v1.5".into(),
+            total_bytes: 134_178_443,
+            ready: false,
+            integrity: None,
+            location: None,
+            summary: "'bge-small-en-v1.5' not found in 1 location(s): /mock/models/bge-small-en-v1.5 [no such directory]".into(),
+            default_source: "https://github.com/cameronzucker/tuxlink/releases/download/v0.0.0-mock".into(),
+            job: job_state.map(|state| crate::ports::ClassifyWeightsJobDto {
+                state: state.into(),
+                detail: (state == "failed").then(|| "cancelled".into()),
+                error_class: (state == "failed").then(|| "cancelled".into()),
+                file: None,
+                files_done: Vec::new(),
+                source: "https://github.com/cameronzucker/tuxlink/releases/download/v0.0.0-mock"
+                    .into(),
+                started_unix: 1,
+                updated_unix: 1,
+            }),
+        }
+    }
+
     #[async_trait]
     impl ProvisionPort for MockProvision {
         async fn vara_engine_available(&self) -> Result<bool, PortError> {
@@ -853,6 +880,21 @@ pub mod test_support {
                     detail: None,
                 }],
             })
+        }
+        async fn classify_weights_status(
+            &self,
+        ) -> Result<crate::ports::ClassifyWeightsStatusDto, PortError> {
+            Ok(mock_weights_status(None))
+        }
+        async fn classify_weights_download(
+            &self,
+        ) -> Result<crate::ports::ClassifyWeightsStatusDto, PortError> {
+            Ok(mock_weights_status(Some("waiting")))
+        }
+        async fn classify_weights_cancel(
+            &self,
+        ) -> Result<crate::ports::ClassifyWeightsStatusDto, PortError> {
+            Ok(mock_weights_status(Some("failed")))
         }
         async fn vara_install_start(
             &self,

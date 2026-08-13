@@ -1,0 +1,94 @@
+/* ClassifierWeights.css — shared weights-acquisition surface (tuxlink-13ofm).
+   Self-contained (renders inside the wizard AND the Elmer panel), app design
+   tokens throughout so it looks native in both. */
+
+.cw-root {
+  color: var(--text);
+  max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.cw-line {
+  margin: 0;
+}
+.cw-dim {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.9em;
+}
+.cw-path {
+  font-family: var(--mono, monospace);
+  font-size: 0.8em;
+  overflow-wrap: anywhere;
+}
+.cw-ok {
+  margin: 0;
+  color: var(--ok, #3fb950);
+}
+.cw-err {
+  margin: 0;
+  color: var(--danger, #f85149);
+}
+
+.cw-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border-strong);
+  overflow: hidden;
+}
+.cw-bar-fill {
+  height: 100%;
+  background: var(--accent, #58a6ff);
+  transition: width 0.3s ease;
+}
+
+.cw-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 0.4rem;
+}
+.cw-btn {
+  padding: 0.45rem 0.9rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.cw-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.cw-btn-primary {
+  background: var(--accent, #58a6ff);
+  border-color: var(--accent, #58a6ff);
+  color: var(--accent-contrast, #0b1021);
+}
+.cw-btn-quiet {
+  border-color: transparent;
+  color: var(--text-dim);
+}
+
+.cw-source-toggle {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 0.85em;
+  text-decoration: underline;
+}
+.cw-source-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.45rem 0.6rem;
+  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--input-bg, transparent);
+  color: var(--text);
+  font-family: var(--mono, monospace);
+  font-size: 0.85em;
+}

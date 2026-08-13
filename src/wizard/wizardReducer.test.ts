@@ -62,9 +62,16 @@ describe('wizardReducer', () => {
     expect(s.step).toBe('vara_provision');
   });
 
-  it('ADVANCE_FROM_VARA_PROVISION routes vara_provision → complete', () => {
+  // tuxlink-13ofm: classifier weights is the last step before complete.
+  it('ADVANCE_FROM_VARA_PROVISION routes vara_provision → classifier_weights', () => {
     const base = { ...initialWizardState(), step: 'vara_provision' as const };
     const s = wizardReducer(base, { type: 'ADVANCE_FROM_VARA_PROVISION' });
+    expect(s.step).toBe('classifier_weights');
+  });
+
+  it('ADVANCE_FROM_CLASSIFIER_WEIGHTS routes classifier_weights → complete', () => {
+    const base = { ...initialWizardState(), step: 'classifier_weights' as const };
+    const s = wizardReducer(base, { type: 'ADVANCE_FROM_CLASSIFIER_WEIGHTS' });
     expect(s.step).toBe('complete');
   });
 
@@ -85,6 +92,12 @@ describe('wizardReducer', () => {
     expect(o.step).toBe('location');
     o = wizardReducer(o, { type: 'ADVANCE_FROM_LOCATION' });
     expect(o.step).toBe('vara_provision');
+    // ...and vara threads through classifier weights before complete
+    // (tuxlink-13ofm).
+    o = wizardReducer(o, { type: 'ADVANCE_FROM_VARA_PROVISION' });
+    expect(o.step).toBe('classifier_weights');
+    o = wizardReducer(o, { type: 'ADVANCE_FROM_CLASSIFIER_WEIGHTS' });
+    expect(o.step).toBe('complete');
   });
 
   // INVARIANT: BEGIN_CMS_VERIFY while probing is a no-op (dedup correctness)
