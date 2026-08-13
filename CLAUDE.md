@@ -355,9 +355,11 @@ has approved the specific call (loud + audited at
 TUXLINK_METERED_API_OVERRIDE=operator-approved <the approved command>
 ```
 
-If the hook denies a command that merely *mentions* a metered host in text
-(a heredoc writing a prompt or doc), use the Write/Edit tools for that
-file instead of a Bash heredoc — the policy targets invocation, not prose.
+If the hook denies a command that merely *mentions* a metered host or key
+name in text (a heredoc writing a prompt or doc, a shell grep or log
+search), use the Write/Edit tools for the file and the Grep/Read tools for
+the search — those do not pass through the hook. The policy targets
+invocation, not prose.
 
 ## Git workflow — branch lifecycle state machine (ADR 0017)
 
