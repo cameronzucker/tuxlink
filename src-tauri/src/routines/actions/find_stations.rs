@@ -257,30 +257,24 @@ impl Action for FindStations {
 
     async fn execute(&self, params: Value, cancel: CancellationToken) -> Result<Value, StepError> {
         let parsed: FindStationsParams =
-            serde_json::from_value(params).map_err(|e| StepError::Action {
-                action: DATA_FIND_STATIONS.to_string(),
-                cause: format!("invalid params: {e}"),
-            })?;
+            serde_json::from_value(params)
+                .map_err(|e| StepError::invalid(DATA_FIND_STATIONS, format!("invalid params: {e}")))?;
 
         // `limit: Some(0)` is a nonsense request — reject as invalid params
         // BEFORE any fetch. An empty result would be indistinguishable from a
         // real empty directory, silently hiding the author's mistake.
         if parsed.limit == Some(0) {
-            return Err(StepError::Action {
-                action: DATA_FIND_STATIONS.to_string(),
-                cause: "invalid params: limit must be >= 1 (0 requests zero stations)".to_string(),
-            });
+            return Err(StepError::invalid(
+                DATA_FIND_STATIONS,
+                "invalid params: limit must be >= 1 (0 requests zero stations)",
+            ));
         }
 
         // Validate the optional history bound (cap 720 h) up front via the SAME
         // helper the MCP `find_stations` port uses — a 721 is rejected verbatim,
         // identically to the tool, before any fetch happens.
-        tuxlink_mcp_core::validate::validate_history_hours(parsed.history_hours).map_err(|e| {
-            StepError::Action {
-                action: DATA_FIND_STATIONS.to_string(),
-                cause: format!("invalid params: {e}"),
-            }
-        })?;
+        tuxlink_mcp_core::validate::validate_history_hours(parsed.history_hours)
+            .map_err(|e| StepError::invalid(DATA_FIND_STATIONS, format!("invalid params: {e}")))?;
 
         let directory = tokio::select! {
             biased;
@@ -289,10 +283,7 @@ impl Action for FindStations {
                 .station_query
                 .fetch_directory(parsed.modes, parsed.history_hours) => res,
         }
-        .map_err(|cause| StepError::Action {
-            action: DATA_FIND_STATIONS.to_string(),
-            cause,
-        })?;
+        .map_err(|cause| StepError::service(DATA_FIND_STATIONS, cause))?;
 
         // SAME path as the MCP `find_stations` tool: curate (PII/free-text
         // dropped, bogus callsigns dropped, grid validated) + band filter +
@@ -364,10 +355,8 @@ impl Action for FindStations {
         // Serialize the curated rows explicitly (GatewayDto: Serialize) so the
         // JSON build never depends on `json!`'s Serialize-interpolation.
         let gateways_json =
-            serde_json::to_value(&gateways).map_err(|e| StepError::Action {
-                action: DATA_FIND_STATIONS.to_string(),
-                cause: format!("output serialize: {e}"),
-            })?;
+            serde_json::to_value(&gateways)
+            .map_err(|e| StepError::internal(DATA_FIND_STATIONS, format!("output serialize: {e}")))?;
 
         Ok(json!({
             "gateways": gateways_json,
@@ -674,7 +663,7 @@ mod tests {
             .await
             .expect_err("721 h exceeds the 720 h cap");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "data.find_stations");
                 // Verbatim validator message (via validate_history_hours).
                 assert!(
@@ -706,7 +695,7 @@ mod tests {
             .await
             .expect_err("limit 0 is a nonsense request");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "data.find_stations");
                 assert!(cause.contains("invalid params"), "got: {cause}");
             }

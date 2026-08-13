@@ -981,19 +981,23 @@ impl RoutineInvoker for SessionChildInvoker {
         call: CallCtx,
         parent_cancel: &CancellationToken,
     ) -> Result<ChildHandle, StepError> {
-        let engine = self.engine.upgrade().ok_or_else(|| StepError::Action {
-            action: format!("call:{routine}"),
-            cause: "the routines engine has been dropped".into(),
+        let engine = self.engine.upgrade().ok_or_else(|| {
+            StepError::internal(
+                format!("call:{routine}"),
+                "the routines engine has been dropped",
+            )
         })?;
 
         // ONE read of the child definition: the def the gate runs against IS
         // the def handed to `start_run_ext` (the snapshot the run starts).
-        let def = self.store.get(routine).ok_or_else(|| StepError::Action {
-            action: format!("call:{routine}"),
-            cause: format!(
-                "routine '{routine}' not found (invoked by {} step {})",
-                call.provenance.parent_run_id, call.provenance.parent_step.0
-            ),
+        let def = self.store.get(routine).ok_or_else(|| {
+            StepError::invalid(
+                format!("call:{routine}"),
+                format!(
+                    "routine '{routine}' not found (invoked by {} step {})",
+                    call.provenance.parent_run_id, call.provenance.parent_step.0
+                ),
+            )
         })?;
 
         // ── CHILD START GATE (spec §4, C3) ───────────────────────────────
@@ -1006,10 +1010,7 @@ impl RoutineInvoker for SessionChildInvoker {
             let transmits = |name: &str| self.transmit_names.contains(name);
             let writes = |name: &str| self.write_names.contains(name);
             if let Some(err) = consent_gate_error(&def, &lookup, &transmits, &writes) {
-                return Err(StepError::Action {
-                    action: format!("call:{routine}"),
-                    cause: err.to_string(),
-                });
+                return Err(StepError::denied(format!("call:{routine}"), err.to_string()));
             }
         }
 
@@ -1042,10 +1043,10 @@ impl RoutineInvoker for SessionChildInvoker {
                 None => false,
             };
             if !matches {
-                return Err(StepError::Action {
-                    action: format!("call:{routine}"),
-                    cause: "callee changed after acknowledgment".into(),
-                });
+                return Err(StepError::denied(
+                    format!("call:{routine}"),
+                    "callee changed after acknowledgment",
+                ));
             }
         }
 
@@ -1071,10 +1072,7 @@ impl RoutineInvoker for SessionChildInvoker {
                 },
             )
             .await
-            .map_err(|e| StepError::Action {
-                action: format!("call:{routine}"),
-                cause: e.to_string(),
-            })?;
+            .map_err(|e| StepError::service(format!("call:{routine}"), e.to_string()))?;
         let RunHandle {
             run_id,
             cancel: _run_cancel, // == `child_token` we passed as `StartOpts.cancel`
@@ -1168,18 +1166,20 @@ impl RoutineInvoker for SessionChildInvoker {
                 None => "call".to_string(),
             }
         };
-        let outcome = done.await.map_err(|_| StepError::Action {
-            action: action.clone(),
-            cause: format!("child run {run_id} task dropped without an outcome"),
+        let outcome = done.await.map_err(|_| {
+            StepError::internal(
+                action.clone(),
+                format!("child run {run_id} task dropped without an outcome"),
+            )
         })?;
         match outcome.state {
             RunState::Completed => {
                 Ok(serde_json::json!({"completed": true, "run_id": run_id}))
             }
-            other => Err(StepError::Action {
+            other => Err(StepError::service(
                 action,
-                cause: format!("child run {run_id} ended {other:?}"),
-            }),
+                format!("child run {run_id} ended {other:?}"),
+            )),
         }
     }
 }

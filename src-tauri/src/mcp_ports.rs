@@ -87,6 +87,27 @@ fn redact_err(s: String) -> String {
     crate::winlink::redaction::redact_freeform(&s).into_owned()
 }
 
+/// Classify a [`UiError`](crate::ui_commands::UiError) at a write-port
+/// boundary (mutation-contract epic, slice a).
+///
+/// The unavailable family — no backend configured, a transport drop, an
+/// explicitly-unavailable subsystem — becomes [`WritePortError::Unavailable`],
+/// whose Display tells the agent the call was fine and to retry later.
+/// Pooling those under `Failed` taught an agent to rewrite calls that had
+/// nothing wrong with them. Everything else stays [`WritePortError::Failed`]
+/// verbatim; refining `NotFound`/`Rejected` into caller-attributable classes
+/// is deliberate per-seam follow-up work, not a default.
+fn classify_write_err(e: crate::ui_commands::UiError) -> WritePortError {
+    use crate::ui_commands::UiError;
+    match e {
+        UiError::NotConfigured(detail) => WritePortError::Unavailable(redact_err(detail)),
+        UiError::Unavailable { reason } | UiError::Transport { reason } => {
+            WritePortError::Unavailable(redact_err(reason))
+        }
+        other => WritePortError::Failed(redact_err(format!("{other:?}"))),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // VARA engine dispatch [R5-1].
 // ---------------------------------------------------------------------------
@@ -1913,7 +1934,7 @@ impl WritePort for MonolithWritePort {
         // SSID check.
         let mut current = crate::ui_commands::packet_config_get()
             .await
-            .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))?;
+            .map_err(classify_write_err)?;
         match current.link_kind.as_deref() {
             Some("Tcp") | None => {}
             Some(other) => {
@@ -1953,7 +1974,7 @@ impl WritePort for MonolithWritePort {
                     current,
                 )
                 .await
-                .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))
+                .map_err(classify_write_err)
             },
         )
         .await
@@ -1987,7 +2008,7 @@ impl WritePort for MonolithWritePort {
                 let backend = app.state::<crate::app_backend::BackendState>().current();
                 crate::ui_commands::config_set_grid_impl(grid, arbiter, backend)
                     .await
-                    .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))
+                    .map_err(classify_write_err)
             },
         )
         .await
@@ -2026,7 +2047,7 @@ impl WritePort for MonolithWritePort {
                 let backend = app.state::<crate::app_backend::BackendState>().current();
                 crate::ui_commands::position_set_source_impl(source, arbiter, backend)
                     .await
-                    .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))
+                    .map_err(classify_write_err)
             },
         )
         .await
@@ -2103,7 +2124,7 @@ impl WritePort for MonolithWritePort {
                 // ui_commands.rs:4670 packet_set_listen(bool).
                 crate::ui_commands::packet_set_listen(enabled)
                     .await
-                    .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))
+                    .map_err(classify_write_err)
             },
         )
         .await
@@ -2187,7 +2208,7 @@ impl WritePort for MonolithWritePort {
                     app.state::<crate::app_backend::BackendState>(),
                 )
                 .await
-                .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))
+                .map_err(classify_write_err)
             },
         )
         .await
@@ -2263,9 +2284,9 @@ impl WritePort for MonolithWritePort {
                 let backend = app
                     .state::<crate::app_backend::BackendState>()
                     .current()
-                    .ok_or_else(|| WritePortError::Failed("backend offline".to_string()))?;
+                    .ok_or_else(|| WritePortError::Unavailable("backend offline".to_string()))?;
                 let parsed = crate::ui_commands::parse_folder_ref(&folder)
-                    .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))?;
+                    .map_err(classify_write_err)?;
                 let mid = MessageId::new(&id);
                 let body = match &parsed {
                     FolderRef::System(f) => backend
@@ -2414,7 +2435,7 @@ impl ComposePort for MonolithComposePort {
             self.app.state::<crate::app_backend::BackendState>(),
         )
         .await
-        .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))?;
+        .map_err(classify_write_err)?;
         self.audit_stage("message_send", &mid);
         Ok(mid)
     }

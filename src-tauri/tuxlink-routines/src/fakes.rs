@@ -185,10 +185,7 @@ impl Action for FakeAction {
         };
         match outcome {
             Outcome::Ok(v) => Ok(v),
-            Outcome::Err(cause) => Err(StepError::Action {
-                action: self.name.to_string(),
-                cause,
-            }),
+            Outcome::Err(cause) => Err(StepError::service(self.name, cause)),
             Outcome::Hang => {
                 cancel.cancelled().await;
                 Err(StepError::Cancelled)
@@ -389,10 +386,7 @@ impl RoutineInvoker for FakeInvoker {
         });
         match replay {
             InvokeOutcome::Result(v) => Ok(v),
-            InvokeOutcome::Error(cause) => Err(StepError::Action {
-                action: format!("call:{routine}"),
-                cause,
-            }),
+            InvokeOutcome::Error(cause) => Err(StepError::service(format!("call:{routine}"), cause)),
             InvokeOutcome::Hang => {
                 std::future::pending::<()>().await;
                 unreachable!()

@@ -400,11 +400,10 @@ impl RoutineInvoker for NoInvoker {
         _call: CallCtx,
         _parent_cancel: &CancellationToken,
     ) -> Result<ChildHandle, StepError> {
-        Err(StepError::Action {
-            action: format!("call:{routine}"),
-            cause: "no routine invoker is mounted (engine configured without a definition lookup)"
-                .into(),
-        })
+        Err(StepError::internal(
+            format!("call:{routine}"),
+            "no routine invoker is mounted (engine configured without a definition lookup)",
+        ))
     }
 
     async fn await_outcome(
@@ -412,10 +411,7 @@ impl RoutineInvoker for NoInvoker {
         _handle: ChildHandle,
     ) -> Result<serde_json::Value, StepError> {
         // Unreachable: `start` always errors, so no handle is ever produced.
-        Err(StepError::Action {
-            action: "call".into(),
-            cause: "no routine invoker is mounted".into(),
-        })
+        Err(StepError::internal("call", "no routine invoker is mounted"))
     }
 }
 
@@ -438,12 +434,14 @@ impl RoutineInvoker for EngineChildInvoker {
         call: CallCtx,
         parent_cancel: &CancellationToken,
     ) -> Result<ChildHandle, StepError> {
-        let def = (self.lookup)(routine).ok_or_else(|| StepError::Action {
-            action: format!("call:{routine}"),
-            cause: format!(
-                "routine '{routine}' not found (invoked by {} step {})",
-                call.provenance.parent_run_id, call.provenance.parent_step.0
-            ),
+        let def = (self.lookup)(routine).ok_or_else(|| {
+            StepError::invalid(
+                format!("call:{routine}"),
+                format!(
+                    "routine '{routine}' not found (invoked by {} step {})",
+                    call.provenance.parent_run_id, call.provenance.parent_step.0
+                ),
+            )
         })?;
         let handle = self
             .engine
@@ -465,10 +463,7 @@ impl RoutineInvoker for EngineChildInvoker {
                 },
             )
             .await
-            .map_err(|e| StepError::Action {
-                action: format!("call:{routine}"),
-                cause: e.to_string(),
-            })?;
+            .map_err(|e| StepError::service(format!("call:{routine}"), e.to_string()))?;
         let RunHandle {
             run_id,
             cancel,
@@ -506,12 +501,14 @@ impl RoutineInvoker for DryRunChildInvoker {
         call: CallCtx,
         parent_cancel: &CancellationToken,
     ) -> Result<ChildHandle, StepError> {
-        let def = (self.lookup)(routine).ok_or_else(|| StepError::Action {
-            action: format!("call:{routine}"),
-            cause: format!(
-                "routine '{routine}' not found (invoked by {} step {})",
-                call.provenance.parent_run_id, call.provenance.parent_step.0
-            ),
+        let def = (self.lookup)(routine).ok_or_else(|| {
+            StepError::invalid(
+                format!("call:{routine}"),
+                format!(
+                    "routine '{routine}' not found (invoked by {} step {})",
+                    call.provenance.parent_run_id, call.provenance.parent_step.0
+                ),
+            )
         })?;
         let handle = self
             .engine
@@ -523,10 +520,7 @@ impl RoutineInvoker for DryRunChildInvoker {
                 Some(parent_cancel.child_token()),
             )
             .await
-            .map_err(|e| StepError::Action {
-                action: format!("call:{routine}"),
-                cause: e.to_string(),
-            })?;
+            .map_err(|e| StepError::service(format!("call:{routine}"), e.to_string()))?;
         let RunHandle {
             run_id,
             cancel,
@@ -548,16 +542,18 @@ impl RoutineInvoker for DryRunChildInvoker {
 /// result value or a verbatim `StepError`.
 async fn await_child_handle(handle: ChildHandle) -> Result<serde_json::Value, StepError> {
     let (run_id, _cancel, done) = handle.into_parts();
-    let outcome = done.await.map_err(|_| StepError::Action {
-        action: "call".into(),
-        cause: format!("child run {run_id} task dropped without an outcome"),
+    let outcome = done.await.map_err(|_| {
+        StepError::internal(
+            "call",
+            format!("child run {run_id} task dropped without an outcome"),
+        )
     })?;
     match outcome.state {
         RunState::Completed => Ok(serde_json::json!({"completed": true, "run_id": run_id})),
-        other => Err(StepError::Action {
-            action: "call".into(),
-            cause: format!("child run {run_id} ended {other:?}"),
-        }),
+        other => Err(StepError::service(
+            "call",
+            format!("child run {run_id} ended {other:?}"),
+        )),
     }
 }
 

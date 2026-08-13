@@ -196,11 +196,19 @@ export type RunState =
   | 'cancelled'
   | 'interrupted';
 
+/** `Disposition` (error.rs) — whose doing a step failure was, as data.
+ * `invalid` = the authored step violates the contract (author-attributable);
+ * `denied` = authority absent (consent digest no longer binds);
+ * `unavailable` = environment/timing, retry can succeed;
+ * `service` = a backing seam failed, unclassified deeper;
+ * `internal` = our bug. Absent on journals written before the vocabulary. */
+export type Disposition = 'invalid' | 'denied' | 'unavailable' | 'service' | 'internal';
+
 /** `StepError` (error.rs) — `#[serde(tag = "kind", content = "detail", rename_all = "snake_case")]`. */
 export type StepError =
   | { kind: 'unset_variable'; detail: string }
   | { kind: 'timeout'; detail: { seconds: number } }
-  | { kind: 'action'; detail: { action: string; cause: string } }
+  | { kind: 'action'; detail: { action: string; cause: string; disposition?: Disposition } }
   | { kind: 'cancelled' };
 
 /** `ParkKind` (journal.rs) — `#[serde(rename_all = "snake_case")]`. The
