@@ -467,33 +467,30 @@ impl Action for ComposeMessage {
 
     async fn execute(&self, params: Value, cancel: CancellationToken) -> Result<Value, StepError> {
         let parsed: ComposeParams =
-            serde_json::from_value(params).map_err(|e| StepError::Action {
-                action: LOCAL_COMPOSE.to_string(),
-                cause: format!("invalid params: {e}"),
-            })?;
+            serde_json::from_value(params)
+                .map_err(|e| StepError::invalid(LOCAL_COMPOSE, format!("invalid params: {e}")))?;
 
         if parsed.to.is_empty() {
-            return Err(StepError::Action {
-                action: LOCAL_COMPOSE.to_string(),
-                cause: "to must have at least one recipient".to_string(),
-            });
+            return Err(StepError::invalid(
+                LOCAL_COMPOSE,
+                "to must have at least one recipient",
+                ));
         }
 
         let from = parsed.from_identity.map(|f| f.callsign);
 
         let msg = match (parsed.template, parsed.body) {
             (Some(_), Some(_)) => {
-                return Err(StepError::Action {
-                    action: LOCAL_COMPOSE.to_string(),
-                    cause: "template and body are mutually exclusive — supply exactly one"
-                        .to_string(),
-                });
+                return Err(StepError::invalid(
+                    LOCAL_COMPOSE,
+                    "template and body are mutually exclusive — supply exactly one",
+                    ));
             }
             (None, None) => {
-                return Err(StepError::Action {
-                    action: LOCAL_COMPOSE.to_string(),
-                    cause: "exactly one of template or body is required".to_string(),
-                });
+                return Err(StepError::invalid(
+                    LOCAL_COMPOSE,
+                    "exactly one of template or body is required",
+                    ));
             }
             // A reference to a REAL bundled form. Send an actual form: XML
             // attachment, field structure, the lot. See `TemplateParam::id`.
@@ -509,14 +506,14 @@ impl Action for ComposeMessage {
                     // Loud, never a fallback to prose. A broken form reference
                     // that quietly degrades to a text message is precisely the
                     // failure this whole path exists to prevent.
-                    StepError::Action {
-                        action: LOCAL_COMPOSE.to_string(),
-                        cause: format!(
+                    StepError::invalid(
+                        LOCAL_COMPOSE,
+                        format!(
                             "unknown form: {id}. A template reference must name a bundled form; \
                              refusing rather than sending an unstructured message that reads \
                              like one."
                         ),
-                    }
+                    )
                 })?;
                 let station = self.local.station_context().await;
                 let now = chrono::Utc::now();
@@ -543,15 +540,14 @@ impl Action for ComposeMessage {
             // rather than letting serde report a missing field, so one
             // rejection carries the whole contract.
             (Some(t), None) if t.body_template.is_empty() && t.subject_template.is_empty() => {
-                return Err(StepError::Action {
-                    action: LOCAL_COMPOSE.to_string(),
-                    cause: "template needs either an id naming a bundled form, e.g. \
-                            {\"id\": \"Winlink_Check-In\"} (stages a real form with its XML), \
-                            or inline text, e.g. {\"bodyTemplate\": \"...\", \
-                            \"subjectTemplate\": \"...\"} (stages a plain message). \
-                            It carried neither."
-                        .to_string(),
-                });
+                return Err(StepError::invalid(
+                    LOCAL_COMPOSE,
+                    "template needs either an id naming a bundled form, e.g. \
+                     {\"id\": \"Winlink_Check-In\"} (stages a real form with its XML), \
+                     or inline text, e.g. {\"bodyTemplate\": \"...\", \
+                     \"subjectTemplate\": \"...\"} (stages a plain message). \
+                     It carried neither.",
+                ));
             }
             // A hand-written inline template: a plain templated text message,
             // which is a legitimate thing to want and unchanged in behaviour.
@@ -591,10 +587,7 @@ impl Action for ComposeMessage {
             _ = cancel.cancelled() => return Err(StepError::Cancelled),
             res = self.local.compose_stage(msg, from) => res,
         }
-        .map_err(|cause| StepError::Action {
-            action: LOCAL_COMPOSE.to_string(),
-            cause,
-        })?;
+        .map_err(|cause| StepError::service(LOCAL_COMPOSE, cause))?;
 
         Ok(json!({ "staged": true, "mid": mid }))
     }
@@ -723,10 +716,8 @@ impl Action for ComposeCatalogRequest {
 
     async fn execute(&self, params: Value, cancel: CancellationToken) -> Result<Value, StepError> {
         let parsed: CatalogRequestParams =
-            serde_json::from_value(params).map_err(|e| StepError::Action {
-                action: LOCAL_COMPOSE_CATALOG_REQUEST.to_string(),
-                cause: format!("invalid params: {e}"),
-            })?;
+            serde_json::from_value(params)
+                .map_err(|e| StepError::invalid(LOCAL_COMPOSE_CATALOG_REQUEST, format!("invalid params: {e}")))?;
 
         let filenames = parsed.resolved_filenames();
         let filename_refs: Vec<&str> = filenames.iter().map(String::as_str).collect();
@@ -735,12 +726,8 @@ impl Action for ComposeCatalogRequest {
         // already operator-facing text (Global Constraints: verbatim, never
         // paraphrased), so this is passed straight through, not re-validated
         // here first.
-        let body = crate::catalog::composer::build_inquiry_body(&filename_refs).map_err(|e| {
-            StepError::Action {
-                action: LOCAL_COMPOSE_CATALOG_REQUEST.to_string(),
-                cause: e.to_string(),
-            }
-        })?;
+        let body = crate::catalog::composer::build_inquiry_body(&filename_refs)
+            .map_err(|e| StepError::invalid(LOCAL_COMPOSE_CATALOG_REQUEST, e.to_string()))?;
 
         let msg = OutboundMessage {
             to: vec![crate::catalog::composer::INQUIRY_RECIPIENT.to_string()],
@@ -760,10 +747,7 @@ impl Action for ComposeCatalogRequest {
             _ = cancel.cancelled() => return Err(StepError::Cancelled),
             res = self.local.compose_stage(msg, None) => res,
         }
-        .map_err(|cause| StepError::Action {
-            action: LOCAL_COMPOSE_CATALOG_REQUEST.to_string(),
-            cause,
-        })?;
+        .map_err(|cause| StepError::service(LOCAL_COMPOSE_CATALOG_REQUEST, cause))?;
 
         Ok(json!({ "staged": true, "mid": mid }))
     }
@@ -836,10 +820,8 @@ impl Action for SetIdentity {
         }
 
         let parsed: SetIdentityParams =
-            serde_json::from_value(params).map_err(|e| StepError::Action {
-                action: LOCAL_SET_IDENTITY.to_string(),
-                cause: format!("invalid params: {e}"),
-            })?;
+            serde_json::from_value(params)
+                .map_err(|e| StepError::invalid(LOCAL_SET_IDENTITY, format!("invalid params: {e}")))?;
 
         let callsign = parsed
             .identity
@@ -850,11 +832,10 @@ impl Action for SetIdentity {
             .filter(|s| !s.is_empty());
 
         if callsign.is_none() {
-            return Err(StepError::Action {
-                action: LOCAL_SET_IDENTITY.to_string(),
-                cause: "identity must be an object with a non-empty \"callsign\" string"
-                    .to_string(),
-            });
+            return Err(StepError::invalid(
+                LOCAL_SET_IDENTITY,
+                "identity must be an object with a non-empty \"callsign\" string",
+            ));
         }
 
         Ok(json!({ "identity": parsed.identity }))
@@ -913,20 +894,15 @@ impl Action for LogEntry {
     }
 
     async fn execute(&self, params: Value, cancel: CancellationToken) -> Result<Value, StepError> {
-        let parsed: LogParams = serde_json::from_value(params).map_err(|e| StepError::Action {
-            action: LOCAL_LOG.to_string(),
-            cause: format!("invalid params: {e}"),
-        })?;
+        let parsed: LogParams = serde_json::from_value(params)
+            .map_err(|e| StepError::invalid(LOCAL_LOG, format!("invalid params: {e}")))?;
 
         tokio::select! {
             biased;
             _ = cancel.cancelled() => return Err(StepError::Cancelled),
             res = self.local.log_append(parsed.message) => res,
         }
-        .map_err(|cause| StepError::Action {
-            action: LOCAL_LOG.to_string(),
-            cause,
-        })?;
+        .map_err(|cause| StepError::service(LOCAL_LOG, cause))?;
 
         Ok(json!({}))
     }
@@ -995,20 +971,15 @@ impl Action for Notify {
 
     async fn execute(&self, params: Value, cancel: CancellationToken) -> Result<Value, StepError> {
         let parsed: NotifyParams =
-            serde_json::from_value(params).map_err(|e| StepError::Action {
-                action: LOCAL_NOTIFY.to_string(),
-                cause: format!("invalid params: {e}"),
-            })?;
+            serde_json::from_value(params)
+                .map_err(|e| StepError::invalid(LOCAL_NOTIFY, format!("invalid params: {e}")))?;
 
         tokio::select! {
             biased;
             _ = cancel.cancelled() => return Err(StepError::Cancelled),
             res = self.local.notify(parsed.title, parsed.message) => res,
         }
-        .map_err(|cause| StepError::Action {
-            action: LOCAL_NOTIFY.to_string(),
-            cause,
-        })?;
+        .map_err(|cause| StepError::service(LOCAL_NOTIFY, cause))?;
 
         Ok(json!({}))
     }
@@ -1251,7 +1222,7 @@ mod tests {
             .await
             .expect_err("template + body together must error");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "local.compose");
                 assert!(cause.contains("mutually exclusive"));
             }
@@ -1267,7 +1238,7 @@ mod tests {
             .await
             .expect_err("neither template nor body must error");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "local.compose");
                 assert!(cause.contains("exactly one of template or body"));
             }
@@ -1650,7 +1621,7 @@ mod tests {
         .await
         .expect_err("an unknown form must not stage anything");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "local.compose");
                 assert!(cause.contains("Not_A_Real_Form"), "cause: {cause}");
                 assert!(cause.contains("unknown form"), "cause: {cause}");
@@ -1755,7 +1726,7 @@ mod tests {
             .await
             .expect_err("must surface");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "local.compose");
                 assert_eq!(cause, "backend offline");
             }
@@ -1867,7 +1838,7 @@ mod tests {
             .await
             .expect_err("empty filenames must error");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "local.compose_catalog_request");
                 assert_eq!(cause, "no filenames selected");
             }
@@ -1888,7 +1859,7 @@ mod tests {
             .await
             .expect_err("must surface");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "local.compose_catalog_request");
                 assert_eq!(cause, "backend offline");
             }
@@ -1936,7 +1907,7 @@ mod tests {
             .await
             .expect_err("identity without callsign must error");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "local.set_identity");
                 assert!(cause.contains("callsign"));
             }
@@ -2047,7 +2018,7 @@ mod tests {
             .await
             .expect_err("must surface");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "local.log");
                 assert_eq!(cause, "session log unavailable");
             }
@@ -2133,7 +2104,7 @@ mod tests {
             .await
             .expect_err("must surface");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "local.notify");
                 assert_eq!(cause, "notification backend unavailable");
             }

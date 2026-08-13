@@ -373,10 +373,7 @@ mod tests {
         let verbatim = "VARA: DISCONNECTED (link timeout after 90s)";
         w.append(RunEvent::StepErr {
             step: StepId("s1".into()),
-            error: StepError::Action {
-                action: "radio.connect".into(),
-                cause: verbatim.into(),
-            },
+            error: StepError::service("radio.connect", verbatim),
         })
         .unwrap();
         let entries = read_journal(&w.path()).unwrap();

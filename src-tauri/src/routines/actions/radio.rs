@@ -456,15 +456,13 @@ impl Action for RadioConnect {
         cancel: CancellationToken,
     ) -> Result<serde_json::Value, StepError> {
         let parsed: ConnectParams =
-            serde_json::from_value(params.clone()).map_err(|e| StepError::Action {
-                action: RADIO_CONNECT.to_string(),
-                cause: format!("invalid params: {e}"),
-            })?;
+            serde_json::from_value(params.clone())
+                .map_err(|e| StepError::invalid(RADIO_CONNECT, format!("invalid params: {e}")))?;
         if parsed.stations.is_empty() {
-            return Err(StepError::Action {
-                action: RADIO_CONNECT.to_string(),
-                cause: "stations must have at least one entry".to_string(),
-            });
+            return Err(StepError::invalid(
+                RADIO_CONNECT,
+                "stations must have at least one entry",
+            ));
         }
 
         let rig = rig_id_from_params(&params);
@@ -479,10 +477,7 @@ impl Action for RadioConnect {
             .arbiter
             .acquire(&rig, holder.clone(), policy, timeout, &cancel)
             .await
-            .map_err(|e| StepError::Action {
-                action: RADIO_CONNECT.to_string(),
-                cause: e.to_string(),
-            })?;
+            .map_err(|e| StepError::unavailable(RADIO_CONNECT, e.to_string()))?;
 
         let mut last_error: Option<String> = None;
 
@@ -520,10 +515,7 @@ impl Action for RadioConnect {
                         .arbiter
                         .acquire(&rig, holder.clone(), policy, timeout, &cancel)
                         .await
-                        .map_err(|e| StepError::Action {
-                            action: RADIO_CONNECT.to_string(),
-                            cause: e.to_string(),
-                        })?;
+                        .map_err(|e| StepError::unavailable(RADIO_CONNECT, e.to_string()))?;
                 }
 
                 if let Some(secs) = parsed.listen_before_tx_s {
@@ -537,10 +529,7 @@ impl Action for RadioConnect {
                             }
                             Ok(_) => {}
                             Err(cause) => {
-                                return Err(StepError::Action {
-                                    action: RADIO_CONNECT.to_string(),
-                                    cause,
-                                });
+                                return Err(StepError::service(RADIO_CONNECT, cause));
                             }
                         }
                     }
@@ -577,10 +566,7 @@ impl Action for RadioConnect {
                         }));
                     }
                     Err(cause) => {
-                        return Err(StepError::Action {
-                            action: RADIO_CONNECT.to_string(),
-                            cause,
-                        });
+                        return Err(StepError::service(RADIO_CONNECT, cause));
                     }
                 }
             }
@@ -670,10 +656,8 @@ impl Action for RadioListen {
         cancel: CancellationToken,
     ) -> Result<serde_json::Value, StepError> {
         let parsed: ListenParams =
-            serde_json::from_value(params.clone()).map_err(|e| StepError::Action {
-                action: RADIO_LISTEN.to_string(),
-                cause: format!("invalid params: {e}"),
-            })?;
+            serde_json::from_value(params.clone())
+                .map_err(|e| StepError::invalid(RADIO_LISTEN, format!("invalid params: {e}")))?;
 
         let rig = rig_id_from_params(&params);
         let policy = busy_policy_from_params(&params);
@@ -684,10 +668,7 @@ impl Action for RadioListen {
             .arbiter
             .acquire(&rig, holder, policy, timeout, &cancel)
             .await
-            .map_err(|e| StepError::Action {
-                action: RADIO_LISTEN.to_string(),
-                cause: e.to_string(),
-            })?;
+            .map_err(|e| StepError::unavailable(RADIO_LISTEN, e.to_string()))?;
 
         let mut cancelled_during_sample = false;
         let mut sample_fut = self.listen.sample_rms(&rig, parsed.seconds, cancel.clone());
@@ -705,10 +686,7 @@ impl Action for RadioListen {
             return Err(StepError::Cancelled);
         }
 
-        let rms = sample_result.map_err(|cause| StepError::Action {
-            action: RADIO_LISTEN.to_string(),
-            cause,
-        })?;
+        let rms = sample_result.map_err(|cause| StepError::service(RADIO_LISTEN, cause))?;
 
         Ok(json!({
             "channel_busy": rms > CHANNEL_BUSY_RMS_THRESHOLD,
@@ -796,10 +774,8 @@ impl Action for RadioAprsSend {
         cancel: CancellationToken,
     ) -> Result<serde_json::Value, StepError> {
         let parsed: AprsSendParams =
-            serde_json::from_value(params.clone()).map_err(|e| StepError::Action {
-                action: RADIO_APRS_SEND.to_string(),
-                cause: format!("invalid params: {e}"),
-            })?;
+            serde_json::from_value(params.clone())
+                .map_err(|e| StepError::invalid(RADIO_APRS_SEND, format!("invalid params: {e}")))?;
 
         let rig = rig_id_from_params(&params);
         let policy = busy_policy_from_params(&params);
@@ -810,20 +786,14 @@ impl Action for RadioAprsSend {
             .arbiter
             .acquire(&rig, holder, policy, timeout, &cancel)
             .await
-            .map_err(|e| StepError::Action {
-                action: RADIO_APRS_SEND.to_string(),
-                cause: e.to_string(),
-            })?;
+            .map_err(|e| StepError::unavailable(RADIO_APRS_SEND, e.to_string()))?;
 
         let msgid = tokio::select! {
             biased;
             _ = cancel.cancelled() => return Err(StepError::Cancelled),
             res = self.aprs.send(parsed.to, parsed.text) => res,
         }
-        .map_err(|cause| StepError::Action {
-            action: RADIO_APRS_SEND.to_string(),
-            cause,
-        })?;
+        .map_err(|cause| StepError::service(RADIO_APRS_SEND, cause))?;
 
         Ok(json!({ "msgid": msgid }))
         // `_lease` drops here — released after the send completes.
@@ -1427,7 +1397,7 @@ mod tests {
             .await
             .expect_err("hard transport failure must be a StepError");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "radio.connect");
                 assert_eq!(cause, "rig unreachable: fd closed");
             }
@@ -1780,7 +1750,7 @@ mod tests {
             .await
             .expect_err("listen failure must surface");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "radio.listen");
                 assert_eq!(cause, "capture device busy");
             }
@@ -1910,7 +1880,7 @@ mod tests {
             .await
             .expect_err("must surface");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "radio.aprs_send");
                 assert_eq!(cause, "APRS engine not listening");
             }

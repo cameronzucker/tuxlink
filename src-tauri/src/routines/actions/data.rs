@@ -312,10 +312,7 @@ impl Action for SpaceWxWwv {
             .arbiter
             .acquire(&rig, holder, policy, timeout, &cancel)
             .await
-            .map_err(|e| StepError::Action {
-                action: DATA_SPACEWX_WWV.to_string(),
-                cause: e.to_string(),
-            })?;
+            .map_err(|e| StepError::unavailable(DATA_SPACEWX_WWV, e.to_string()))?;
 
         // Re-read wall time: the wait above may have consumed real seconds,
         // and `wwv_offair_refresh` itself uses `now_ms` to pick the UTC-hour
@@ -356,30 +353,25 @@ impl Action for SpaceWxWwv {
             return Err(StepError::Cancelled);
         }
 
-        let outcome = capture_result.map_err(|cause| StepError::Action {
-            action: DATA_SPACEWX_WWV.to_string(),
-            cause,
-        })?;
+        let outcome = capture_result.map_err(|cause| StepError::service(DATA_SPACEWX_WWV, cause))?;
 
         if outcome.no_copy {
             // Not a verbatim underlying-system error (the capture + STT
             // calls all returned Ok) — this action's own diagnostic,
             // mirroring `rig.apply_preset`'s "verification mismatch"
             // precedent for a real, non-exceptional failure condition.
-            return Err(StepError::Action {
-                action: DATA_SPACEWX_WWV.to_string(),
-                cause: format!(
+            return Err(StepError::unavailable(
+                DATA_SPACEWX_WWV,
+                format!(
                     "WWV capture at the {} window completed but produced no confident \
                      transcript (no_copy) — clip kept at {:?} for operator playback/manual entry",
                     sched.label, outcome.wav_path
                 ),
-            });
+            ));
         }
 
-        serde_json::to_value(&outcome).map_err(|e| StepError::Action {
-            action: DATA_SPACEWX_WWV.to_string(),
-            cause: format!("outcome serialize: {e}"),
-        })
+        serde_json::to_value(&outcome)
+            .map_err(|e| StepError::internal(DATA_SPACEWX_WWV, format!("outcome serialize: {e}")))
         // `_lease` drops here — released after capture+restore completes.
         // This is also true of the early `return Err(StepError::Cancelled)`
         // above: it only runs after `capture_result` already resolved, so
@@ -452,15 +444,10 @@ impl Action for SpaceWxSwpc {
             _ = cancel.cancelled() => return Err(StepError::Cancelled),
             res = self.data.swpc_refresh() => res,
         }
-        .map_err(|cause| StepError::Action {
-            action: DATA_SPACEWX_SWPC.to_string(),
-            cause,
-        })?;
+        .map_err(|cause| StepError::service(DATA_SPACEWX_SWPC, cause))?;
 
-        serde_json::to_value(&outcome).map_err(|e| StepError::Action {
-            action: DATA_SPACEWX_SWPC.to_string(),
-            cause: format!("outcome serialize: {e}"),
-        })
+        serde_json::to_value(&outcome)
+            .map_err(|e| StepError::internal(DATA_SPACEWX_SWPC, format!("outcome serialize: {e}")))
     }
 }
 
@@ -556,10 +543,8 @@ impl Action for StationlistUpdate {
 
     async fn execute(&self, params: Value, cancel: CancellationToken) -> Result<Value, StepError> {
         let parsed: StationlistUpdateParams =
-            serde_json::from_value(params).map_err(|e| StepError::Action {
-                action: DATA_STATIONLIST_UPDATE.to_string(),
-                cause: format!("invalid params: {e}"),
-            })?;
+            serde_json::from_value(params)
+                .map_err(|e| StepError::invalid(DATA_STATIONLIST_UPDATE, format!("invalid params: {e}")))?;
         let modes = if parsed.modes.is_empty() {
             crate::catalog::stations::ListingMode::ALL.to_vec()
         } else {
@@ -571,10 +556,7 @@ impl Action for StationlistUpdate {
             _ = cancel.cancelled() => return Err(StepError::Cancelled),
             res = self.data.stationlist_refresh(modes, parsed.history_hours) => res,
         }
-        .map_err(|cause| StepError::Action {
-            action: DATA_STATIONLIST_UPDATE.to_string(),
-            cause,
-        })?;
+        .map_err(|cause| StepError::service(DATA_STATIONLIST_UPDATE, cause))?;
 
         Ok(json!({
             "updated": true,
@@ -764,10 +746,8 @@ impl Action for DataRead {
     }
 
     async fn execute(&self, params: Value, cancel: CancellationToken) -> Result<Value, StepError> {
-        let parsed: ReadParams = serde_json::from_value(params).map_err(|e| StepError::Action {
-            action: DATA_READ.to_string(),
-            cause: format!("invalid params: {e}"),
-        })?;
+        let parsed: ReadParams = serde_json::from_value(params)
+            .map_err(|e| StepError::invalid(DATA_READ, format!("invalid params: {e}")))?;
 
         match parsed.source {
             ReadSource::InboxSummary => {
@@ -776,14 +756,9 @@ impl Action for DataRead {
                     _ = cancel.cancelled() => return Err(StepError::Cancelled),
                     res = self.data.read_inbox_summary() => res,
                 }
-                .map_err(|cause| StepError::Action {
-                    action: DATA_READ.to_string(),
-                    cause,
-                })?;
-                serde_json::to_value(&summary).map_err(|e| StepError::Action {
-                    action: DATA_READ.to_string(),
-                    cause: format!("output serialize: {e}"),
-                })
+                .map_err(|cause| StepError::service(DATA_READ, cause))?;
+                serde_json::to_value(&summary)
+            .map_err(|e| StepError::internal(DATA_READ, format!("output serialize: {e}")))
             }
             ReadSource::SpaceWeather => {
                 let snapshot = tokio::select! {
@@ -791,14 +766,9 @@ impl Action for DataRead {
                     _ = cancel.cancelled() => return Err(StepError::Cancelled),
                     res = self.data.read_space_weather() => res,
                 }
-                .map_err(|cause| StepError::Action {
-                    action: DATA_READ.to_string(),
-                    cause,
-                })?;
-                serde_json::to_value(&snapshot).map_err(|e| StepError::Action {
-                    action: DATA_READ.to_string(),
-                    cause: format!("output serialize: {e}"),
-                })
+                .map_err(|cause| StepError::service(DATA_READ, cause))?;
+                serde_json::to_value(&snapshot)
+            .map_err(|e| StepError::internal(DATA_READ, format!("output serialize: {e}")))
             }
             ReadSource::Grid => {
                 let grid = tokio::select! {
@@ -806,35 +776,27 @@ impl Action for DataRead {
                     _ = cancel.cancelled() => return Err(StepError::Cancelled),
                     res = self.data.read_grid() => res,
                 }
-                .map_err(|cause| StepError::Action {
-                    action: DATA_READ.to_string(),
-                    cause,
-                })?;
+                .map_err(|cause| StepError::service(DATA_READ, cause))?;
                 Ok(json!({ "grid": grid }))
             }
-            ReadSource::HeardStations => Err(StepError::Action {
-                action: DATA_READ.to_string(),
-                cause: HEARD_STATIONS_UNSUPPORTED.to_string(),
-            }),
+            ReadSource::HeardStations => {
+                Err(StepError::invalid(DATA_READ, HEARD_STATIONS_UNSUPPORTED))
+            }
             ReadSource::LastConnectedGateway => {
                 let record = tokio::select! {
                     biased;
                     _ = cancel.cancelled() => return Err(StepError::Cancelled),
                     res = self.data.read_last_connected_gateway() => res,
                 }
-                .map_err(|cause| StepError::Action {
-                    action: DATA_READ.to_string(),
-                    cause,
-                })?;
+                .map_err(|cause| StepError::service(DATA_READ, cause))?;
                 match record {
-                    Some(r) => serde_json::to_value(&r).map_err(|e| StepError::Action {
-                        action: DATA_READ.to_string(),
-                        cause: format!("output serialize: {e}"),
+                    Some(r) => serde_json::to_value(&r).map_err(|e| {
+                        StepError::internal(DATA_READ, format!("output serialize: {e}"))
                     }),
-                    None => Err(StepError::Action {
-                        action: DATA_READ.to_string(),
-                        cause: LAST_CONNECTED_GATEWAY_NO_RECORD.to_string(),
-                    }),
+                    None => Err(StepError::unavailable(
+                        DATA_READ,
+                        LAST_CONNECTED_GATEWAY_NO_RECORD,
+                    )),
                 }
             }
             ReadSource::ModemStatus => {
@@ -843,14 +805,9 @@ impl Action for DataRead {
                     _ = cancel.cancelled() => return Err(StepError::Cancelled),
                     res = self.data.read_modem_status() => res,
                 }
-                .map_err(|cause| StepError::Action {
-                    action: DATA_READ.to_string(),
-                    cause,
-                })?;
-                serde_json::to_value(&dto).map_err(|e| StepError::Action {
-                    action: DATA_READ.to_string(),
-                    cause: format!("output serialize: {e}"),
-                })
+                .map_err(|cause| StepError::service(DATA_READ, cause))?;
+                serde_json::to_value(&dto)
+            .map_err(|e| StepError::internal(DATA_READ, format!("output serialize: {e}")))
             }
             ReadSource::BackendStatus => {
                 let dto = tokio::select! {
@@ -858,14 +815,9 @@ impl Action for DataRead {
                     _ = cancel.cancelled() => return Err(StepError::Cancelled),
                     res = self.data.read_backend_status() => res,
                 }
-                .map_err(|cause| StepError::Action {
-                    action: DATA_READ.to_string(),
-                    cause,
-                })?;
-                serde_json::to_value(&dto).map_err(|e| StepError::Action {
-                    action: DATA_READ.to_string(),
-                    cause: format!("output serialize: {e}"),
-                })
+                .map_err(|cause| StepError::service(DATA_READ, cause))?;
+                serde_json::to_value(&dto)
+            .map_err(|e| StepError::internal(DATA_READ, format!("output serialize: {e}")))
             }
             ReadSource::AppStatus => {
                 // `read_app_status` already returns the `ServerInfoDto`-shaped
@@ -876,10 +828,7 @@ impl Action for DataRead {
                     _ = cancel.cancelled() => return Err(StepError::Cancelled),
                     res = self.data.read_app_status() => res,
                 }
-                .map_err(|cause| StepError::Action {
-                    action: DATA_READ.to_string(),
-                    cause,
-                })
+                .map_err(|cause| StepError::service(DATA_READ, cause))
             }
             ReadSource::Config => {
                 let dto = tokio::select! {
@@ -887,14 +836,9 @@ impl Action for DataRead {
                     _ = cancel.cancelled() => return Err(StepError::Cancelled),
                     res = self.data.read_config() => res,
                 }
-                .map_err(|cause| StepError::Action {
-                    action: DATA_READ.to_string(),
-                    cause,
-                })?;
-                serde_json::to_value(&dto).map_err(|e| StepError::Action {
-                    action: DATA_READ.to_string(),
-                    cause: format!("output serialize: {e}"),
-                })
+                .map_err(|cause| StepError::service(DATA_READ, cause))?;
+                serde_json::to_value(&dto)
+            .map_err(|e| StepError::internal(DATA_READ, format!("output serialize: {e}")))
             }
             ReadSource::ArdopConfig => {
                 let dto = tokio::select! {
@@ -902,14 +846,9 @@ impl Action for DataRead {
                     _ = cancel.cancelled() => return Err(StepError::Cancelled),
                     res = self.data.read_ardop_config() => res,
                 }
-                .map_err(|cause| StepError::Action {
-                    action: DATA_READ.to_string(),
-                    cause,
-                })?;
-                serde_json::to_value(&dto).map_err(|e| StepError::Action {
-                    action: DATA_READ.to_string(),
-                    cause: format!("output serialize: {e}"),
-                })
+                .map_err(|cause| StepError::service(DATA_READ, cause))?;
+                serde_json::to_value(&dto)
+            .map_err(|e| StepError::internal(DATA_READ, format!("output serialize: {e}")))
             }
             ReadSource::VaraConfig => {
                 let dto = tokio::select! {
@@ -917,14 +856,9 @@ impl Action for DataRead {
                     _ = cancel.cancelled() => return Err(StepError::Cancelled),
                     res = self.data.read_vara_config() => res,
                 }
-                .map_err(|cause| StepError::Action {
-                    action: DATA_READ.to_string(),
-                    cause,
-                })?;
-                serde_json::to_value(&dto).map_err(|e| StepError::Action {
-                    action: DATA_READ.to_string(),
-                    cause: format!("output serialize: {e}"),
-                })
+                .map_err(|cause| StepError::service(DATA_READ, cause))?;
+                serde_json::to_value(&dto)
+            .map_err(|e| StepError::internal(DATA_READ, format!("output serialize: {e}")))
             }
             ReadSource::PacketConfig => {
                 let dto = tokio::select! {
@@ -932,14 +866,9 @@ impl Action for DataRead {
                     _ = cancel.cancelled() => return Err(StepError::Cancelled),
                     res = self.data.read_packet_config() => res,
                 }
-                .map_err(|cause| StepError::Action {
-                    action: DATA_READ.to_string(),
-                    cause,
-                })?;
-                serde_json::to_value(&dto).map_err(|e| StepError::Action {
-                    action: DATA_READ.to_string(),
-                    cause: format!("output serialize: {e}"),
-                })
+                .map_err(|cause| StepError::service(DATA_READ, cause))?;
+                serde_json::to_value(&dto)
+            .map_err(|e| StepError::internal(DATA_READ, format!("output serialize: {e}")))
             }
             ReadSource::RigConfig => {
                 let dto = tokio::select! {
@@ -947,14 +876,9 @@ impl Action for DataRead {
                     _ = cancel.cancelled() => return Err(StepError::Cancelled),
                     res = self.data.read_rig_config() => res,
                 }
-                .map_err(|cause| StepError::Action {
-                    action: DATA_READ.to_string(),
-                    cause,
-                })?;
-                serde_json::to_value(&dto).map_err(|e| StepError::Action {
-                    action: DATA_READ.to_string(),
-                    cause: format!("output serialize: {e}"),
-                })
+                .map_err(|cause| StepError::service(DATA_READ, cause))?;
+                serde_json::to_value(&dto)
+            .map_err(|e| StepError::internal(DATA_READ, format!("output serialize: {e}")))
             }
         }
     }
@@ -1762,7 +1686,7 @@ mod tests {
             .await
             .expect_err("no_copy must surface as a step error");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "data.spacewx_wwv");
                 assert!(cause.contains("no_copy"));
                 assert!(cause.contains("wwv-1-2-70.wav"));
@@ -1783,7 +1707,7 @@ mod tests {
             .await
             .expect_err("hard failure must surface");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "data.spacewx_wwv");
                 assert_eq!(cause, "rig unreachable: fd closed");
             }
@@ -1874,7 +1798,7 @@ mod tests {
             .await
             .expect_err("must surface");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "data.spacewx_swpc");
                 assert_eq!(cause, "could not reach NOAA SWPC");
             }
@@ -1948,7 +1872,7 @@ mod tests {
             .await
             .expect_err("must surface");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "data.stationlist_update");
                 assert_eq!(cause, "listing response was not recognizable");
             }
@@ -2010,7 +1934,7 @@ mod tests {
             .await
             .expect_err("must surface");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "data.read");
                 assert_eq!(cause, "backend offline");
             }
@@ -2086,7 +2010,7 @@ mod tests {
             .await
             .expect_err("heard_stations has no backend seam — must error");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "data.read");
                 assert_eq!(cause, HEARD_STATIONS_UNSUPPORTED);
                 assert!(
@@ -2136,7 +2060,7 @@ mod tests {
             .await
             .expect_err("no record yet must error, not return null");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "data.read");
                 assert_eq!(cause, LAST_CONNECTED_GATEWAY_NO_RECORD);
                 assert!(
@@ -2161,7 +2085,7 @@ mod tests {
             .await
             .expect_err("must surface");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "data.read");
                 assert_eq!(cause, "disk read failed");
             }

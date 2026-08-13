@@ -98,20 +98,18 @@ impl Action for DocsSearch {
 
     async fn execute(&self, params: Value, cancel: CancellationToken) -> Result<Value, StepError> {
         let parsed: DocsSearchParams =
-            serde_json::from_value(params).map_err(|e| StepError::Action {
-                action: DATA_DOCS_SEARCH.to_string(),
-                cause: format!("invalid params: {e}"),
-            })?;
+            serde_json::from_value(params)
+                .map_err(|e| StepError::invalid(DATA_DOCS_SEARCH, format!("invalid params: {e}")))?;
 
         // An empty/whitespace-only query is an author mistake, not a request for
         // "every document" — reject as invalid params BEFORE any search. (The
         // FTS layer treats an empty query as zero hits, so a passthrough would
         // silently hide the mistake behind an empty result.)
         if parsed.query.trim().is_empty() {
-            return Err(StepError::Action {
-                action: DATA_DOCS_SEARCH.to_string(),
-                cause: "invalid params: query must be a non-empty string".to_string(),
-            });
+            return Err(StepError::invalid(
+                DATA_DOCS_SEARCH,
+                "invalid params: query must be a non-empty string",
+            ));
         }
 
         // SAME `search_docs` the MCP `docs_search` tool runs (raw-then-OR
@@ -121,10 +119,7 @@ impl Action for DocsSearch {
             _ = cancel.cancelled() => return Err(StepError::Cancelled),
             res = self.docs_search.search_docs(&parsed.query) => res,
         }
-        .map_err(|cause| StepError::Action {
-            action: DATA_DOCS_SEARCH.to_string(),
-            cause,
-        })?;
+        .map_err(|cause| StepError::service(DATA_DOCS_SEARCH, cause))?;
 
         // Project each hit to the spec'd `{title, slug, snippet}` shape. Zero
         // hits yields `{"hits":[]}` — a normal result, never an error.
@@ -328,7 +323,7 @@ mod tests {
             .await
             .expect_err("an empty query is invalid params");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "data.docs_search");
                 assert!(cause.contains("invalid params"), "got: {cause}");
             }
@@ -343,7 +338,7 @@ mod tests {
             .await
             .expect_err("a missing query field is invalid params");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "data.docs_search");
                 assert!(cause.contains("invalid params"), "got: {cause}");
             }

@@ -114,20 +114,14 @@ impl Action for ConfigSetArdop {
 
     async fn execute(&self, params: Value, cancel: CancellationToken) -> Result<Value, StepError> {
         let parsed: SetArdopParams =
-            serde_json::from_value(params).map_err(|e| StepError::Action {
-                action: CONFIG_SET_ARDOP.to_string(),
-                cause: format!("invalid params: {e}"),
-            })?;
+            serde_json::from_value(params)
+                .map_err(|e| StepError::invalid(CONFIG_SET_ARDOP, format!("invalid params: {e}")))?;
 
         // Validate BEFORE any read — a `drive_level > 100` is rejected up front
         // via the SAME `validate_drive_level` the MCP `set_ardop` write port
         // uses, so the routine and agent front-ends reject identically.
-        tuxlink_mcp_core::validate::validate_drive_level(parsed.drive_level).map_err(|e| {
-            StepError::Action {
-                action: CONFIG_SET_ARDOP.to_string(),
-                cause: format!("invalid params: {e}"),
-            }
-        })?;
+        tuxlink_mcp_core::validate::validate_drive_level(parsed.drive_level)
+            .map_err(|e| StepError::invalid(CONFIG_SET_ARDOP, format!("invalid params: {e}")))?;
 
         // Locked read-modify-write: `(old, new)` computed inside the config
         // writer lock (no lost update). Cancellation is honored promptly.
@@ -136,10 +130,7 @@ impl Action for ConfigSetArdop {
             _ = cancel.cancelled() => return Err(StepError::Cancelled),
             res = self.config_write.set_ardop_drive_level(parsed.drive_level) => res,
         }
-        .map_err(|cause| StepError::Action {
-            action: CONFIG_SET_ARDOP.to_string(),
-            cause,
-        })?;
+        .map_err(|cause| StepError::service(CONFIG_SET_ARDOP, cause))?;
 
         // `old` is `Option<u8>` → serializes to `null` when previously unset.
         Ok(json!({
@@ -242,7 +233,7 @@ mod tests {
             .await
             .expect_err("101 exceeds the 0..=100 range");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "config.set_ardop");
                 assert!(cause.contains("invalid params"), "got: {cause}");
             }
@@ -318,7 +309,7 @@ mod tests {
         .await
         .expect_err("a setter failure must surface as a step error");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "config.set_ardop");
                 assert!(cause.contains("wizard not completed"), "got: {cause}");
             }

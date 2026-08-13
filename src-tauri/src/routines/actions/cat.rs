@@ -221,25 +221,17 @@ impl Action for RigReadState {
             .arbiter
             .acquire(&rig_id, holder, policy, timeout, &cancel)
             .await
-            .map_err(|e| StepError::Action {
-                action: RIG_READ_STATE.to_string(),
-                cause: e.to_string(),
-            })?;
+            .map_err(|e| StepError::unavailable(RIG_READ_STATE, e.to_string()))?;
 
         let state = tokio::select! {
             biased;
             _ = cancel.cancelled() => return Err(StepError::Cancelled),
             res = self.rig.read_state() => res,
         }
-        .map_err(|cause| StepError::Action {
-            action: RIG_READ_STATE.to_string(),
-            cause,
-        })?;
+        .map_err(|cause| StepError::service(RIG_READ_STATE, cause))?;
 
-        serde_json::to_value(&state).map_err(|e| StepError::Action {
-            action: RIG_READ_STATE.to_string(),
-            cause: format!("state serialize: {e}"),
-        })
+        serde_json::to_value(&state)
+            .map_err(|e| StepError::internal(RIG_READ_STATE, format!("state serialize: {e}")))
         // `_lease` drops here — released after the read completes.
     }
 }
@@ -406,10 +398,8 @@ impl Action for RigValidatePreset {
 
     async fn execute(&self, params: Value, cancel: CancellationToken) -> Result<Value, StepError> {
         let parsed: ValidatePresetParams =
-            serde_json::from_value(params.clone()).map_err(|e| StepError::Action {
-                action: RIG_VALIDATE_PRESET.to_string(),
-                cause: format!("invalid params: {e}"),
-            })?;
+            serde_json::from_value(params.clone())
+                .map_err(|e| StepError::invalid(RIG_VALIDATE_PRESET, format!("invalid params: {e}")))?;
 
         let rig_id = rig_id_from_params(&params);
         let policy = busy_policy_from_params(&params);
@@ -420,20 +410,14 @@ impl Action for RigValidatePreset {
             .arbiter
             .acquire(&rig_id, holder, policy, timeout, &cancel)
             .await
-            .map_err(|e| StepError::Action {
-                action: RIG_VALIDATE_PRESET.to_string(),
-                cause: e.to_string(),
-            })?;
+            .map_err(|e| StepError::unavailable(RIG_VALIDATE_PRESET, e.to_string()))?;
 
         let state = tokio::select! {
             biased;
             _ = cancel.cancelled() => return Err(StepError::Cancelled),
             res = self.rig.read_state() => res,
         }
-        .map_err(|cause| StepError::Action {
-            action: RIG_VALIDATE_PRESET.to_string(),
-            cause,
-        })?;
+        .map_err(|cause| StepError::service(RIG_VALIDATE_PRESET, cause))?;
 
         let preset_raw = params.get("preset").cloned().unwrap_or(Value::Null);
         let (diff, compared, skipped) =
@@ -556,10 +540,8 @@ impl Action for RigApplyPreset {
 
     async fn execute(&self, params: Value, cancel: CancellationToken) -> Result<Value, StepError> {
         let parsed: ApplyPresetParams =
-            serde_json::from_value(params.clone()).map_err(|e| StepError::Action {
-                action: RIG_APPLY_PRESET.to_string(),
-                cause: format!("invalid params: {e}"),
-            })?;
+            serde_json::from_value(params.clone())
+                .map_err(|e| StepError::invalid(RIG_APPLY_PRESET, format!("invalid params: {e}")))?;
 
         let rig_id = rig_id_from_params(&params);
         let policy = busy_policy_from_params(&params);
@@ -570,30 +552,21 @@ impl Action for RigApplyPreset {
             .arbiter
             .acquire(&rig_id, holder, policy, timeout, &cancel)
             .await
-            .map_err(|e| StepError::Action {
-                action: RIG_APPLY_PRESET.to_string(),
-                cause: e.to_string(),
-            })?;
+            .map_err(|e| StepError::unavailable(RIG_APPLY_PRESET, e.to_string()))?;
 
         tokio::select! {
             biased;
             _ = cancel.cancelled() => return Err(StepError::Cancelled),
             res = self.rig.apply(parsed.preset.frequency_hz, parsed.preset.mode.clone()) => res,
         }
-        .map_err(|cause| StepError::Action {
-            action: RIG_APPLY_PRESET.to_string(),
-            cause,
-        })?;
+        .map_err(|cause| StepError::service(RIG_APPLY_PRESET, cause))?;
 
         let post = tokio::select! {
             biased;
             _ = cancel.cancelled() => return Err(StepError::Cancelled),
             res = self.rig.read_state() => res,
         }
-        .map_err(|cause| StepError::Action {
-            action: RIG_APPLY_PRESET.to_string(),
-            cause,
-        })?;
+        .map_err(|cause| StepError::service(RIG_APPLY_PRESET, cause))?;
 
         let freq_delta = (i128::from(post.freq_hz) - i128::from(parsed.preset.frequency_hz)).abs();
         let mode_matches = post
@@ -601,9 +574,9 @@ impl Action for RigApplyPreset {
             .as_deref()
             .is_some_and(|m| m.eq_ignore_ascii_case(parsed.preset.mode.trim()));
         if freq_delta > i128::from(parsed.tolerance_hz) || !mode_matches {
-            return Err(StepError::Action {
-                action: RIG_APPLY_PRESET.to_string(),
-                cause: format!(
+            return Err(StepError::unavailable(
+                RIG_APPLY_PRESET,
+                format!(
                     "apply_preset verification mismatch: requested {req_freq}Hz/{req_mode}, \
                      rig now reports {actual_freq}Hz/{actual_mode:?}",
                     req_freq = parsed.preset.frequency_hz,
@@ -611,13 +584,11 @@ impl Action for RigApplyPreset {
                     actual_freq = post.freq_hz,
                     actual_mode = post.mode,
                 ),
-            });
+            ));
         }
 
-        serde_json::to_value(&post).map_err(|e| StepError::Action {
-            action: RIG_APPLY_PRESET.to_string(),
-            cause: format!("state serialize: {e}"),
-        })
+        serde_json::to_value(&post)
+            .map_err(|e| StepError::internal(RIG_APPLY_PRESET, format!("state serialize: {e}")))
         // `_lease` drops here — released after apply + verify completes.
     }
 }
@@ -681,15 +652,9 @@ impl Action for RigSwitchVfo {
             .arbiter
             .acquire(&rig_id, holder, policy, timeout, &cancel)
             .await
-            .map_err(|e| StepError::Action {
-                action: RIG_SWITCH_VFO.to_string(),
-                cause: e.to_string(),
-            })?;
+            .map_err(|e| StepError::unavailable(RIG_SWITCH_VFO, e.to_string()))?;
 
-        Err(StepError::Action {
-            action: RIG_SWITCH_VFO.to_string(),
-            cause: RIG_SWITCH_VFO_UNSUPPORTED.to_string(),
-        })
+        Err(StepError::invalid(RIG_SWITCH_VFO, RIG_SWITCH_VFO_UNSUPPORTED))
         // `_lease` drops here — released immediately (nothing to hold it for).
     }
 }
@@ -754,15 +719,9 @@ impl Action for RigTuneAtu {
             .arbiter
             .acquire(&rig_id, holder, policy, timeout, &cancel)
             .await
-            .map_err(|e| StepError::Action {
-                action: RIG_TUNE_ATU.to_string(),
-                cause: e.to_string(),
-            })?;
+            .map_err(|e| StepError::unavailable(RIG_TUNE_ATU, e.to_string()))?;
 
-        Err(StepError::Action {
-            action: RIG_TUNE_ATU.to_string(),
-            cause: RIG_TUNE_ATU_UNSUPPORTED.to_string(),
-        })
+        Err(StepError::invalid(RIG_TUNE_ATU, RIG_TUNE_ATU_UNSUPPORTED))
         // `_lease` drops here — released immediately (nothing to hold it for).
     }
 }
@@ -973,7 +932,7 @@ mod tests {
             .await
             .expect_err("read failure must surface");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "rig.read_state");
                 assert_eq!(cause, "rigctld spawn failed: no such file");
             }
@@ -1223,7 +1182,7 @@ mod tests {
             .await
             .expect_err("re-read failure must surface");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "rig.apply_preset");
                 assert_eq!(cause, "rig I/O error: connection reset");
             }
@@ -1252,7 +1211,7 @@ mod tests {
             .await
             .expect_err("value mismatch must error");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "rig.apply_preset");
                 assert!(
                     cause.contains("verification mismatch"),
@@ -1305,7 +1264,7 @@ mod tests {
             .await
             .expect_err("apply failure must surface");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "rig.apply_preset");
                 assert_eq!(cause, "CAT tune failed: RPRT -1");
             }
@@ -1368,7 +1327,7 @@ mod tests {
             .await
             .expect_err("switch_vfo has no real seam — must error");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "rig.switch_vfo");
                 assert_eq!(cause, RIG_SWITCH_VFO_UNSUPPORTED);
                 assert!(cause.contains("Rig trait"), "must name the missing seam");
@@ -1405,7 +1364,7 @@ mod tests {
             .await
             .expect_err("tune_atu has no real seam — must error");
         match err {
-            StepError::Action { action, cause } => {
+            StepError::Action { action, cause, .. } => {
                 assert_eq!(action, "rig.tune_atu");
                 assert_eq!(cause, RIG_TUNE_ATU_UNSUPPORTED);
                 assert!(

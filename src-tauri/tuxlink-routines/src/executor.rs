@@ -119,9 +119,12 @@ pub enum DelaySpec {
 
 /// Parse "+5m" / "+90s" / "+2h" / "next:hour" / "next:day" (spec §6).
 pub fn parse_delay(spec: &str) -> Result<DelaySpec, StepError> {
-    let bad = || StepError::Action {
-        action: "delay".into(),
-        cause: format!("unparseable delay spec '{spec}' (want +Ns/+Nm/+Nh or next:hour/next:day)"),
+    // The authored delay string is malformed: the step's doing.
+    let bad = || {
+        StepError::invalid(
+            "delay",
+            format!("unparseable delay spec '{spec}' (want +Ns/+Nm/+Nh or next:hour/next:day)"),
+        )
     };
     if let Some(rest) = spec.strip_prefix("next:") {
         return match rest {
@@ -207,13 +210,13 @@ fn eval_branch_condition(
     match (op, rhs) {
         (None, None) => match v {
             serde_json::Value::Bool(b) => Ok(*b),
-            other => Err(StepError::Action {
-                action: "branch".into(),
-                cause: format!(
+            other => Err(StepError::invalid(
+                "branch",
+                format!(
                     "branch variable '{on}' resolved to {other}, which is not a boolean; \
                      add a comparison (op + value) to branch on it"
                 ),
-            }),
+            )),
         },
         (Some(op), Some(rhs)) => {
             if let (Some(a), Some(b)) = (v.as_f64(), rhs.as_f64()) {
@@ -229,18 +232,18 @@ fn eval_branch_condition(
             match op {
                 CmpOp::Eq => Ok(v == rhs),
                 CmpOp::Ne => Ok(v != rhs),
-                _ => Err(StepError::Action {
-                    action: "branch".into(),
-                    cause: format!(
+                _ => Err(StepError::invalid(
+                    "branch",
+                    format!(
                         "branch on '{on}': ordering comparison needs two numbers; got {v} vs {rhs}"
                     ),
-                }),
+                )),
             }
         }
-        _ => Err(StepError::Action {
-            action: "branch".into(),
-            cause: format!("branch on '{on}': op and value must be supplied together"),
-        }),
+        _ => Err(StepError::invalid(
+            "branch",
+            format!("branch on '{on}': op and value must be supplied together"),
+        )),
     }
 }
 
@@ -332,9 +335,11 @@ async fn run_action_step_shared(
     let action = ctx
         .registry
         .get(&step.action)
-        .ok_or_else(|| StepError::Action {
-            action: step.action.clone(),
-            cause: format!("action '{}' is not in the registry", step.action),
+        .ok_or_else(|| {
+            StepError::invalid(
+                step.action.clone(),
+                format!("action '{}' is not in the registry", step.action),
+            )
         })?;
     let resolved = {
         let guard = vars.lock().await;
@@ -533,13 +538,13 @@ async fn run_track_steps(
         }
         executed_steps += 1;
         if executed_steps > MAX_STEPS_PER_TRACK {
-            return Err(StepError::Action {
-                action: "track".into(),
-                cause: format!(
+            return Err(StepError::invalid(
+                "track",
+                format!(
                     "track '{}' exceeded {MAX_STEPS_PER_TRACK} executed steps — likely a branch cycle; runs must terminate",
                     track.name
                 ),
-            });
+            ));
         }
         let step = &track.steps[idx];
         visited.insert(step.id().clone());
@@ -583,12 +588,14 @@ async fn run_track_steps(
                         );
                         match arm.first() {
                             Some(target) => {
-                                idx = index_of(track, target).ok_or_else(|| StepError::Action {
-                                    action: "branch".into(),
-                                    cause: format!(
-                                        "branch target '{}' not found in track '{}'",
-                                        target.0, track.name
-                                    ),
+                                idx = index_of(track, target).ok_or_else(|| {
+                                    StepError::invalid(
+                                        "branch",
+                                        format!(
+                                            "branch target '{}' not found in track '{}'",
+                                            target.0, track.name
+                                        ),
+                                    )
                                 })?;
                             }
                             None => idx += 1, // empty arm: fall through
@@ -601,24 +608,25 @@ async fn run_track_steps(
                     } => {
                         // Validate: attempts must be > 0 or the loop never executes.
                         if *attempts == 0 {
-                            return Err(StepError::Action {
-                            action: "retry".into(),
-                            cause: format!("retry step '{}' has attempts: 0 — it can never execute its target", c.id.0),
-                        });
+                            return Err(StepError::invalid(
+                                "retry",
+                                format!("retry step '{}' has attempts: 0 — it can never execute its target", c.id.0),
+                            ));
                         }
-                        let target_idx =
-                            index_of(track, target).ok_or_else(|| StepError::Action {
-                                action: "retry".into(),
-                                cause: format!(
+                        let target_idx = index_of(track, target).ok_or_else(|| {
+                            StepError::invalid(
+                                "retry",
+                                format!(
                                     "retry target '{}' not found in track '{}'",
                                     target.0, track.name
                                 ),
-                            })?;
+                            )
+                        })?;
                         let Step::Action(inner) = &track.steps[target_idx] else {
-                            return Err(StepError::Action {
-                                action: "retry".into(),
-                                cause: format!("retry target '{}' is not an action step", target.0),
-                            });
+                            return Err(StepError::invalid(
+                                "retry",
+                                format!("retry target '{}' is not an action step", target.0),
+                            ));
                         };
                         let mut last_err = None;
                         for attempt in 0..*attempts {
@@ -727,14 +735,14 @@ async fn run_track_steps(
                             },
                         );
                         if ctx.depth >= crate::compose::MAX_CALL_DEPTH {
-                            let err = StepError::Action {
-                                action: format!("call:{routine}"),
-                                cause: format!(
+                            let err = StepError::invalid(
+                                format!("call:{routine}"),
+                                format!(
                                     "call depth {} exceeds cap {} — recursive routine chain",
                                     ctx.depth,
                                     crate::compose::MAX_CALL_DEPTH
                                 ),
-                            };
+                            );
                             journal(
                                 ctx,
                                 RunEvent::StepErr {
@@ -967,10 +975,11 @@ pub async fn run_tracks(
         // cancel path below and propagate verbatim.
         let joined = match joined {
             Ok(inner) => inner,
-            Err(join_error) => Err(StepError::Action {
-                action: "track".into(),
-                cause: format!("track task panicked: {join_error}"),
-            }),
+            // A panic in our own track task is OURS, never the author's.
+            Err(join_error) => Err(StepError::internal(
+                "track",
+                format!("track task panicked: {join_error}"),
+            )),
         };
         match joined {
             Ok(TrackEnd::Completed) => {}

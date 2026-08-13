@@ -109,6 +109,13 @@ fn write_err(e: WritePortError) -> ErrorData {
             None,
         ),
         WritePortError::Invalid(reason) => ErrorData::invalid_request(reason, None),
+        // The full Display line, not the bare reason: the reader is an agent
+        // deciding what to do next, and "unavailable right now (not your
+        // call's fault; retry later)" is the answer it needs. Carried as an
+        // internal_error code because the CALL was fine — invalid_request
+        // would teach the agent to rewrite a call that has nothing wrong
+        // with it (the tuxlink-0rc3h guess-loop, reintroduced).
+        e @ WritePortError::Unavailable(_) => ErrorData::internal_error(e.to_string(), None),
         WritePortError::Failed(reason) => ErrorData::internal_error(reason, None),
     }
 }

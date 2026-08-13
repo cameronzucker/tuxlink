@@ -1246,18 +1246,51 @@ pub trait AbortPort: Send + Sync {
 /// `Denied` onto an authorization-shaped error, `Invalid` onto
 /// `invalid_request`, and `Failed` onto `internal_error`.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
+/// This enum's variants ARE the disposition vocabulary at the MCP write
+/// boundary (mutation-contract epic; the routines boundary carries the same
+/// vocabulary as `tuxlink_routines::error::Disposition`): each variant says
+/// WHOSE DOING the refusal was, so the answer is data rather than something
+/// reconstructed from prose after the fact.
 pub enum WritePortError {
     /// The egress gate refused the Agent caller (unarmed / expired / tainted /
     /// poisoned). Carries the `EgressDenied` reason. Write tier only.
+    /// Authority is absent; the fix is an operator act, not a better call.
     #[error("denied: {0}")]
     Denied(String),
     /// The agent-supplied input failed validation BEFORE the gate. The session's
-    /// armed grant is not consumed.
+    /// armed grant is not consumed. Attributable to the CALLER: retrying the
+    /// same call yields the same refusal.
     #[error("invalid: {0}")]
     Invalid(String),
-    /// The input was valid and the gate passed, but the operation itself failed.
+    /// The input is fine and the product cannot do it RIGHT NOW — backend
+    /// offline, modem not running, radio busy. Environment and timing, not
+    /// the caller: the same call can succeed later, and the Display text says
+    /// so because the reader is an agent deciding what to do next.
+    #[error("unavailable right now (not your call's fault; retry later): {0}")]
+    Unavailable(String),
+    /// The input was valid and the gate passed, but the operation itself
+    /// failed for a cause not classified deeper (the seam returned a bare
+    /// string, or it is genuinely our bug). Never the caller's doing.
+    /// Classifying a site into [`Unavailable`](Self::Unavailable) when the
+    /// cause is provably timing is the ongoing per-seam refinement.
     #[error("failed: {0}")]
     Failed(String),
+}
+
+impl WritePortError {
+    /// Whether this refusal is a statement about the CALLER (their input
+    /// violated the contract). Everything else must never be counted against
+    /// the caller — the scoring predicate the bench's `is_model_attributable`
+    /// established.
+    pub fn is_caller_attributable(&self) -> bool {
+        matches!(self, Self::Invalid(_))
+    }
+
+    /// Whether retrying the same call later can plausibly succeed with
+    /// nobody changing anything.
+    pub fn is_retryable(&self) -> bool {
+        matches!(self, Self::Unavailable(_))
+    }
 }
 
 impl From<ValidationError> for WritePortError {
@@ -2600,5 +2633,44 @@ mod authoring_disposition_tests {
         let r = &d.remedies[0];
         assert_eq!(r.routine.as_deref(), Some("child"), "remedy targets the offending callee");
         assert!(matches!(r.actor, RemedyActor::Agent));
+    }
+
+    // ── WritePortError as the disposition vocabulary (mutation-contract a) ──
+
+    /// Only Invalid counts against the caller; only Unavailable invites a
+    /// retry. Denied needs an operator act and Failed needs a human to read
+    /// it — an agent looping on either is the guess-loop tuxlink-0rc3h
+    /// removed.
+    #[test]
+    fn write_error_predicates_partition_the_variants() {
+        let invalid = WritePortError::Invalid("bad".into());
+        let denied = WritePortError::Denied("unarmed".into());
+        let unavailable = WritePortError::Unavailable("backend offline".into());
+        let failed = WritePortError::Failed("io".into());
+
+        assert!(invalid.is_caller_attributable());
+        assert!(!denied.is_caller_attributable());
+        assert!(!unavailable.is_caller_attributable());
+        assert!(!failed.is_caller_attributable());
+
+        assert!(unavailable.is_retryable());
+        assert!(!invalid.is_retryable());
+        assert!(!denied.is_retryable());
+        assert!(!failed.is_retryable());
+    }
+
+    /// The agent-visible text carries the classification: the reader is a
+    /// model deciding what to do next, and "not your call's fault; retry
+    /// later" is the instruction that stops it rewriting a correct call.
+    /// The pre-existing prefixes stay byte-identical.
+    #[test]
+    fn write_error_display_teaches_the_next_move() {
+        assert_eq!(
+            WritePortError::Unavailable("backend offline".into()).to_string(),
+            "unavailable right now (not your call's fault; retry later): backend offline"
+        );
+        assert_eq!(WritePortError::Denied("unarmed".into()).to_string(), "denied: unarmed");
+        assert_eq!(WritePortError::Invalid("bad".into()).to_string(), "invalid: bad");
+        assert_eq!(WritePortError::Failed("io".into()).to_string(), "failed: io");
     }
 }
