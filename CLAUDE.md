@@ -156,7 +156,7 @@ cat /tmp/codex-prompt.txt | npx --yes @openai/codex review - 2>&1 \
 The custom-prompt pattern is what worked for the `tuxlink-4ek` ARDOP UI adrev (2026-05-30); the prior `--base + prompt` syntax produces a 5-line argparse error stub and the tee'd file contains nothing useful. **If you see the stub, the prompt got rejected — re-run with the stdin pattern.** Verifying: `wc -l dev/adversarial/*-codex.md` — a real review produces ~1500–4000+ lines including the diff + Codex's exec commands + final findings block; a stub is ~5 lines.
 
 - **Authentication:** ChatGPT-mode, cached at `~/.codex/auth.json`. Already authenticated — no setup needed.
-- **Model policy — GPT-5.6 permitted ([ADR 0028](docs/adr/0028-lift-gpt-5-6-ban.md), supersedes the ADR 0023/0026 ban):** GPT-5.6 (e.g. `gpt-5.6-sol`, reachable via `npx --yes @openai/codex@latest exec -m gpt-5.6-sol …`) MAY be used for adversarial review and every other Tuxlink task; a GPT-5.6 adrev round satisfies the "at least one round via Codex" requirement. GPT-5.5 remains equally acceptable and is cost-free on the ChatGPT plan (GPT-5.6 rides OpenRouter per-token pricing), so 5.5 stays the sensible default when 5.6's marginal capability isn't needed. No shadow/dual-run. Standing groundedness gates are unchanged — findings from any model are grounded against source before action. The ADR is canonical; this bullet is the pointer.
+- **Model policy — GPT-5.6 permitted ([ADR 0028](docs/adr/0028-lift-gpt-5-6-ban.md), supersedes the ADR 0023/0026 ban):** GPT-5.6 (e.g. `gpt-5.6-sol`, reachable via `npx --yes @openai/codex@latest exec -m gpt-5.6-sol …`) MAY be used for adversarial review and every other Tuxlink task; a GPT-5.6 adrev round satisfies the "at least one round via Codex" requirement. GPT-5.5 remains equally acceptable; GPT-5.6 variants (`sol`, `luna`) are now reachable on the ChatGPT plan too, so the original per-token cost caveat is retired — pick by task fit. Metered routing for any model is governed by §"Model spend — metered APIs are deny-by-default". No shadow/dual-run. Standing groundedness gates are unchanged — findings from any model are grounded against source before action. The ADR is canonical; this bullet is the pointer.
 - **When to use:** when a workflow (notably `superpowers:build-robust-features`) explicitly calls for "at least one round via Codex." Substitute Claude agents only when this is genuinely unavailable — it isn't unavailable here.
 - **MCP-server mode:** `npx --yes @openai/codex mcp-server` — expose Codex as an MCP server if you want the main loop to call it like a tool.
 
@@ -324,6 +324,40 @@ free, as do control-plane API calls — they are the intended path.
 
 Operating procedure, endpoints, profiles, and restore steps:
 [dev/runbooks/spark-serving/README.md](dev/runbooks/spark-serving/README.md).
+
+## Model spend — metered APIs are deny-by-default
+
+Model workloads (judges, adversarial review, subagents, evals — anything
+that sends tokens to a model) run on **plan-billed CLIs** or **local
+endpoints** ONLY:
+
+- `codex exec` under the ChatGPT-plan auth (stdin-prompt recipes in
+  §"OpenAI Codex CLI" above; `gpt-5.6-luna` is the proven judge
+  configuration).
+- `claude -p --model sonnet` under the Claude plan.
+- Local serving: the Spark control-plane endpoints, `localhost`, R2.
+
+Metered pay-per-token APIs — OpenRouter first among them — are
+**deny-by-default**. A key sitting in the OS keyring is NOT authorization
+to spend it; approval is per-use, from the operator, at the moment of the
+run. Why: single sessions have blown through entire budgets before;
+unpinned OpenRouter serving is wildly inconsistent; and the operator
+explicitly rejected an ADR as the vehicle for this rule, so **this section
+plus the hook are canonical**.
+[`.claude/hooks/block-metered-model-apis.sh`](.claude/hooks/block-metered-model-apis.sh)
+enforces it: metered endpoints, metered vendor key assignments, the
+`elmer-openrouter` keyring lookup, and codex invocations steered at a
+metered provider. Documented escape hatch, valid ONLY when the operator
+has approved the specific call (loud + audited at
+`dev/scratch/metered-api-overrides.log`):
+
+```bash
+TUXLINK_METERED_API_OVERRIDE=operator-approved <the approved command>
+```
+
+If the hook denies a command that merely *mentions* a metered host in text
+(a heredoc writing a prompt or doc), use the Write/Edit tools for that
+file instead of a Bash heredoc — the policy targets invocation, not prose.
 
 ## Git workflow — branch lifecycle state machine (ADR 0017)
 
