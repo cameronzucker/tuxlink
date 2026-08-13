@@ -1622,6 +1622,44 @@ impl AbortPort for MonolithAbortPort {
 }
 
 // ---------------------------------------------------------------------------
+/// Derive a save destination from an attachment's own filename.
+///
+/// The attachment name comes off an untrusted message, so this keeps only
+/// filename-safe graphic characters, replaces everything else with `_`, strips
+/// any directory structure, and caps the length. The result is a single path
+/// component, which `validate_attachment_dest` still checks for containment —
+/// this is the first of two layers, not a replacement for it.
+///
+/// Why it exists: a derived destination is BOUNDED (the attacker picks among
+/// the attachments already on the message), where a caller-supplied one is free
+/// text. That difference is what lets the save proceed under taint.
+fn derive_attachment_dest(filename: &str) -> String {
+    const MAX: usize = 128;
+    // Take the last path component so "../../etc/passwd" cannot survive as
+    // structure; the component scan in validate_attachment_dest would reject it
+    // anyway, but a derived name should never need rejecting.
+    let leaf = filename
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(filename)
+        .trim();
+    let mut out = String::with_capacity(MAX);
+    for ch in leaf.chars().take(MAX) {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    // A name of all-dots would read as a traversal component.
+    let trimmed = out.trim_matches('.').to_string();
+    if trimmed.is_empty() {
+        "attachment.bin".to_string()
+    } else {
+        trimmed
+    }
+}
+
 /// Parameter bandwidth for `mailbox_move`, shared by the call site and its
 /// test so the classification cannot drift away from what is asserted.
 ///
@@ -2161,10 +2199,20 @@ impl WritePort for MonolithWritePort {
         folder: String,
         id: String,
         filename: String,
-        dest: String,
+        dest: Option<String>,
     ) -> Result<String, WritePortError> {
         use crate::native_mailbox::FolderRef;
         use crate::winlink_backend::MessageId;
+        // A CALLER-CHOSEN dest is free text; a DERIVED one is not. Deriving it
+        // from the sanitized attachment name makes every parameter of this call
+        // bounded, so the per-datum gate lets it through in a tainted session —
+        // which is the state that refused 9 of these in the v26 run, every one
+        // with the operator's grant live (tuxlink-0rc3h).
+        let dest_was_caller_chosen = dest.is_some();
+        let dest = match dest {
+            Some(d) => d,
+            None => derive_attachment_dest(&filename),
+        };
         // The agent attachment-save target is a fixed, sandboxed base —
         // <app_data>/agent-attachments — NOT the native save dialog the GUI
         // command uses. Compute + create the base, then VALIDATE the dest
@@ -2185,10 +2233,27 @@ impl WritePort for MonolithWritePort {
 
         let audit = write_audit_sink(self.app.clone());
         let app = self.app.clone();
-        guarded_egress(
+        // PER-DATUM GATE. Writing a file into the agent's own sandboxed
+        // directory transmits nothing. `folder` resolved to a known folder and
+        // `id`/`filename` must name a message and an attachment that exist, so
+        // those three are bounded. `dest` is the deciding one: DERIVED from the
+        // attachment name it is bounded, CALLER-CHOSEN it is free text and a
+        // tainted session is refused.
+        let dest_input = if dest_was_caller_chosen {
+            tuxlink_security::provenance::Input::free_text("dest")
+        } else {
+            tuxlink_security::provenance::Input::system("dest")
+        };
+        tuxlink_security::provenance::guarded_local_write(
             &self.guard,
             EgressAuthority::Agent,
             "attachment_save",
+            &[
+                tuxlink_security::provenance::Input::closed_enum("folder"),
+                tuxlink_security::provenance::Input::system("id"),
+                tuxlink_security::provenance::Input::system("filename"),
+                dest_input,
+            ],
             &audit,
             || async move {
                 // Read the message + extract the attachment bytes by filename —
@@ -5811,6 +5876,41 @@ mod tests {
                 );
                 assert!(m.contains("WARNINGS"), "{code} must disclaim blocking: {m}");
             }
+        }
+
+        /// The derived destination handles an ATTACKER-SUPPLIED filename: it
+        /// comes off an untrusted message. This is the first of two layers
+        /// (`validate_attachment_dest` still checks containment), but a derived
+        /// name should never need rejecting in the first place.
+        #[test]
+        fn a_derived_attachment_dest_is_a_single_safe_component() {
+            use super::super::derive_attachment_dest as d;
+
+            assert_eq!(d("roster.txt"), "roster.txt");
+            assert_eq!(d("Report 2026.pdf"), "Report_2026.pdf");
+
+            // Directory structure is stripped, not escaped.
+            assert_eq!(d("../../etc/passwd"), "passwd");
+            assert_eq!(d("..\\..\\windows\\system32\\cfg"), "cfg");
+            assert_eq!(d("/absolute/path/x.bin"), "x.bin");
+
+            // Nothing that could read as a traversal component survives.
+            for hostile in ["..", ".", "...", "../", "  ..  "] {
+                let out = d(hostile);
+                assert!(
+                    !out.is_empty() && out != ".." && out != "." && !out.contains('/'),
+                    "{hostile:?} derived to {out:?}"
+                );
+            }
+
+            // Empty or fully-stripped names still yield something writable.
+            assert_eq!(d(""), "attachment.bin");
+            assert_eq!(d("///"), "attachment.bin");
+
+            // Length is capped and separators can never appear in the output.
+            let long = d(&format!("{}.txt", "a".repeat(500)));
+            assert!(long.len() <= 128, "len {}", long.len());
+            assert!(!d("a/b\\c:d*e?f").contains(['/', '\\']));
         }
 
         /// `mailbox_move` is permitted under taint ONLY because every

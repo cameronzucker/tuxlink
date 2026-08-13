@@ -1289,7 +1289,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "message_attachment_save",
-        description = "Save a message attachment to a destination path (validated to stay inside the attachment base; absolute/parent-traversal/escaping paths are rejected as invalid). WRITE: requires armed send-authority (Tier-2 remediation) and an un-tainted session; denied otherwise."
+        description = "Save a message attachment. `dest` is OPTIONAL: omit it and the file is named from the attachment itself, which is the form that still works after you have read untrusted content. If you do pass `dest`, it is validated to stay inside the attachment base (absolute/parent-traversal/escaping paths are rejected as invalid) but counts as free text, so a tainted session is refused. WRITE: requires armed send-authority (Tier-2 remediation)."
     )]
     pub async fn message_attachment_save(
         &self,
@@ -2499,8 +2499,11 @@ pub struct AttachmentSaveParams {
     pub id: String,
     /// The attachment filename within the message.
     pub filename: String,
-    /// The destination path (validated to stay inside the attachment base).
-    pub dest: String,
+    /// OPTIONAL destination path (validated to stay inside the attachment
+    /// base). OMIT IT to have the name derived from the attachment itself —
+    /// that is the form which still works while the session is tainted.
+    #[serde(default)]
+    pub dest: Option<String>,
 }
 
 /// Input for `message_send`.
@@ -4422,7 +4425,7 @@ mod tests {
                 folder: "Inbox".into(),
                 id: SEED_MSG_ID.into(),
                 filename: "roster.txt".into(),
-                dest: "../../etc/x".into(),
+                dest: Some("../../etc/x".into()),
             }))
             .await
             .expect_err("a traversal dest must be rejected");

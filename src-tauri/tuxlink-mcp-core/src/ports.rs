@@ -1375,13 +1375,19 @@ pub trait WritePort: Send + Sync {
         to: String,
         id: String,
     ) -> Result<(), WritePortError>;
-    /// Save an attachment to a (validated) destination, returning the saved path.
+    /// Save an attachment, returning the saved path.
+    ///
+    /// `dest` is OPTIONAL. When `None` the destination is DERIVED from the
+    /// sanitized attachment filename, which makes every parameter of the call
+    /// bounded and lets it proceed in a tainted session under the per-datum
+    /// gate. When `Some`, it is caller-chosen free text and a tainted session
+    /// is refused (tuxlink-0rc3h).
     async fn attachment_save(
         &self,
         folder: String,
         id: String,
         filename: String,
-        dest: String,
+        dest: Option<String>,
     ) -> Result<String, WritePortError>;
 }
 
