@@ -528,13 +528,15 @@ impl Action for ComposeMessage {
                     .unwrap_or_default();
                 crate::forms::outbound::build_native_form_message(
                     form,
-                    &field_values,
-                    parsed.to,
-                    Vec::new(),
-                    senders_callsign,
+                    crate::forms::outbound::FormSend {
+                        field_values: &field_values,
+                        to: parsed.to,
+                        cc: Vec::new(),
+                        senders_callsign,
+                        subject_override: parsed.subject,
+                        now,
+                    },
                     station.on_air_grid.clone(),
-                    parsed.subject,
-                    now,
                 )
             }
             // Neither a form id nor any template text. Name both valid shapes

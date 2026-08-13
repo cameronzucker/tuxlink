@@ -3485,6 +3485,7 @@ pub fn run() {
             crate::logging::commands::report_issue_flow,           // Task 8 — Report Issue
             // tuxlink-hnkn P2 Task 4: FormDraftLibrary — save/reuse named form slots.
             crate::ui_commands::form_draft_library_list,
+            crate::ui_commands::form_draft_library_list_all,
             crate::ui_commands::form_draft_library_upsert,
             crate::ui_commands::form_draft_library_delete,
             // tuxlink-7do4 Task 13: smart-auth-diagnostics banner recovery commands.

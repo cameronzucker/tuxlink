@@ -182,6 +182,42 @@ impl DraftLibrary {
         Ok(slots)
     }
 
+    /// Every saved slot across every form, ordered so the list is stable:
+    /// by form id, then by label, then by creation time.
+    ///
+    /// [`Self::list`] is per-form because every compose form only ever shows
+    /// its own slots. The routines designer is the caller that genuinely needs
+    /// them all at once: it offers `@draft:<slot_id>` as a one-click reference
+    /// completion, and an operator picking one has not chosen a form yet — the
+    /// draft is what determines the form. Without this the only way to write
+    /// that reference would be to type a UUID by hand.
+    pub fn list_all(&self) -> Result<Vec<FormDraftSlot>, DraftLibraryError> {
+        let conn = self.conn.lock().map_err(|_| DraftLibraryError::LockPoisoned)?;
+        let mut stmt = conn.prepare(
+            "SELECT slot_id, form_id, label, payload_json, created_at, updated_at
+             FROM form_draft_slots
+             ORDER BY form_id ASC, label ASC, created_at ASC",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+            ))
+        })?;
+
+        let mut slots = Vec::new();
+        for row in rows {
+            let (slot_id, form_id, label, payload_json, created_at, updated_at) = row?;
+            let payload = serde_json::from_str(&payload_json)?;
+            slots.push(FormDraftSlot { slot_id, form_id, label, payload, created_at, updated_at });
+        }
+        Ok(slots)
+    }
+
     /// Fetch ONE slot by its `slot_id`, or `None` if no such row exists.
     ///
     /// `slot_id` is a UUID v4 and the table's PRIMARY KEY, so it addresses a

@@ -718,14 +718,19 @@ mod tests {
     /// Compile-time check that `write_password` exists with the documented
     /// signature. Behavioral correctness is covered by the keyring mock tests
     /// in `src-tauri/tests/winlink_credentials_test.rs`.
+    ///
+    /// It does NOT call the function. `write_password` talks to the real OS
+    /// keyring, and on a machine with a secret-service backend but no unlocked
+    /// collection — any headless build box — that call BLOCKS FOREVER on a
+    /// D-Bus prompt nobody will ever answer. The whole `cargo test` run then
+    /// hangs on this one test with no failure and no output. It cost a
+    /// seven-hour run to discover, and a test whose stated purpose is checking
+    /// a signature has no business performing I/O to do it. Coercing the item
+    /// to a fully-typed function pointer proves exactly the same thing at
+    /// compile time.
     #[test]
     fn write_password_signature_compiles() {
-        // We call the function but don't assert Ok/Err because the OS keyring
-        // state depends on the test environment (mock backend vs. real secretsd).
-        // The goal is that this compiles and the signature matches the seam
-        // expected by Task 13 (credentials_write_password Tauri command).
-        let result: Result<(), KeyringError> = write_password("TEST-CALL", "test-password");
-        let _ = result;
+        let _: fn(&str, &str) -> Result<(), KeyringError> = write_password;
     }
 
     // ──────────────────────────────────────────────────────────

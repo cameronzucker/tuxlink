@@ -1993,14 +1993,16 @@ pub async fn send_form(
     let config = crate::config::read_config().ok();
     let msg = crate::forms::outbound::compose_native_form(
         &form_id,
-        &field_values,
-        to,
-        cc,
-        senders_callsign,
+        crate::forms::outbound::FormSend {
+            field_values: &field_values,
+            to,
+            cc,
+            senders_callsign,
+            subject_override: None,
+            now: chrono::Utc::now(),
+        },
         config.as_ref(),
         Some(arbiter.inner().as_ref()),
-        None,
-        chrono::Utc::now(),
     )
     .map_err(|detail| UiError::Internal { detail })?;
 
@@ -14912,6 +14914,19 @@ pub async fn form_draft_library_list(
     library: State<'_, std::sync::Arc<DraftLibrary>>,
 ) -> Result<Vec<FormDraftSlot>, String> {
     library.list(&form_id).map_err(|e| e.to_string())
+}
+
+/// Every saved draft slot across every form.
+///
+/// The routines designer's `@draft:` reference completion is the caller: an
+/// operator picking a saved form there has not chosen a form yet, because the
+/// draft is what determines the form. `form_draft_library_list` stays per-form
+/// for the compose windows, which only ever show their own slots.
+#[tauri::command]
+pub async fn form_draft_library_list_all(
+    library: State<'_, std::sync::Arc<DraftLibrary>>,
+) -> Result<Vec<FormDraftSlot>, String> {
+    library.list_all().map_err(|e| e.to_string())
 }
 
 /// Insert or update a draft slot.

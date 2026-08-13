@@ -19,6 +19,19 @@ import { StepInspector } from './StepInspector';
 
 const PRESETS: RadioPreset[] = [{ name: 'hf-40m', frequencyHz: 7_100_000, mode: 'USB' }];
 const STATION_SETS: StationSet[] = [{ name: 'or-gateways', callsigns: ['W7ABC', 'K7XYZ'] }];
+// A saved form draft, as `form_draft_library_list_all` returns it. The chip
+// must show the LABEL and form — the slot UUID is the token it inserts, and
+// no operator should have to read one.
+const DRAFT_SLOTS = [
+  {
+    slot_id: '7d0f1c2e-9a4b-4c3d-8e5f-6a7b8c9d0e1f',
+    form_id: 'Winlink_Check-In',
+    label: 'Cascadia Morning Net',
+    payload: { msgto: 'NET CONTROL' },
+    created_at: '2026-08-01T12:00:00Z',
+    updated_at: '2026-08-01T12:00:00Z',
+  },
+];
 const ROUTINES: RoutineSummary[] = [
   { routine: 'wx-tabular-brief', transmitMode: 'attended', enabled: false, triggers: [{ type: 'manual' }] },
 ];
@@ -35,6 +48,8 @@ function installInvokeMock(overrides: InvokeOverrides = {}) {
         return Promise.resolve(PRESETS);
       case 'routines_station_sets_list':
         return Promise.resolve(STATION_SETS);
+      case 'form_draft_library_list_all':
+        return Promise.resolve(DRAFT_SLOTS);
       case 'routines_list':
         return Promise.resolve(ROUTINES);
       default:
@@ -246,6 +261,23 @@ describe('StepInspector — @-reference helper (assistance only)', () => {
     expect(onChange).not.toHaveBeenCalled();
     const textarea = screen.getByTestId('inspector-params') as HTMLTextAreaElement;
     expect(textarea.value).toContain('@station-set:or-gateways');
+  });
+
+  it('offers saved form drafts by label, inserting the slot-id token (tuxlink-3ddk2)', async () => {
+    const step: ActionStep = { id: 's1', action: 'radio.aprs_send', params: { template: '@dra' } };
+    const { onChange } = renderInspector({ step });
+    const helper = await screen.findByTestId('inspector-ref-helper');
+    // The operator reads the label and the form, never the UUID.
+    expect(helper).toHaveTextContent('Cascadia Morning Net');
+    expect(helper).toHaveTextContent('Winlink_Check-In');
+
+    fireEvent.click(
+      screen.getByTestId('ref-chip-draft-7d0f1c2e-9a4b-4c3d-8e5f-6a7b8c9d0e1f'),
+    );
+    expect(onChange).not.toHaveBeenCalled();
+    expect((screen.getByTestId('param-value-template') as HTMLInputElement).value).toBe(
+      '@draft:7d0f1c2e-9a4b-4c3d-8e5f-6a7b8c9d0e1f',
+    );
   });
 
   it('does not show the helper row when no params value starts with @', () => {

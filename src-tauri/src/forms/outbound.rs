@@ -78,25 +78,41 @@ pub fn form_parameters(
     }
 }
 
-/// Build the complete outbound message for a bundled form: rendered subject,
-/// rendered plain-text body, and the XML attachment that makes it an actual
-/// form rather than prose that resembles one.
+/// Everything a form send needs that is not the form itself or the locator.
 ///
-/// `subject_override` wins over the form's own `subject_template` when
-/// supplied and non-empty — the Compose window and a routine step both allow
-/// an explicit subject line. An empty override is treated as absent so a
-/// caller cannot accidentally send a blank subject by threading through an
-/// empty string.
+/// Grouped rather than passed positionally because the alternative is eight
+/// arguments of which four are `String`-ish: a caller that transposes the
+/// callsign and the subject would compile cleanly and send a wrong message.
+pub struct FormSend<'a> {
+    /// Field id to value. Ids are the lowercase wire keys declared by the
+    /// form's own `FormDef`; anything else is ignored by the serializer.
+    pub field_values: &'a HashMap<String, String>,
+    pub to: Vec<String>,
+    pub cc: Vec<String>,
+    /// The callsign the message is signed with.
+    pub senders_callsign: String,
+    /// Wins over the form's own `subject_template` when supplied and
+    /// non-empty. Whitespace-only is treated as absent so a caller cannot
+    /// accidentally send a blank subject by threading through an empty string.
+    pub subject_override: Option<String>,
+    /// Stamped into the XML envelope's `submission_datetime` and the message
+    /// date. Passed in rather than read from the clock so a test can pin it.
+    pub now: chrono::DateTime<chrono::Utc>,
+}
+
 pub fn build_native_form_message(
     form: &FormDef,
-    field_values: &HashMap<String, String>,
-    to: Vec<String>,
-    cc: Vec<String>,
-    senders_callsign: String,
+    send: FormSend<'_>,
     on_air_grid: String,
-    subject_override: Option<String>,
-    now: chrono::DateTime<chrono::Utc>,
 ) -> OutboundMessage {
+    let FormSend {
+        field_values,
+        to,
+        cc,
+        senders_callsign,
+        subject_override,
+        now,
+    } = send;
     let params = form_parameters(form, senders_callsign, on_air_grid, now);
 
     let xml_bytes = crate::forms::serialize::serialize_form_xml(form, &params, field_values);
@@ -142,30 +158,16 @@ pub fn build_native_form_message(
 /// doc.
 pub fn compose_native_form(
     form_id: &str,
-    field_values: &HashMap<String, String>,
-    to: Vec<String>,
-    cc: Vec<String>,
-    senders_callsign: String,
+    send: FormSend<'_>,
     config: Option<&crate::config::Config>,
     arbiter: Option<&crate::position::PositionArbiter>,
-    subject_override: Option<String>,
-    now: chrono::DateTime<chrono::Utc>,
 ) -> Result<OutboundMessage, String> {
     let form = crate::forms::catalog::find_form(form_id)
         .ok_or_else(|| format!("unknown form: {form_id}"))?;
     let on_air_grid = config
         .map(|cfg| crate::position::effective_broadcast_locator(cfg, arbiter))
         .unwrap_or_default();
-    Ok(build_native_form_message(
-        form,
-        field_values,
-        to,
-        cc,
-        senders_callsign,
-        on_air_grid,
-        subject_override,
-        now,
-    ))
+    Ok(build_native_form_message(form, send, on_air_grid))
 }
 
 #[cfg(test)]
@@ -197,13 +199,15 @@ mod tests {
         let form = find_form("Winlink_Check-In").expect("bundled");
         let msg = build_native_form_message(
             form,
-            &checkin_values(),
-            vec!["NET@winlink.org".into()],
-            vec![],
-            "N0CALL".into(),
+            FormSend {
+                field_values: &checkin_values(),
+                to: vec!["NET@winlink.org".into()],
+                cc: vec![],
+                senders_callsign: "N0CALL".into(),
+                subject_override: None,
+                now: now(),
+            },
             "CN87".into(),
-            None,
-            now(),
         );
 
         assert_eq!(msg.attachments.len(), 1, "a form send must attach its XML");
@@ -226,13 +230,15 @@ mod tests {
         let form = find_form("Winlink_Check-In").expect("bundled");
         let msg = build_native_form_message(
             form,
-            &checkin_values(),
-            vec!["NET@winlink.org".into()],
-            vec![],
-            "N0CALL".into(),
+            FormSend {
+                field_values: &checkin_values(),
+                to: vec!["NET@winlink.org".into()],
+                cc: vec![],
+                senders_callsign: "N0CALL".into(),
+                subject_override: None,
+                now: now(),
+            },
             "CN87".into(),
-            None,
-            now(),
         );
         let xml = String::from_utf8_lossy(&msg.attachments[0].bytes);
         assert!(
@@ -253,13 +259,15 @@ mod tests {
         let form = find_form("Winlink_Check-In").expect("bundled");
         let msg = build_native_form_message(
             form,
-            &checkin_values(),
-            vec!["NET@winlink.org".into()],
-            vec![],
-            "N0CALL".into(),
+            FormSend {
+                field_values: &checkin_values(),
+                to: vec!["NET@winlink.org".into()],
+                cc: vec![],
+                senders_callsign: "N0CALL".into(),
+                subject_override: None,
+                now: now(),
+            },
             String::new(),
-            None,
-            now(),
         );
         let xml = String::from_utf8_lossy(&msg.attachments[0].bytes);
         assert!(xml.contains("<grid_square></grid_square>"));
@@ -270,13 +278,15 @@ mod tests {
         let form = find_form("Winlink_Check-In").expect("bundled");
         let msg = build_native_form_message(
             form,
-            &checkin_values(),
-            vec!["NET@winlink.org".into()],
-            vec![],
-            "N0CALL".into(),
+            FormSend {
+                field_values: &checkin_values(),
+                to: vec!["NET@winlink.org".into()],
+                cc: vec![],
+                senders_callsign: "N0CALL".into(),
+                subject_override: None,
+                now: now(),
+            },
             "CN87".into(),
-            None,
-            now(),
         );
         // Check-In's subject_template is `<var Newsubject>`.
         assert_eq!(msg.subject, "Morning check-in");
@@ -287,25 +297,29 @@ mod tests {
         let form = find_form("Winlink_Check-In").expect("bundled");
         let explicit = build_native_form_message(
             form,
-            &checkin_values(),
-            vec!["NET@winlink.org".into()],
-            vec![],
-            "N0CALL".into(),
+            FormSend {
+                field_values: &checkin_values(),
+                to: vec!["NET@winlink.org".into()],
+                cc: vec![],
+                senders_callsign: "N0CALL".into(),
+                subject_override: Some("Overridden".into()),
+                now: now(),
+            },
             "CN87".into(),
-            Some("Overridden".into()),
-            now(),
         );
         assert_eq!(explicit.subject, "Overridden");
 
         let blank = build_native_form_message(
             form,
-            &checkin_values(),
-            vec!["NET@winlink.org".into()],
-            vec![],
-            "N0CALL".into(),
+            FormSend {
+                field_values: &checkin_values(),
+                to: vec!["NET@winlink.org".into()],
+                cc: vec![],
+                senders_callsign: "N0CALL".into(),
+                subject_override: Some("   ".into()),
+                now: now(),
+            },
             "CN87".into(),
-            Some("   ".into()),
-            now(),
         );
         assert_eq!(
             blank.subject, "Morning check-in",
@@ -313,8 +327,6 @@ mod tests {
         );
     }
 
-    /// The body is the human-readable projection; the XML is the machine one.
-    /// Both must be present — the body alone is exactly the degraded message.
     // ── The privacy regression this module was written to close ──────────
     //
     // tuxlink-bekbh: `send_form` took `grid_square` as a caller parameter and
@@ -354,14 +366,16 @@ mod tests {
         );
         let msg = compose_native_form(
             "Winlink_Check-In",
-            &checkin_values(),
-            vec!["NET@winlink.org".into()],
-            vec![],
-            "N0CALL".into(),
+            FormSend {
+                field_values: &checkin_values(),
+                to: vec!["NET@winlink.org".into()],
+                cc: vec![],
+                senders_callsign: "N0CALL".into(),
+                subject_override: None,
+                now: now(),
+            },
             Some(&cfg),
             None,
-            None,
-            now(),
         )
         .expect("bundled form");
 
@@ -382,14 +396,16 @@ mod tests {
         );
         let msg = compose_native_form(
             "Winlink_Check-In",
-            &checkin_values(),
-            vec!["NET@winlink.org".into()],
-            vec![],
-            "N0CALL".into(),
+            FormSend {
+                field_values: &checkin_values(),
+                to: vec!["NET@winlink.org".into()],
+                cc: vec![],
+                senders_callsign: "N0CALL".into(),
+                subject_override: None,
+                now: now(),
+            },
             Some(&cfg),
             None,
-            None,
-            now(),
         )
         .expect("bundled form");
 
@@ -406,10 +422,14 @@ mod tests {
     fn no_config_sends_no_position() {
         let msg = compose_native_form(
             "Winlink_Check-In",
-            &checkin_values(),
-            vec!["NET@winlink.org".into()],
-            vec![],
-            "N0CALL".into(),
+            FormSend {
+                field_values: &checkin_values(),
+                to: vec!["NET@winlink.org".into()],
+                cc: vec![],
+                senders_callsign: "N0CALL".into(),
+                subject_override: None,
+                now: now(),
+            },
             None,
             // An arbiter that DOES hold a precise position, to prove the
             // absent config is what governs and not the arbiter's contents.
@@ -418,8 +438,6 @@ mod tests {
                 Some("CN87ux".to_string()),
                 crate::config::PositionPrecision::SixCharGrid,
             )),
-            None,
-            now(),
         )
         .expect("bundled form");
 
@@ -438,14 +456,16 @@ mod tests {
         let cfg = crate::test_helpers::native_test_config();
         let err = compose_native_form(
             "Not_A_Real_Form",
-            &checkin_values(),
-            vec!["NET@winlink.org".into()],
-            vec![],
-            "N0CALL".into(),
+            FormSend {
+                field_values: &checkin_values(),
+                to: vec!["NET@winlink.org".into()],
+                cc: vec![],
+                senders_callsign: "N0CALL".into(),
+                subject_override: None,
+                now: now(),
+            },
             Some(&cfg),
             None,
-            None,
-            now(),
         )
         .expect_err("an unknown form id must not produce a message");
         assert!(err.contains("Not_A_Real_Form"), "error names the id: {err}");
@@ -456,13 +476,15 @@ mod tests {
         let form = find_form("Winlink_Check-In").expect("bundled");
         let msg = build_native_form_message(
             form,
-            &checkin_values(),
-            vec!["NET@winlink.org".into()],
-            vec![],
-            "N0CALL".into(),
+            FormSend {
+                field_values: &checkin_values(),
+                to: vec!["NET@winlink.org".into()],
+                cc: vec![],
+                senders_callsign: "N0CALL".into(),
+                subject_override: None,
+                now: now(),
+            },
             "CN87".into(),
-            None,
-            now(),
         );
         assert!(msg.body.contains("NET CONTROL"), "body: {}", msg.body);
         let xml = String::from_utf8_lossy(&msg.attachments[0].bytes);
