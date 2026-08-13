@@ -71,6 +71,17 @@ export async function listSlots(formId: string): Promise<FormDraftSlot[]> {
 }
 
 /**
+ * Every saved slot across every form, ordered form id → label → created_at.
+ *
+ * For the routines designer's `@draft:` reference completion, where the
+ * operator has not chosen a form — the draft is what determines the form.
+ * Compose forms keep using {@link listSlots}: they only ever show their own.
+ */
+export async function listAllSlots(): Promise<FormDraftSlot[]> {
+  return invoke<FormDraftSlot[]>('form_draft_library_list_all');
+}
+
+/**
  * Insert or update a draft slot.
  *
  * - `args.slotId` omitted → new slot, backend mints a UUID.

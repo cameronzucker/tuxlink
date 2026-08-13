@@ -417,6 +417,10 @@
       "class": "capability",
       "pending": "tuxlink-to358"
     },
+    "form_draft_library_list_all": {
+      "class": "capability",
+      "pending": "tuxlink-to358"
+    },
     "form_draft_library_upsert": {
       "class": "capability",
       "pending": "tuxlink-to358"

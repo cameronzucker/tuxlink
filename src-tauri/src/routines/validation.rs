@@ -76,6 +76,10 @@ pub struct MonolithValidationContext {
     store: Arc<DefinitionStore>,
     registry: Arc<ActionRegistry>,
     profile: StationProfile,
+    /// The saved-form slot library, for `@draft:`. `None` leaves every draft
+    /// reference reported as non-existent, which is the correct answer when
+    /// the library is unavailable: the resolver would refuse it too.
+    drafts: Option<Arc<crate::forms::draft_library::DraftLibrary>>,
 }
 
 impl MonolithValidationContext {
@@ -96,7 +100,19 @@ impl MonolithValidationContext {
             store,
             registry,
             profile,
+            drafts: None,
         }
+    }
+
+    /// Attach the saved-form slot library so `@draft:` references can be
+    /// checked. Separate from [`Self::new`] so the many existing call sites
+    /// that do not exercise drafts stay unchanged.
+    pub fn with_drafts(
+        mut self,
+        drafts: Option<Arc<crate::forms::draft_library::DraftLibrary>>,
+    ) -> Self {
+        self.drafts = drafts;
+        self
     }
 
     /// The production constructor: every store + the action registry come from
@@ -111,6 +127,28 @@ impl MonolithValidationContext {
             state.registry.clone(),
             station_profile_from_config(),
         )
+        .with_drafts(state.drafts.clone())
+    }
+
+    /// Does an `@draft:<slot_id>` token name a usable saved form? Checked
+    /// exactly as [`super::resolver::MonolithEntityResolver::resolve_draft`]
+    /// resolves it — the slot must exist AND the form it was saved against
+    /// must still be bundled — so "the validator says it resolves" and "the
+    /// snapshot resolves it" can never disagree.
+    ///
+    /// A deleted draft therefore reports a validation error, which blocks
+    /// enable and run while still allowing save. That is this subsystem's
+    /// existing posture for reference errors, and it is the right one here:
+    /// an operator who deletes a draft should be told which routine broke
+    /// without having their routine deleted out from under them.
+    fn draft_exists(&self, slot_id: &str) -> bool {
+        let Some(drafts) = self.drafts.as_ref() else {
+            return false;
+        };
+        match drafts.get(slot_id) {
+            Ok(Some(slot)) => find_form(&slot.form_id).is_some(),
+            _ => false,
+        }
     }
 
     /// Does an `@identity:<name>` token name a real identity? Matched exactly as
@@ -133,6 +171,7 @@ impl ValidationContext for MonolithValidationContext {
             "station-set" => self.station_sets.get(&r.name).is_some(),
             "identity" => self.identity_exists(&r.name),
             "template" => find_form(&r.name).is_some(),
+            "draft" => self.draft_exists(&r.name),
             // An unknown KIND does not exist — never silently pass through
             // (`UNRESOLVED_REF` names the verbatim token). Mirrors the
             // resolver's own unknown-kind arm.

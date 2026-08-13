@@ -430,6 +430,30 @@ pub trait ConfigWriteService: Send + Sync {
 /// **`local.set_identity` needs no method here at all** — see local.rs's
 /// module doc for why (spec §6: run-scoped, never touches global identity
 /// config, so it takes no seam whatsoever, not even a read one).
+/// What a scheduled run knows about this station at the moment it fires.
+///
+/// Everything here is derived from settings the operator has ALREADY made, not
+/// from a new policy invented for routines. The locator in particular comes
+/// from `position::effective_broadcast_locator`, which applies both the
+/// position-precision setting and `gps_state` — so a routine transmits exactly
+/// the position the operator has said may be transmitted, including none at
+/// all. That is the same control governing every other transmit path, reached
+/// from a context with nobody at the keyboard.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct StationContext {
+    /// The callsign this station signs as, when the step does not override it
+    /// with `from_identity`. `None` before the wizard has run.
+    pub callsign: Option<String>,
+    /// The locator that may go on the air, already precision-reduced and
+    /// gps_state-gated. Empty when nothing may be broadcast — which is a
+    /// meaningful answer, not a missing one.
+    pub on_air_grid: String,
+    /// WLE's `locationSource` semantics: "GPS" when a live fix is what
+    /// produced `on_air_grid`, "Operator" when it came from the stored grid.
+    /// `None` when there is no locator at all.
+    pub location_source: Option<String>,
+}
+
 #[async_trait]
 pub trait LocalService: Send + Sync {
     /// `local.compose` / `local.compose_catalog_request`'s shared outbox
@@ -445,6 +469,15 @@ pub trait LocalService: Send + Sync {
         msg: crate::winlink_backend::OutboundMessage,
         from: Option<String>,
     ) -> Result<String, String>;
+
+    /// The station facts a FORM send needs at run time, with no operator at
+    /// the keyboard to supply them.
+    ///
+    /// A saved form draft is deliberately partial: the compose forms exclude
+    /// the timestamp, the sender callsign, and every position field from what
+    /// they save, because those must not be stale. A scheduled run therefore
+    /// has to fill them, and this is where they come from.
+    async fn station_context(&self) -> StationContext;
 
     /// `local.log`'s real station/session-log append.
     async fn log_append(&self, message: String) -> Result<(), String>;

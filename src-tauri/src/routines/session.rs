@@ -52,7 +52,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
 use async_trait::async_trait;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tokio::sync::{oneshot, Notify};
 use tokio_util::sync::CancellationToken;
 
@@ -244,6 +244,17 @@ pub struct RoutinesState {
     /// Identity store path (`identities.json`), needed by the command layer's
     /// validation context to answer `@identity:` reference existence.
     pub identity_store_path: PathBuf,
+    /// The saved-form slot library, for `@draft:`. Held so the command layer's
+    /// validation context answers reference existence the SAME way the
+    /// resolver does — the validator saying a draft resolves and the snapshot
+    /// then failing to resolve it is the disagreement this file's other
+    /// held-here fields exist to prevent.
+    ///
+    /// `None` when the library is unavailable; see
+    /// [`super::resolver::MonolithEntityResolver`]. Set through
+    /// [`RoutinesState::with_drafts`] rather than a fourteenth constructor
+    /// argument.
+    pub drafts: Option<Arc<crate::forms::draft_library::DraftLibrary>>,
     /// Live + recently-finished runs, keyed by run_id. Bounded: at most
     /// [`MAX_TERMINAL_RUNS`] terminal entries are retained (plus every live
     /// run). See [`prune_terminal_runs`].
@@ -316,6 +327,7 @@ impl RoutinesState {
             registry,
             journal_dir,
             identity_store_path,
+            drafts: None,
             runs: Arc::new(Mutex::new(HashMap::new())),
             edit_lock: Mutex::new(()),
             run_seq: Arc::new(AtomicU64::new(0)),
@@ -325,6 +337,17 @@ impl RoutinesState {
             write_names,
             schedule_notify: Arc::new(Notify::new()),
         }
+    }
+
+    /// Attach the saved-form slot library. Separate from [`Self::new`] because
+    /// that already carries thirteen positional arguments and a fourteenth
+    /// `Option<Arc<_>>` among them is a mis-ordering waiting to happen.
+    pub fn with_drafts(
+        mut self,
+        drafts: Option<Arc<crate::forms::draft_library::DraftLibrary>>,
+    ) -> Self {
+        self.drafts = drafts;
+        self
     }
 
     /// The sha256 hex digest of `def`'s TRANSMIT consent closure (C3), computed
@@ -1198,6 +1221,12 @@ pub fn build_routines_state(
     registry: ActionRegistry,
     arbiter: Arc<RadioArbiter>,
     sink: Arc<dyn RoutinesEventSink>,
+    // The saved-form slot library, for `@draft:` references. `None` where it
+    // is genuinely absent: the store lives beside the search index under
+    // app_data_dir, NOT under `config_dir`, so an app-free caller has no way
+    // to derive it and every test that does not exercise `@draft:` passes
+    // None. See `MonolithEntityResolver::drafts`.
+    drafts: Option<Arc<crate::forms::draft_library::DraftLibrary>>,
 ) -> RoutinesState {
     let store = Arc::new(DefinitionStore::open(config_dir.join("routines")));
     let presets = Arc::new(RadioPresetStore::open(
@@ -1211,6 +1240,7 @@ pub fn build_routines_state(
         presets.clone(),
         station_sets.clone(),
         identity_store_path.clone(),
+        drafts.clone(),
     ));
 
     // Consent wiring (slice 5b, spec §4): capture the transmitting action names
@@ -1252,7 +1282,8 @@ pub fn build_routines_state(
         consent,
         transmit_names.clone(),
         write_names.clone(),
-    );
+    )
+    .with_drafts(drafts);
 
     // Install the child-run invoker (O3) NOW — the engine + the shared `runs`
     // Arcs both exist. This is the resolution of the construction cycle: the
@@ -1284,7 +1315,14 @@ pub fn build_routines_state_for_app(app: &AppHandle) -> RoutinesState {
     let arbiter = Arc::new(RadioArbiter::new(unix_now_secs));
     let registry = build_default_registry(app, arbiter.clone());
     let sink: Arc<dyn RoutinesEventSink> = Arc::new(TauriRoutinesEventSink::new(app.clone()));
-    build_routines_state(config_dir, registry, arbiter, sink)
+    // `try_state`, not `state`: lib.rs treats a failed draft-library open as
+    // non-fatal, so this really can be absent at launch. A `@draft:` reference
+    // then fails at resolve time with a message saying so, instead of the
+    // routines subsystem panicking on an extractor.
+    let drafts = app
+        .try_state::<Arc<crate::forms::draft_library::DraftLibrary>>()
+        .map(|s| s.inner().clone());
+    build_routines_state(config_dir, registry, arbiter, sink, drafts)
 }
 
 // ============================================================================
@@ -1377,7 +1415,7 @@ mod tests {
         let arbiter = Arc::new(RadioArbiter::new(fixed_now));
         let sink = Arc::new(RecordingSink::default());
         let sink_dyn: Arc<dyn RoutinesEventSink> = sink.clone();
-        let state = Arc::new(build_routines_state(config_dir, reg, arbiter, sink_dyn));
+        let state = Arc::new(build_routines_state(config_dir, reg, arbiter, sink_dyn, None));
         (state, sink)
     }
 
@@ -1508,6 +1546,7 @@ mod tests {
             reg,
             arbiter,
             sink_dyn,
+            None,
         ));
         state.store.save(&def_calling("hangs-a", "local.hang")).unwrap();
         state.store.save(&def_calling("hangs-b", "local.hang")).unwrap();
@@ -1852,7 +1891,7 @@ mod tests {
         let arbiter = Arc::new(RadioArbiter::new(fixed_now));
         let sink = Arc::new(RecordingSink::default());
         let sink_dyn: Arc<dyn RoutinesEventSink> = sink.clone();
-        let state = Arc::new(build_routines_state(config_dir, reg, arbiter, sink_dyn));
+        let state = Arc::new(build_routines_state(config_dir, reg, arbiter, sink_dyn, None));
         (state, sink)
     }
 

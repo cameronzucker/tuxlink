@@ -27,7 +27,7 @@ import { CheckInForm } from './CheckInForm';
 
 const DEFAULT_INVOKE = async (cmd: string) => {
   if (cmd === 'config_read') return { callsign: 'W7CPZ', identifier: 'John Smith' };
-  if (cmd === 'position_current_fix') return { grid: 'CN87us', source: 'gps', fresh: true };
+  if (cmd === 'position_current_fix') return { grid: 'CN87us', broadcast_grid: 'CN87us', source: 'gps', fresh: true };
   if (cmd === 'form_draft_library_list') {
     return [
       {
@@ -124,12 +124,46 @@ describe('<CheckInForm> — auto-fill from PositionArbiter + config', () => {
 
   it('leaves locationsource as Operator when PositionArbiter has no grid', async () => {
     mocks.invoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'position_current_fix') return { grid: null, source: 'config', fresh: false };
+      if (cmd === 'position_current_fix') return { grid: null, broadcast_grid: null, source: 'config', fresh: false };
       return DEFAULT_INVOKE(cmd);
     });
     render(<CheckInForm onSubmit={vi.fn()} onCancel={vi.fn()} />);
     await screen.findByDisplayValue('W7CPZ');
     expect((screen.getByLabelText(/Location Source/i) as HTMLInputElement).value).toBe('Operator');
+  });
+
+  // tuxlink-bekbh. This field is TRANSMITTED: the check-in body template
+  // renders it as "3e. Grid Square:" and the XML carries it. So it must
+  // pre-fill from the precision-reduced locator the operator chose to
+  // broadcast, not from the full stored grid. The two differ here on purpose —
+  // reverting the component to `fix.grid` shows CN87US and fails this test.
+  it('pre-fills Grid Square from the broadcast grid, not the full stored grid', async () => {
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'position_current_fix') {
+        return { grid: 'CN87us', broadcast_grid: 'CN87', source: 'gps', fresh: true };
+      }
+      return DEFAULT_INVOKE(cmd);
+    });
+    render(<CheckInForm onSubmit={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByDisplayValue('W7CPZ');
+    const gridInput = screen.getByLabelText(/^Grid Square$/i) as HTMLInputElement;
+    await waitFor(() => expect(gridInput.value).toBe('CN87'));
+  });
+
+  // The operator set gps_state so that nothing may go on the air, or has no
+  // stored grid. The visible field stays empty rather than showing a position
+  // the send path would then refuse to transmit.
+  it('leaves Grid Square empty when nothing may be broadcast', async () => {
+    mocks.invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'position_current_fix') {
+        return { grid: 'CN87us', broadcast_grid: null, source: 'gps', fresh: true };
+      }
+      return DEFAULT_INVOKE(cmd);
+    });
+    render(<CheckInForm onSubmit={vi.fn()} onCancel={vi.fn()} />);
+    await screen.findByDisplayValue('W7CPZ');
+    const gridInput = screen.getByLabelText(/^Grid Square$/i) as HTMLInputElement;
+    await waitFor(() => expect(gridInput.value).toBe(''));
   });
 });
 
@@ -375,7 +409,7 @@ describe('<CheckInForm> — slot-payload validation (old-schema migration)', () 
     // (else draft autosave would persist an invalid wire-format value).
     mocks.invoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'config_read') return { callsign: 'W7CPZ', identifier: 'John Smith' };
-      if (cmd === 'position_current_fix') return { grid: 'CN87us', source: 'gps', fresh: true };
+      if (cmd === 'position_current_fix') return { grid: 'CN87us', broadcast_grid: 'CN87us', source: 'gps', fresh: true };
       if (cmd === 'form_draft_library_list') {
         return [
           {

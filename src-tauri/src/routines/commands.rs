@@ -2025,6 +2025,7 @@ mod tests {
             reg,
             Arc::new(RadioArbiter::new(fixed_now)),
             sink_dyn,
+            None,
         ));
         (dir, state, sink, connect)
     }
@@ -2042,6 +2043,7 @@ mod tests {
             reg,
             Arc::new(RadioArbiter::new(fixed_now)),
             sink_dyn,
+            None,
         ));
         (dir, state, sink, ())
     }
@@ -3269,6 +3271,7 @@ mod tests {
             ActionRegistry::default(),
             Arc::new(RadioArbiter::new(fixed_now)),
             sink,
+            None,
         ));
         assert!(list_routines(&state).is_empty());
         assert!(list_presets(&state).is_empty());

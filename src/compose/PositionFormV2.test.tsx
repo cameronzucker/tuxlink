@@ -26,7 +26,7 @@ let capturedMap: L.Map | null = null;
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(async (cmd: string) => {
     if (cmd === 'position_current_fix') {
-      return { grid: 'CN87us', source: 'Gps', fresh: true };
+      return { grid: 'CN87us', broadcast_grid: 'CN87us', source: 'Gps', fresh: true };
     }
     // PositionPickerOverlay fetches tile-source status to gate 6-char precision.
     if (cmd === 'tile_source_status') {
@@ -56,7 +56,7 @@ beforeEach(async () => {
   const mockInvoke = invoke as ReturnType<typeof vi.fn>;
   mockInvoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'position_current_fix') {
-      return { grid: 'CN87us', source: 'Gps', fresh: true };
+      return { grid: 'CN87us', broadcast_grid: 'CN87us', source: 'Gps', fresh: true };
     }
     if (cmd === 'tile_source_status') {
       return { kind: 'bundled', zoom: 2, label: null, cachedAt: null };
@@ -316,7 +316,7 @@ describe('<PositionFormV2>', () => {
   it('lists saved slots on mount', async () => {
     const { invoke } = await import('@tauri-apps/api/core');
     (invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
-      if (cmd === 'position_current_fix') return { grid: 'CN87us', source: 'Gps', fresh: true };
+      if (cmd === 'position_current_fix') return { grid: 'CN87us', broadcast_grid: 'CN87us', source: 'Gps', fresh: true };
       if (cmd === 'form_draft_library_list') {
         return [
           {
@@ -338,7 +338,7 @@ describe('<PositionFormV2>', () => {
   it('applies a slot payload (message field) when selected', async () => {
     const { invoke } = await import('@tauri-apps/api/core');
     (invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
-      if (cmd === 'position_current_fix') return { grid: 'CN87us', source: 'Gps', fresh: true };
+      if (cmd === 'position_current_fix') return { grid: 'CN87us', broadcast_grid: 'CN87us', source: 'Gps', fresh: true };
       if (cmd === 'form_draft_library_list') {
         return [
           {
@@ -388,7 +388,7 @@ describe('<PositionFormV2>', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
     const { invoke } = await import('@tauri-apps/api/core');
     (invoke as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
-      if (cmd === 'position_current_fix') return { grid: 'CN87us', source: 'Gps', fresh: true };
+      if (cmd === 'position_current_fix') return { grid: 'CN87us', broadcast_grid: 'CN87us', source: 'Gps', fresh: true };
       if (cmd === 'form_draft_library_list') {
         return [
           {

@@ -6,6 +6,7 @@ pub mod draft_library; // tuxlink-hnkn P2 Task 4 — save/reuse named slots
 pub mod http_server;
 pub mod import; // tuxlink-z0le/fwob — in-app form import (G5+G6)
 pub mod multipart;
+pub mod outbound; // tuxlink-bekbh/3ddk2 — shared native-form message construction
 pub mod parse;
 pub mod pdf_export; // tuxlink-cumx / G8 — on-demand faithful PDF export of a rendered form
 pub mod sequence; // tuxlink-2tom / G12-C — persisted per-form serial counters (SeqInc)

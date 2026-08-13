@@ -41,6 +41,7 @@ import {
   type StationSet,
   type Step,
 } from '../routinesApi';
+import { listAllSlots, type FormDraftSlot } from '../../compose/FormDraftLibrary';
 import type { StepPatch } from './defDraft';
 import { RadioConnectSection } from './RadioConnectSection';
 import './StepInspector.css';
@@ -148,6 +149,7 @@ export function StepInspector({ step, actions, onChange, onRemove }: StepInspect
   // ---- @-reference helper data ----
   const [presets, setPresets] = useState<RadioPreset[]>([]);
   const [stationSets, setStationSets] = useState<StationSet[]>([]);
+  const [draftSlots, setDraftSlots] = useState<FormDraftSlot[]>([]);
   useEffect(() => {
     if (!isAction) return;
     let cancelled = false;
@@ -164,6 +166,17 @@ export function StepInspector({ step, actions, onChange, onRemove }: StepInspect
       })
       .catch(() => {
         if (!cancelled) setStationSets([]);
+      });
+    // Saved form drafts, for `@draft:` (tuxlink-3ddk2). The token is a slot
+    // UUID, which no operator should ever have to type or even see — the chip
+    // shows the label + form and INSERTS the id. Without this the reference
+    // kind exists only for people who read the database.
+    listAllSlots()
+      .then((l) => {
+        if (!cancelled) setDraftSlots(Array.isArray(l) ? l : []);
+      })
+      .catch(() => {
+        if (!cancelled) setDraftSlots([]);
       });
     return () => {
       cancelled = true;
@@ -409,7 +422,7 @@ export function StepInspector({ step, actions, onChange, onRemove }: StepInspect
             </div>
           )}
 
-          {showRefHelper && (presets.length > 0 || stationSets.length > 0) && (
+          {showRefHelper && (presets.length > 0 || stationSets.length > 0 || draftSlots.length > 0) && (
             <div className="insp-ref-helper" data-testid="inspector-ref-helper">
               {presets.map((p) => (
                 <button
@@ -431,6 +444,18 @@ export function StepInspector({ step, actions, onChange, onRemove }: StepInspect
                   onClick={() => insertRef(`@station-set:${s.name}`)}
                 >
                   @station-set:{s.name}
+                </button>
+              ))}
+              {draftSlots.map((d) => (
+                <button
+                  key={`draft:${d.slot_id}`}
+                  type="button"
+                  className="ref-chip"
+                  data-testid={`ref-chip-draft-${d.slot_id}`}
+                  title={`Inserts @draft:${d.slot_id}`}
+                  onClick={() => insertRef(`@draft:${d.slot_id}`)}
+                >
+                  @draft: {d.label} ({d.form_id})
                 </button>
               ))}
             </div>
