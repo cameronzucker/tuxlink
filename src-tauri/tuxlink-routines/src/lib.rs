@@ -21,6 +21,7 @@ pub mod error;
 pub mod executor;
 pub mod fakes;
 pub mod journal;
+pub mod readback;
 pub mod refs;
 pub mod scheduler;
 pub mod snapshot;
