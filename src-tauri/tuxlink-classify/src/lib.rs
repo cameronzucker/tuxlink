@@ -28,6 +28,7 @@ pub mod enriched;
 pub mod hosting;
 pub mod inbox;
 pub mod index;
+pub mod pins;
 pub mod thresholds;
 
 pub use backend::{EmbeddingBackend, Pooling};
