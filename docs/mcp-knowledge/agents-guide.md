@@ -45,7 +45,9 @@ ungated rig-control server, so Tuxlink deliberately does not do it),
 follow up with `docs_read` on the hit's slug for the full page), `docs_read`,
 `catalog_list`, `config_read`, `config_get_ardop`, `config_get_vara`,
 `packet_config_get`, `vara_ini_read` (redacted), `vara_engine_available`,
-`vara_install_status`, `printer_list`, and the device enumerators
+`vara_install_status`, `classify_weights_status` (is the on-device classifier
+model installed, how strongly its content is vouched for, and the state of
+the acquisition job), `printer_list`, and the device enumerators
 (`packet_list_serial_devices`, `packet_list_bluetooth_devices`,
 `list_audio_devices` — station-level; `ardop_list_audio_devices` is its
 deprecated alias with identical output, prefer `list_audio_devices`).
@@ -177,6 +179,13 @@ from tool names.
   arm-gated, but it **prompts for the OS password at the machine** (pkexec),
   so it cannot proceed unattended. Check `vara_engine_available` /
   `vara_install_status` first.
+- `classify_weights_download` — start (or retry) the ~134 MB on-device
+  classifier-model download. Non-transmit, not arm-gated. The job is
+  persistent and self-retrying: poll `classify_weights_status` instead of
+  re-invoking. Every byte is verified against digests pinned in the app
+  release before install, so the optional `source_url` changes where bytes
+  come from, never what can be installed. `classify_weights_cancel` stops
+  it; partial files remain as the resume point.
 
 ### FT-8 band monitor: receive-only, no taint, no authorization
 
