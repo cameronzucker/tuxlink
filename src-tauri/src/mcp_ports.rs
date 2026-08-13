@@ -3932,6 +3932,7 @@ impl ProvisionPort for MonolithProvisionPort {
             let state: tauri::State<'_, std::sync::Arc<crate::classify_weights::WeightsState>> =
                 app.state();
             weights_status_to_port(&crate::classify_weights::classify_weights_download_cancel(
+                app.clone(),
                 state,
             ))
         })
