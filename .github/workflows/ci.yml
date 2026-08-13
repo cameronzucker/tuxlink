@@ -175,3 +175,82 @@ jobs:
         # ect-build.yml (a full --no-default-features tauri build + install-test),
         # so it is intentionally NOT re-checked here — that extra cargo check
         # pushed the already-tight amd64 verify past its timeout (tuxlink-iuop).
+
+  # The MSRV floor is a TESTED promise, not a declared one (tuxlink-qt7zi).
+  #
+  # 1.95 is the MEASURED floor of the locked graph: 1.89 (the max any
+  # dependency declares) fails to compile — libsqlite3-sys 0.38.1's build.rs
+  # uses cfg_select!, stabilized in 1.95 — and check+test pass at exactly
+  # 1.95. Declared rust-version fields are a lower bound only; only a real
+  # compile finds the floor, which is what this job is.
+  #
+  # Deliberately NO clippy here: at the pinned toolchain clippy emits lints
+  # that current stable's clippy has relaxed, so an exact-MSRV clippy gate
+  # would force satisfying the UNION of lint behaviours across toolchains for
+  # zero compatibility value. clippy runs on stable in `verify`; this job
+  # answers exactly one question — does the workspace still build and pass its
+  # tests at the promised floor. No frontend steps: cargo compiles and tests
+  # the Rust workspace without a web bundle.
+  msrv:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+            rustflags: ""
+          # Same +fp16 rationale as `verify`: required to ASSEMBLE gemm-f16's
+          # NEON fp16 inline asm (candle matmul dep of tuxlink-classify),
+          # which --workspace --all-targets compiles. Nothing here ships.
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+            rustflags: "-C target-feature=+fp16"
+    runs-on: ${{ matrix.runner }}
+    env:
+      RUSTFLAGS: ${{ matrix.rustflags }}
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Harden apt + refresh the package index
+        # Same tuxlink-84vzn rationale as `verify`.
+        run: |
+          echo 'Acquire::Retries "3";' | sudo tee /etc/apt/apt.conf.d/99retries
+          sudo apt-get update
+
+      - name: Install system dependencies (cached)
+        # SAME package list and SAME cache version salt as `verify`, on
+        # purpose: the closure is identical (wsjtx supplies the jt9 decode
+        # oracle the tuxlink-jt9 e2e tests exec), so the two jobs share one
+        # apt cache per arch instead of paying for two.
+        uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: libax25-dev libudev-dev libwebkit2gtk-4.1-dev libglib2.0-dev libgtk-3-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libheif-dev libde265-dev libwebp-dev wsjtx libasound2-dev
+          version: tuxlink-ci-${{ matrix.arch }}-v5
+
+      - name: Setup Rust (the pinned MSRV toolchain)
+        # The `toolchain` input overrides the action ref, per the action's
+        # own docs — this installs exactly 1.95.0, not stable.
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.95.0"
+
+      - name: Cache cargo
+        # Separate namespace from verify's `ci-` keys: 1.95 artifacts and
+        # stable artifacts fingerprint separately, and sharing one key would
+        # make the two jobs evict each other's caches every run.
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: msrv-${{ runner.os }}-${{ matrix.arch }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            msrv-${{ runner.os }}-${{ matrix.arch }}-
+
+      - name: Rust check at the floor
+        run: cargo check --manifest-path src-tauri/Cargo.toml --workspace --all-targets --locked
+
+      - name: Rust tests at the floor
+        run: cargo test --manifest-path src-tauri/Cargo.toml --workspace --locked

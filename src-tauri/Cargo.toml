@@ -8,13 +8,26 @@
 members = [".", "tuxlink-security", "tuxlink-mcp-core", "tuxlink-mcp", "tuxlink-mcp-testserver", "tuxlink-routines", "tux-rig", "tuxlink-agent-runner", "tuxlink-agent-frontend", "d3zwe", "tuxlink-ft8", "tuxlink-jt9", "tuxlink-capture", "tuxlink-stt", "tuxlink-vara-ini", "tuxlink-classify"]
 default-members = ["."]
 
+[workspace.package]
+# The MEASURED floor, not a declared one (tuxlink-qt7zi, 2026-08-12): the
+# locked graph fails at 1.89 (libsqlite3-sys build.rs uses cfg_select!,
+# stabilized 1.95) and `cargo check --workspace --all-targets --locked`
+# passes at exactly 1.95. The scaffold's 1.75 was fiction — nothing ever
+# built there. CI enforces this number with an exact-toolchain check+test
+# job (deliberately NO clippy at the pinned version: older clippy flags
+# what newer clippy relaxed, so an exact-MSRV clippy gate would demand the
+# union of lint behaviours across toolchains for zero compatibility value).
+# Every member inherits via `rust-version.workspace = true` — one number,
+# sixteen manifests, no drift.
+rust-version = "1.95"
+
 [package]
 name = "tuxlink"
 version = "0.106.0"
 description = "Linux-native full-capability Winlink client"
 authors = ["Cameron Zucker"]
 edition = "2021"
-rust-version = "1.75"
+rust-version.workspace = true
 license = "AGPL-3.0-or-later"
 # With the helper bin in src/bin/ (native_cms_probe), a bare
 # `cargo run` / `tauri dev` is ambiguous; name the app binary as the default.

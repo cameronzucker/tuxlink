@@ -55,17 +55,22 @@ A fresh worktree has no `node_modules`: run `pnpm install` before the pre-push
 
 ## Testing
 
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) gates every PR on two
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) gates every PR on three
 jobs, each on amd64 + arm64:
 
 - **verify** — `pnpm typecheck`, `pnpm vitest run`, `pnpm build`, then
   `cargo clippy … --all-targets --locked -- -D warnings` and
   `cargo test … --locked`.
 - **build-linux** — `pnpm tauri build` (deb / rpm / appimage) + `pnpm lint:docs`.
+- **msrv** — `cargo check` + `cargo test` at exactly the pinned floor toolchain.
 
-**MSRV is 1.75** (`src-tauri/Cargo.toml` `rust-version`); clippy's `incompatible_msrv`
-lint is denied, so an API stabilized in 1.76+ (e.g. `Result::inspect_err`) fails the
-build — use the pre-1.76 idiom.
+**MSRV is 1.95, measured and CI-enforced** (tuxlink-qt7zi: the scaffold's 1.75 was
+fiction — the locked graph fails below 1.95 because `libsqlite3-sys` needs
+`cfg_select!`). The single source of truth is `[workspace.package] rust-version` in
+`src-tauri/Cargo.toml`; every member inherits it. clippy's `incompatible_msrv` lint is
+denied, so an API stabilized after 1.95 fails the build — use a pre-1.95-stable idiom.
+The `msrv` CI job deliberately runs NO clippy (an older clippy flags what newer clippy
+relaxed; check+test at the floor is the whole promise).
 
 **This dev Pi does not finish a cold `cargo` build or test locally** (the target is
 contended). Write the Rust and its tests, open the PR (draft is fine), and let CI

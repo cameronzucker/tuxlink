@@ -21,7 +21,7 @@
 name = "tuxlink-agent-frontend"
 version = "0.0.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version.workspace = true
 license = "AGPL-3.0-or-later"
 publish = false
 
