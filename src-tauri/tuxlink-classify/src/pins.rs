@@ -25,8 +25,6 @@
 //! download/import time, and the release workflow verifies the assets it
 //! attaches against the very same constants via `examples/print_pins.rs`.
 
-use crate::hosting::REQUIRED_FILES;
-
 /// One required weights file and the exact content the release vouches for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PinnedFile {
@@ -98,6 +96,7 @@ pub fn pinned(model_id: &str) -> Option<&'static PinnedModel> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hosting::REQUIRED_FILES;
 
     #[test]
     fn every_pin_covers_exactly_the_required_files_in_order() {

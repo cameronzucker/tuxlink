@@ -136,6 +136,22 @@
     "catalog_set_service_codes": {
       "class": "operator-authority"
     },
+    "classify_weights_download_cancel": {
+      "class": "capability",
+      "mcp": "classify_weights_cancel"
+    },
+    "classify_weights_download_start": {
+      "class": "capability",
+      "mcp": "classify_weights_download"
+    },
+    "classify_weights_sideload_import": {
+      "class": "capability",
+      "pending": "tuxlink-wvgon"
+    },
+    "classify_weights_status": {
+      "class": "capability",
+      "mcp": "classify_weights_status"
+    },
     "clear_tile_cache": {
       "class": "capability",
       "pending": "tuxlink-to358"
@@ -1263,5 +1279,5 @@
       "pending": "tuxlink-to358"
     }
   },
-  "tool_budget": 92
+  "tool_budget": 95
 }

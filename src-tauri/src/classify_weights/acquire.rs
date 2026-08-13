@@ -23,7 +23,7 @@
 //! cleanly rather than corrupting the hash.
 
 use std::io::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -598,6 +598,7 @@ pub fn backoff_secs(attempt: u32) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use std::sync::atomic::AtomicU64;
     use std::sync::Mutex;
 

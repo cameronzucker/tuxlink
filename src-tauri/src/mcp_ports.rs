@@ -54,6 +54,7 @@ use tuxlink_mcp_core::ports::{
     RunningModemDto, SaveResultDto, SearchPort, SearchQueryDto, SearchResultsDto,
     SelectedConnectionDto, SendFormDto, SerialDeviceDto, SessionIntentDto, SolarSnapshotDto,
     StagedRecordDto, StationModeDto, StationPort, StatusPort,
+    ClassifyWeightsJobDto, ClassifyWeightsStatusDto,
     UiHintPort, VaraCheckpointDto, VaraConfigDto, VaraEngineDto, VaraInstallStatusDto,
     VaraInstallSummaryDto, VaraProbeDto, VaraStatusDto, VaraWriteDto, WritePort, WritePortError,
     WwvCaptureDto, WwvPort,
@@ -3887,6 +3888,81 @@ impl ProvisionPort for MonolithProvisionPort {
             .await
             .map_err(|e| PortError::Internal(format!("join: {e}")))?
             .map_err(|e| PortError::Internal(redact_err(e)))
+    }
+
+    async fn classify_weights_status(&self) -> Result<ClassifyWeightsStatusDto, PortError> {
+        let app = self.app.clone();
+        // Filesystem probing (locator + manifest read) off the async runtime.
+        tokio::task::spawn_blocking(move || {
+            let state: tauri::State<'_, std::sync::Arc<crate::classify_weights::WeightsState>> =
+                app.state();
+            weights_status_to_port(&crate::classify_weights::status_snapshot(&state))
+        })
+        .await
+        .map_err(|e| PortError::Internal(format!("join: {e}")))
+    }
+
+    async fn classify_weights_download(
+        &self,
+        source_url: Option<String>,
+    ) -> Result<ClassifyWeightsStatusDto, PortError> {
+        let app = self.app.clone();
+        tokio::task::spawn_blocking(move || {
+            let state: tauri::State<'_, std::sync::Arc<crate::classify_weights::WeightsState>> =
+                app.state();
+            let state = state.inner().clone();
+            crate::classify_weights::try_download_start(source_url, &app, &state)
+                .map(|dto| weights_status_to_port(&dto))
+                .map_err(|e| match e {
+                    // A refused URL is the caller's to fix; a busy job is not
+                    // the call's fault — retry later or cancel first.
+                    crate::classify_weights::StartError::InvalidSource(m) => {
+                        PortError::InvalidInput(m)
+                    }
+                    crate::classify_weights::StartError::Busy(m) => PortError::Unavailable(m),
+                })
+        })
+        .await
+        .map_err(|e| PortError::Internal(format!("join: {e}")))?
+    }
+
+    async fn classify_weights_cancel(&self) -> Result<ClassifyWeightsStatusDto, PortError> {
+        let app = self.app.clone();
+        tokio::task::spawn_blocking(move || {
+            let state: tauri::State<'_, std::sync::Arc<crate::classify_weights::WeightsState>> =
+                app.state();
+            weights_status_to_port(&crate::classify_weights::classify_weights_download_cancel(
+                state,
+            ))
+        })
+        .await
+        .map_err(|e| PortError::Internal(format!("join: {e}")))
+    }
+}
+
+/// App-DTO → port-DTO mapping for the weights status. Field-for-field; the
+/// port types are `String` where the app uses static strs.
+fn weights_status_to_port(
+    dto: &crate::classify_weights::WeightsStatusDto,
+) -> ClassifyWeightsStatusDto {
+    ClassifyWeightsStatusDto {
+        model_id: dto.model_id.clone(),
+        total_bytes: dto.total_bytes,
+        ready: dto.ready,
+        integrity: dto.integrity.map(str::to_string),
+        location: dto.location.clone(),
+        summary: dto.summary.clone(),
+        default_source: dto.default_source.clone(),
+        job: dto.job.as_ref().map(|j| ClassifyWeightsJobDto {
+            state: j.state.to_string(),
+            detail: j.detail.clone(),
+            error_class: j.error_class.map(str::to_string),
+            file: j.file.clone(),
+            files_done: j.files_done.clone(),
+            source: j.source.clone(),
+            started_unix: j.started_unix,
+            updated_unix: j.updated_unix,
+        }),
     }
 }
 

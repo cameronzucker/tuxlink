@@ -421,6 +421,52 @@ pub struct VaraInstallStatusDto {
     pub checkpoints: Vec<VaraCheckpointDto>,
 }
 
+/// The classifier-weights job half of [`ClassifyWeightsStatusDto`]. Mirrors
+/// the app's persistent job record (tuxlink-13ofm): one job at a time,
+/// survives restart, resumes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+pub struct ClassifyWeightsJobDto {
+    /// `waiting` | `downloading` | `verifying` | `complete` | `failed`.
+    pub state: String,
+    /// Waiting reason / failure message, operator-phrased.
+    pub detail: Option<String>,
+    /// On `failed`: `network` (auto-retried), `source` (switch source or
+    /// sideload), `digest-mismatch` (content refused by name), `io`,
+    /// `cancelled`.
+    pub error_class: Option<String>,
+    /// File currently moving, when downloading/verifying.
+    pub file: Option<String>,
+    /// Files already digest-verified and installed by this job.
+    pub files_done: Vec<String>,
+    /// Where the bytes come from, as a display string.
+    pub source: String,
+    pub started_unix: u64,
+    pub updated_unix: u64,
+}
+
+/// Result of the read-only classifier-weights probe: whether usable T1
+/// weights exist on the search path, how strongly their content is vouched
+/// for, and the state of the acquisition job if one exists.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+pub struct ClassifyWeightsStatusDto {
+    pub model_id: String,
+    /// Whole-payload size in bytes (~134 MB for the primary model).
+    pub total_bytes: u64,
+    /// True iff a structurally-valid copy exists somewhere on the search path.
+    pub ready: bool,
+    /// Strongest integrity claim for the ready copy: `digest-pinned` (every
+    /// byte verified against the release pins at acquisition), `size-verified`
+    /// (manifest byte lengths match), or `structure`.
+    pub integrity: Option<String>,
+    /// Directory of the ready copy.
+    pub location: Option<String>,
+    /// One-line locator summary; when absent it names every path searched.
+    pub summary: String,
+    /// The version-matched default download base for this build.
+    pub default_source: String,
+    pub job: Option<ClassifyWeightsJobDto>,
+}
+
 /// One `[section] key = value` assignment for `vara_ini_apply`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
 pub struct VaraIniEditDto {
@@ -965,6 +1011,20 @@ pub trait ProvisionPort: Send + Sync {
         prefix: Option<String>,
         instance: Option<String>,
     ) -> Result<String, PortError>;
+    /// Classifier-weights readiness + job state (tuxlink-13ofm). Read-only,
+    /// app-owned data — no taint.
+    async fn classify_weights_status(&self) -> Result<ClassifyWeightsStatusDto, PortError>;
+    /// Start (or retry) the classifier-weights download. NON-TRANSMIT local
+    /// provisioning; every downloaded byte is verified against the digests
+    /// pinned in this release before installing, so the source URL cannot
+    /// change WHAT gets installed — only whether the transfer succeeds.
+    async fn classify_weights_download(
+        &self,
+        source_url: Option<String>,
+    ) -> Result<ClassifyWeightsStatusDto, PortError>;
+    /// Cancel the running weights job. Partial files remain as the resume
+    /// point; nothing partial can ever be mistaken for installed weights.
+    async fn classify_weights_cancel(&self) -> Result<ClassifyWeightsStatusDto, PortError>;
 }
 
 /// Mailbox reads. `list` + `read` return untrusted message content → the

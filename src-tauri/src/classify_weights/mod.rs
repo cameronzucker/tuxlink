@@ -411,6 +411,39 @@ fn validate_base_url(raw: &str) -> Result<String, String> {
     Ok(url.0.to_string())
 }
 
+/// Why a start request was refused — kept distinct so the MCP boundary can
+/// classify honestly: a bad URL is the CALLER's to fix; a busy job is not
+/// (the disposition-vocabulary rule from tuxlink-2tdmi).
+#[derive(Debug)]
+pub enum StartError {
+    InvalidSource(String),
+    Busy(String),
+}
+
+impl StartError {
+    pub fn message(&self) -> &str {
+        match self {
+            StartError::InvalidSource(m) | StartError::Busy(m) => m,
+        }
+    }
+}
+
+/// Shared start body for the Tauri command and the MCP port.
+pub fn try_download_start(
+    source_url: Option<String>,
+    app: &AppHandle,
+    state: &Arc<WeightsState>,
+) -> Result<WeightsStatusDto, StartError> {
+    let base_url = match source_url.as_deref().map(str::trim) {
+        Some(raw) if !raw.is_empty() => {
+            validate_base_url(raw).map_err(StartError::InvalidSource)?
+        }
+        _ => default_release_base(),
+    };
+    start(app, state, Source::Release { base_url }).map_err(StartError::Busy)?;
+    Ok(status_snapshot(state))
+}
+
 // ---- Tauri commands ----
 
 #[tauri::command]
@@ -427,12 +460,7 @@ pub fn classify_weights_download_start(
     app: AppHandle,
     state: State<'_, Arc<WeightsState>>,
 ) -> Result<WeightsStatusDto, String> {
-    let base_url = match source_url.as_deref().map(str::trim) {
-        Some(raw) if !raw.is_empty() => validate_base_url(raw)?,
-        _ => default_release_base(),
-    };
-    start(&app, &state, Source::Release { base_url })?;
-    Ok(status_snapshot(&state))
+    try_download_start(source_url, &app, &state).map_err(|e| e.message().to_string())
 }
 
 /// Cancel the running job. Partial files stay on disk — they are the resume
