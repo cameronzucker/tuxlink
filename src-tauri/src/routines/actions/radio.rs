@@ -1167,7 +1167,10 @@ impl ListenService for MonolithListenService {
         let device = crate::modem_commands::config_get_ardop().capture_device;
         if device.is_empty() {
             return Err(
-                "ARDOP capture device not configured — open Settings → ARDOP first".to_string(),
+                "ARDOP capture device not configured. Set it first: call \
+                 ardop_list_audio_devices then config_set_ardop, or open Settings \
+                 → ARDOP in the app."
+                    .to_string(),
             );
         }
 

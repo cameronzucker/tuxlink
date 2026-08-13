@@ -690,11 +690,13 @@ pub mod test_support {
             &self,
             _folder: String,
             _id: String,
-            _filename: String,
-            dest: String,
+            filename: String,
+            dest: Option<String>,
         ) -> Result<String, WritePortError> {
             // VALIDATE BEFORE GATE: a traversal/absolute/escaping dest is Invalid
-            // even when disarmed.
+            // even when disarmed. An omitted dest derives from the attachment
+            // name, mirroring the real port.
+            let dest = dest.unwrap_or_else(|| filename.replace(['/', '\\'], "_"));
             let path = validate_attachment_dest(self.base.path(), &dest)?;
             self.gated("attachment_save").await?;
             Ok(path.to_string_lossy().into_owned())

@@ -60,7 +60,7 @@ use tuxlink_mcp_core::ports::{
 };
 use tuxlink_mcp_core::validate::{
     validate_address, validate_attachment_dest, validate_body, validate_drive_level,
-    validate_frequencies_khz, validate_grid, validate_history_hours, validate_subject,
+    normalize_frequencies_khz, validate_grid, validate_history_hours, validate_subject,
     validate_vara_bandwidth,
 };
 use tuxlink_security::{guarded_egress, EgressAudit, EgressAuthority, EgressGuard};
@@ -1622,6 +1622,67 @@ impl AbortPort for MonolithAbortPort {
 }
 
 // ---------------------------------------------------------------------------
+/// Derive a save destination from an attachment's own filename.
+///
+/// The attachment name comes off an untrusted message, so this keeps only
+/// filename-safe graphic characters, replaces everything else with `_`, strips
+/// any directory structure, and caps the length. The result is a single path
+/// component, which `validate_attachment_dest` still checks for containment —
+/// this is the first of two layers, not a replacement for it.
+///
+/// Why it exists: a derived destination is BOUNDED (the attacker picks among
+/// the attachments already on the message), where a caller-supplied one is free
+/// text. That difference is what lets the save proceed under taint.
+fn derive_attachment_dest(filename: &str) -> String {
+    const MAX: usize = 128;
+    // Take the last path component so "../../etc/passwd" cannot survive as
+    // structure; the component scan in validate_attachment_dest would reject it
+    // anyway, but a derived name should never need rejecting.
+    let leaf = filename
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(filename)
+        .trim();
+    let mut out = String::with_capacity(MAX);
+    for ch in leaf.chars().take(MAX) {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    // A name of all-dots would read as a traversal component.
+    let trimmed = out.trim_matches('.').to_string();
+    if trimmed.is_empty() {
+        "attachment.bin".to_string()
+    } else {
+        trimmed
+    }
+}
+
+/// Parameter bandwidth for `mailbox_move`, shared by the call site and its
+/// test so the classification cannot drift away from what is asserted.
+///
+/// All three are bounded by validation that runs BEFORE the gate: `from`/`to`
+/// must resolve to a known system folder or a REGISTERED user slug, and `id`
+/// must name a message already in the mailbox. If anyone adds a free-text
+/// parameter to this call, `mailbox_move_inputs_are_all_bounded` fails and the
+/// per-datum permission has to be re-argued rather than silently inherited.
+const MAILBOX_MOVE_INPUTS: &[tuxlink_security::provenance::Input<'static>] = &[
+    tuxlink_security::provenance::Input {
+        name: "from",
+        bandwidth: tuxlink_security::provenance::Bandwidth::ClosedEnum,
+    },
+    tuxlink_security::provenance::Input {
+        name: "to",
+        bandwidth: tuxlink_security::provenance::Bandwidth::ClosedEnum,
+    },
+    tuxlink_security::provenance::Input {
+        name: "id",
+        bandwidth: tuxlink_security::provenance::Bandwidth::SystemIssued,
+    },
+];
+
 // Write port (phase 3.4) — GATED Agent config/state writes.
 //
 // EVERY method VALIDATES the agent-supplied input FIRST (a malformed value is
@@ -2095,10 +2156,26 @@ impl WritePort for MonolithWritePort {
         }
         let audit = write_audit_sink(self.app.clone());
         let app = self.app.clone();
-        guarded_egress(
+        // PER-DATUM GATE, not the egress gate. Moving a message between local
+        // folders transmits nothing, and every parameter here is bounded by
+        // construction because the validation above already ran:
+        //   from / to — must have resolved to a known system folder or a
+        //     REGISTERED user slug, so the choice is 1-of-N over folders that
+        //     already exist.
+        //   id — must name a message already in the mailbox; an invented id
+        //     fails the lookup.
+        // So a tainted session performing this move gives an attacker a choice
+        // among options we already enumerated, not an arbitrary effect. The
+        // operator's grant is still required, and transmission is untouched.
+        //
+        // This is the measured case: the v26 run refused 9 mailbox_move calls,
+        // every one in a session the operator had ARMED (tuxlink-0rc3h).
+        use tuxlink_security::provenance::guarded_local_write;
+        guarded_local_write(
             &self.guard,
             EgressAuthority::Agent,
             "mailbox_move",
+            MAILBOX_MOVE_INPUTS,
             &audit,
             || async move {
                 // ui_commands.rs:1426 mailbox_move (validates folders via
@@ -2122,10 +2199,20 @@ impl WritePort for MonolithWritePort {
         folder: String,
         id: String,
         filename: String,
-        dest: String,
+        dest: Option<String>,
     ) -> Result<String, WritePortError> {
         use crate::native_mailbox::FolderRef;
         use crate::winlink_backend::MessageId;
+        // A CALLER-CHOSEN dest is free text; a DERIVED one is not. Deriving it
+        // from the sanitized attachment name makes every parameter of this call
+        // bounded, so the per-datum gate lets it through in a tainted session —
+        // which is the state that refused 9 of these in the v26 run, every one
+        // with the operator's grant live (tuxlink-0rc3h).
+        let dest_was_caller_chosen = dest.is_some();
+        let dest = match dest {
+            Some(d) => d,
+            None => derive_attachment_dest(&filename),
+        };
         // The agent attachment-save target is a fixed, sandboxed base —
         // <app_data>/agent-attachments — NOT the native save dialog the GUI
         // command uses. Compute + create the base, then VALIDATE the dest
@@ -2146,10 +2233,27 @@ impl WritePort for MonolithWritePort {
 
         let audit = write_audit_sink(self.app.clone());
         let app = self.app.clone();
-        guarded_egress(
+        // PER-DATUM GATE. Writing a file into the agent's own sandboxed
+        // directory transmits nothing. `folder` resolved to a known folder and
+        // `id`/`filename` must name a message and an attachment that exist, so
+        // those three are bounded. `dest` is the deciding one: DERIVED from the
+        // attachment name it is bounded, CALLER-CHOSEN it is free text and a
+        // tainted session is refused.
+        let dest_input = if dest_was_caller_chosen {
+            tuxlink_security::provenance::Input::free_text("dest")
+        } else {
+            tuxlink_security::provenance::Input::system("dest")
+        };
+        tuxlink_security::provenance::guarded_local_write(
             &self.guard,
             EgressAuthority::Agent,
             "attachment_save",
+            &[
+                tuxlink_security::provenance::Input::closed_enum("folder"),
+                tuxlink_security::provenance::Input::system("id"),
+                tuxlink_security::provenance::Input::system("filename"),
+                dest_input,
+            ],
             &audit,
             || async move {
                 // Read the message + extract the attachment bytes by filename —
@@ -3473,8 +3577,14 @@ impl PredictionPort for MonolithPredictionPort {
         // Internal mapping mis-signalled a server bug; bench measured 15
         // MHz-for-kHz unit fumbles hitting it, tuxlink-9n4cr).
         validate_grid(&req.rx_grid).map_err(|e| PortError::InvalidInput(e.to_string()))?;
-        validate_frequencies_khz(&req.frequencies_khz)
-            .map_err(|e| PortError::InvalidInput(format!("{e} (frequencies are kHz, not MHz - 40m is ~7100)")))?;
+        // ACCEPT the MHz spelling instead of lecturing about it. tuxlink-9n4cr
+        // saw 15 unit fumbles here and responded by appending "(frequencies are
+        // kHz, not MHz)" to the error. The v26 run then produced 23 more, every
+        // single predict_path failure in 405 units. The hint was read by nobody
+        // because the model had already sent the call. The ranges do not
+        // overlap, so normalizing is unambiguous, not a guess (tuxlink-0rc3h).
+        let frequencies_khz = normalize_frequencies_khz(&req.frequencies_khz)
+            .map_err(|e| PortError::InvalidInput(e.to_string()))?;
 
         // Resolve the operator's OWN tx_grid from config — NEVER agent-supplied.
         // Mirror position_status's grid-clamp: effective_broadcast_locator honors
@@ -3505,7 +3615,10 @@ impl PredictionPort for MonolithPredictionPort {
         let prediction = crate::propagation::commands::propagation_predict_path(
             tx_grid.clone(),
             req.rx_grid,
-            req.frequencies_khz,
+            // NORMALIZED, not the raw request field: a 7.104 MHz spelling has
+            // been converted to 7104 kHz above, and the prediction must run on
+            // the converted value.
+            frequencies_khz,
             gateway_antenna,
             state,
         )
@@ -4268,10 +4381,19 @@ fn save_err_with_catalog_pointer(e: PortError) -> PortError {
         // Path-anchored messages carry their own targeted advice; leave them alone.
         PortError::InvalidInput(m) if is_path_anchored(&m) => PortError::InvalidInput(m),
         PortError::InvalidInput(m) => PortError::InvalidInput(format!(
-            "{m} - copy routines_actions_list's definition_template (the COMPLETE valid \
-             envelope) and substitute your steps into it. Note: `routine` is the routine's \
-             NAME string, not the definition body; `triggers` is a list; steps live under \
-             tracks[].steps. Then resend the corrected def_json"
+            "{m} - here is the COMPLETE valid envelope; substitute your steps into it and \
+             resend def_json: {}. Note: `routine` is the routine's NAME string, not the \
+             definition body; `triggers` is a list; steps live under tracks[].steps",
+            // EMBED the template rather than naming the tool that holds it.
+            // The previous text said "copy routines_actions_list's
+            // definition_template", which is still a round trip: the model has
+            // to make a second call before it can fix the first. The v26 run
+            // produced 25 routines_save rejections WITH that pointer already in
+            // place, so pointing was not enough (tuxlink-0rc3h). The template is
+            // ~300 bytes and locked to the real parser by
+            // definition_template_parses_as_routine_def, so it cannot drift
+            // into advice that does not actually work.
+            definition_template()
         )),
         other => other,
     }
@@ -4282,10 +4404,21 @@ fn save_err_with_catalog_pointer(e: PortError) -> PortError {
 /// `tracks[0].steps[2]…`, `top level: …`). Deliberately narrow — an unlocalised
 /// serde message must still get the catalog pointer.
 fn is_path_anchored(m: &str) -> bool {
-    m.contains("top level:")
-        || m.split("tracks[")
-            .skip(1)
-            .any(|rest| rest.chars().next().is_some_and(|c| c.is_ascii_digit()))
+    // "top level:" USED TO COUNT AS ANCHORED, and that was backwards. The
+    // purpose of this check is to withhold whole-envelope advice from an error
+    // that already localised the fault to a nested node, because top-level
+    // advice beside a nested error is what once told a builder its correct
+    // `routine` key was wrong. A message saying "top level: missing field
+    // `routine`" is the exact opposite: it says the ENVELOPE is wrong, which is
+    // precisely when the envelope should be shown.
+    //
+    // The cost was measurable. The two most common routines_save rejections in
+    // the 405-unit v26 run were "top level: missing field `routine`" and "top
+    // level: missing field `tracks`", 10 of 25 between them, and both were
+    // silently denied the help that existed for them (tuxlink-0rc3h).
+    m.split("tracks[")
+        .skip(1)
+        .any(|rest| rest.chars().next().is_some_and(|c| c.is_ascii_digit()))
 }
 
 /// Map one [`tuxlink_routines::validate::Finding`] onto the agent-facing DTO,
@@ -5668,7 +5801,9 @@ mod tests {
 
     // ── tuxlink-591dw: agent-boundary remedy suffixes ──
     mod finding_remedies {
-        use super::super::{is_path_anchored, map_finding, save_err_with_catalog_pointer};
+        use super::super::{
+            definition_template, is_path_anchored, map_finding, save_err_with_catalog_pointer,
+        };
         use tuxlink_mcp_core::ports::PortError;
         use tuxlink_routines::validate::Finding;
 
@@ -5743,6 +5878,123 @@ mod tests {
             }
         }
 
+        /// The derived destination handles an ATTACKER-SUPPLIED filename: it
+        /// comes off an untrusted message. This is the first of two layers
+        /// (`validate_attachment_dest` still checks containment), but a derived
+        /// name should never need rejecting in the first place.
+        #[test]
+        fn a_derived_attachment_dest_is_a_single_safe_component() {
+            use super::super::derive_attachment_dest as d;
+
+            assert_eq!(d("roster.txt"), "roster.txt");
+            assert_eq!(d("Report 2026.pdf"), "Report_2026.pdf");
+
+            // Directory structure is stripped, not escaped.
+            assert_eq!(d("../../etc/passwd"), "passwd");
+            assert_eq!(d("..\\..\\windows\\system32\\cfg"), "cfg");
+            assert_eq!(d("/absolute/path/x.bin"), "x.bin");
+
+            // Nothing that could read as a traversal component survives.
+            for hostile in ["..", ".", "...", "../", "  ..  "] {
+                let out = d(hostile);
+                assert!(
+                    !out.is_empty() && out != ".." && out != "." && !out.contains('/'),
+                    "{hostile:?} derived to {out:?}"
+                );
+            }
+
+            // Empty or fully-stripped names still yield something writable.
+            assert_eq!(d(""), "attachment.bin");
+            assert_eq!(d("///"), "attachment.bin");
+
+            // Length is capped and separators can never appear in the output.
+            let long = d(&format!("{}.txt", "a".repeat(500)));
+            assert!(long.len() <= 128, "len {}", long.len());
+            assert!(!d("a/b\\c:d*e?f").contains(['/', '\\']));
+        }
+
+        /// `mailbox_move` is permitted under taint ONLY because every
+        /// parameter is bounded. This asserts that against the same constant
+        /// the call site uses, so adding a free-text parameter later fails here
+        /// instead of silently widening what a tainted session may do.
+        ///
+        /// The measured case: 9 mailbox_move calls were refused in the v26 run,
+        /// every one in a session the operator had ARMED (tuxlink-0rc3h).
+        #[test]
+        fn mailbox_move_inputs_are_all_bounded() {
+            use tuxlink_security::provenance::{
+                authorize_action, ActionClass, SessionState,
+            };
+            use tuxlink_security::EgressAuthority;
+
+            assert!(
+                super::super::MAILBOX_MOVE_INPUTS
+                    .iter()
+                    .all(|i| i.bandwidth.is_bounded()),
+                "a free-text parameter would make this move unsafe under taint"
+            );
+
+            // Armed and tainted: the exact v26 deadlock state. Must proceed.
+            assert!(authorize_action(
+                EgressAuthority::Agent,
+                ActionClass::LocalWrite,
+                SessionState {
+                    tainted: true,
+                    armed: true
+                },
+                super::super::MAILBOX_MOVE_INPUTS,
+            )
+            .is_ok());
+
+            // But the operator's grant is still required.
+            assert!(authorize_action(
+                EgressAuthority::Agent,
+                ActionClass::LocalWrite,
+                SessionState {
+                    tainted: true,
+                    armed: false
+                },
+                super::super::MAILBOX_MOVE_INPUTS,
+            )
+            .is_err());
+        }
+
+        /// A top-level rejection must carry the WHOLE valid envelope, not a
+        /// pointer to the tool that holds it. The v26 run produced 25
+        /// routines_save rejections while the pointer version was already
+        /// deployed, so "go call routines_actions_list" was one round trip too
+        /// many (tuxlink-0rc3h).
+        #[test]
+        fn a_top_level_rejection_embeds_the_whole_envelope() {
+            let e = save_err_with_catalog_pointer(PortError::InvalidInput(
+                "routine JSON is malformed: top level: missing field `tracks`".to_string(),
+            ));
+            match e {
+                PortError::InvalidInput(m) => {
+                    // The actual template, so the model can fix the call
+                    // without making another one first.
+                    for needle in [
+                        "my-routine-name",
+                        "schema_version",
+                        "transmit_mode",
+                        "triggers",
+                        "tracks",
+                        "steps",
+                    ] {
+                        assert!(m.contains(needle), "envelope must include {needle}: {m}");
+                    }
+                    // And it must be the REAL template, which a sibling test
+                    // locks to the parser, not a hand-copied approximation.
+                    let embedded = definition_template().to_string();
+                    assert!(
+                        m.contains(&embedded),
+                        "must embed definition_template() verbatim so it cannot drift: {m}"
+                    );
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+
         /// tuxlink-mrp4u: a rejection that already names a JSON path must NOT
         /// gain the whole-envelope pointer. The pointer talks about the top
         /// level; pasting it beside a nested-path error is what told a builder
@@ -5756,7 +6008,14 @@ mod tests {
             ));
             match nested {
                 PortError::InvalidInput(m) => {
-                    assert!(!m.contains("definition_template"), "pointer must be withheld: {m}");
+                    // Checks the ENVELOPE ITSELF is withheld, not merely the
+                    // words "definition_template" — the appended text now
+                    // embeds the template rather than naming the tool, so
+                    // asserting on that old literal would pass vacuously.
+                    assert!(
+                        !m.contains("my-routine-name"),
+                        "the whole-envelope template must be withheld: {m}"
+                    );
                     assert!(
                         !m.contains("`routine` is the routine's"),
                         "the contradicting note must not appear: {m}"
@@ -5785,12 +6044,23 @@ mod tests {
                 "routine JSON is malformed: unknown variant `cron`".to_string(),
             ));
             match e {
-                PortError::InvalidInput(m) => assert!(m.contains("definition_template"), "{m}"),
+                // Asserts the ENVELOPE is present, not the old wording that
+                // named the tool holding it.
+                PortError::InvalidInput(m) => assert!(m.contains("my-routine-name"), "{m}"),
                 other => panic!("{other:?}"),
             }
             // Prose mentioning tracks[] without an index is not a path.
             assert!(!is_path_anchored("steps live under tracks[].steps"));
             assert!(is_path_anchored("tracks[2].steps[0]: missing field `id`"));
+            // A TOP-LEVEL fault is not "already localised": it is the case the
+            // envelope exists for, and treating it as anchored withheld the
+            // help from the run's two most common routines_save failures.
+            assert!(!is_path_anchored(
+                "routine JSON is malformed: top level: missing field `routine`"
+            ));
+            assert!(!is_path_anchored(
+                "routine JSON is malformed: top level: missing field `tracks`"
+            ));
         }
 
         /// A save REJECTION (the agent's own bad payload) gains the catalog
@@ -5802,7 +6072,9 @@ mod tests {
             ));
             match rejected {
                 PortError::InvalidInput(m) => {
-                    assert!(m.contains("routines_actions_list"), "{m}");
+                    // The envelope itself now travels with the rejection, so
+                    // the model does not need a second call to obtain it.
+                    assert!(m.contains("my-routine-name"), "{m}");
                     assert!(m.starts_with("routine JSON is malformed"), "original kept: {m}");
                 }
                 other => panic!("expected InvalidInput, got {other:?}"),

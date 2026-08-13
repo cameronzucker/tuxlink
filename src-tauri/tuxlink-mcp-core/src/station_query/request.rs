@@ -493,9 +493,82 @@ pub enum FindStationsRequest {
 /// deserializes straight to the enum while forcing `type: "object"` onto the
 /// advertised schema (every intent variant IS a JSON object, so the assertion is
 /// correct and merely more precise).
-#[derive(Debug, Clone, Deserialize)]
-#[serde(transparent)]
+#[derive(Debug, Clone)]
 pub struct FindStationsParams(pub FindStationsRequest);
+
+/// What each intent requires beyond `intent` itself. Single source for the
+/// corrective error below.
+const INTENT_REQUIREMENTS: &[(&str, &str)] = &[
+    (
+        "recommend",
+        "goal (an object: {\"kind\":\"connect-now\",\"objective\":\"estimated-success\"} \
+         or {\"kind\":\"best-at\",\"at_utc_ms\":<ms>,\"objective\":...})",
+    ),
+    ("explore", "nothing else (filters is optional)"),
+    ("lookup", "callsigns (array of 1-16 callsigns)"),
+    (
+        "aggregate",
+        "group_by (array of 1-3 of: mode, band, bandwidth-class, distance-bucket, \
+         bearing-sector, operating-now)",
+    ),
+    ("export", "format (\"json\" or \"csv\")"),
+];
+
+fn intent_help(intent: Option<&str>) -> String {
+    match intent {
+        Some(i) => match INTENT_REQUIREMENTS.iter().find(|(k, _)| *k == i) {
+            Some((_, req)) => format!(
+                "intent \"{i}\" also requires: {req}. Constraints go nested under \
+                 the optional `filters` object, never as top-level arguments."
+            ),
+            None => format!(
+                "unknown intent \"{i}\". Valid intents: {}.",
+                INTENT_REQUIREMENTS
+                    .iter()
+                    .map(|(k, _)| *k)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        },
+        None => format!(
+            "`intent` is required and selects what else you must send: {}. \
+             Constraints go nested under the optional `filters` object, never as \
+             top-level arguments.",
+            INTENT_REQUIREMENTS
+                .iter()
+                .map(|(k, r)| format!("{k} -> {r}"))
+                .collect::<Vec<_>>()
+                .join("; ")
+        ),
+    }
+}
+
+/// Hand-written so a rejected call gets EVERY missing requirement at once.
+///
+/// The derived version surfaced serde's one-field-at-a-time message, so a model
+/// omitting both `intent` and `goal` had to fail twice to learn twice: send
+/// filters -> "missing field `intent`" -> add intent -> "missing field `goal`".
+/// That exact two-step accounted for 41 of the 183 rejected tool calls in the
+/// 405-unit v26 bench run, the single largest cause (tuxlink-0rc3h).
+///
+/// The advertised schema is a correct `oneOf` and is passed to the model
+/// verbatim, so this is not a schema-transport loss. A root-level `oneOf` is
+/// simply a construct models satisfy unreliably, and the cheap durable answer
+/// is to make ONE failure teach the whole contract.
+impl<'de> Deserialize<'de> for FindStationsParams {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use serde::de::Error as _;
+        let v = serde_json::Value::deserialize(d)?;
+        let intent = v.get("intent").and_then(|i| i.as_str()).map(str::to_owned);
+        match serde_json::from_value::<FindStationsRequest>(v) {
+            Ok(req) => Ok(FindStationsParams(req)),
+            Err(e) => Err(D::Error::custom(format!(
+                "{e}. {}",
+                intent_help(intent.as_deref())
+            ))),
+        }
+    }
+}
 
 impl JsonSchema for FindStationsParams {
     fn schema_name() -> std::borrow::Cow<'static, str> {
@@ -715,6 +788,62 @@ mod tests {
             schema["oneOf"].is_array(),
             "still a tagged union of intents"
         );
+    }
+
+    /// The exact failing calls from the v26 bench run. Each must now come back
+    /// with the FULL contract, not one missing field.
+    #[test]
+    fn one_rejection_teaches_the_whole_contract() {
+        // Bench case 1: filters sent flat, no intent at all.
+        let e = serde_json::from_str::<FindStationsParams>(
+            r#"{"bands":["20m","40m"],"limit":5,"modes":["vara-hf"]}"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(e.contains("recommend"), "must list the intents: {e}");
+        assert!(e.contains("lookup") && e.contains("aggregate") && e.contains("export"));
+        assert!(e.contains("filters"), "must say constraints nest: {e}");
+
+        // Bench case 2: intent supplied, its own requirement still missing.
+        let e = serde_json::from_str::<FindStationsParams>(
+            r#"{"intent":"recommend","bands":["40m"],"limit":3}"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(e.contains("goal"), "must name goal: {e}");
+        assert!(e.contains("connect-now"), "must show goal's shape: {e}");
+
+        // A wrong intent names the legal set rather than failing blankly.
+        let e = serde_json::from_str::<FindStationsParams>(r#"{"intent":"teleport"}"#)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("lookup"), "must enumerate valid intents: {e}");
+
+        // Every intent's requirement is reachable from the help text.
+        for (intent, _) in INTENT_REQUIREMENTS {
+            assert!(
+                !intent_help(Some(intent)).contains("unknown intent"),
+                "{intent} should be recognized"
+            );
+        }
+    }
+
+    #[test]
+    fn valid_calls_still_deserialize_after_the_custom_impl() {
+        // The custom Deserialize must not change what IS accepted.
+        for ok in [
+            r#"{"intent":"explore"}"#,
+            r#"{"intent":"explore","filters":{"bands":["40m"],"modes":["vara-hf"]}}"#,
+            r#"{"intent":"lookup","callsigns":["W1AW"]}"#,
+            r#"{"intent":"aggregate","group_by":["band"]}"#,
+            r#"{"intent":"export","format":"csv"}"#,
+            r#"{"intent":"recommend","goal":{"kind":"connect-now","objective":"estimated-success"}}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<FindStationsParams>(ok).is_ok(),
+                "should still parse: {ok}"
+            );
+        }
     }
 
     #[test]

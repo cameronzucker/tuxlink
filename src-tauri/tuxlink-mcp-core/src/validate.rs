@@ -201,7 +201,29 @@ pub fn validate_grid(grid: &str) -> Result<(), ValidationError> {
 
 /// Validate a candidate dial-frequency list (kHz): `1..=11` entries, each within
 /// the HF amateur span `1800.0..=30000.0` kHz. Pure.
+///
+/// Prefer [`normalize_frequencies_khz`], which additionally accepts the MHz
+/// spelling operators actually use. This function stays for callers that have
+/// already normalized.
 pub fn validate_frequencies_khz(freqs: &[f64]) -> Result<(), ValidationError> {
+    normalize_frequencies_khz(freqs).map(|_| ())
+}
+
+/// Normalize a dial-frequency list to kHz, accepting BOTH the kHz spelling
+/// (`7104`) and the MHz spelling (`7.104`) an operator naturally writes.
+///
+/// The two ranges cannot overlap, so the unit is unambiguous rather than
+/// guessed: the HF amateur span is `1800..=30000` kHz, i.e. `1.8..=30` MHz.
+/// No legitimate kHz value is below 1800 and no legitimate MHz value is above
+/// 30, so a number in `1.8..=30.0` can only be MHz and one in
+/// `1800.0..=30000.0` can only be kHz.
+///
+/// Why accept both: every `predict_path` failure in the v26 bench run (23 of
+/// 23) was this and only this. The model sent `7`, `7.1`, `7.104`, `14.077`,
+/// which is how a ham says 40m and 20m, and the tool rejected it. Demanding
+/// one spelling bought nothing and cost a round trip every time
+/// (tuxlink-0rc3h).
+pub fn normalize_frequencies_khz(freqs: &[f64]) -> Result<Vec<f64>, ValidationError> {
     if freqs.is_empty() {
         return Err(ValidationError::InvalidFrequencies(
             "at least one frequency is required".to_string(),
@@ -212,14 +234,25 @@ pub fn validate_frequencies_khz(freqs: &[f64]) -> Result<(), ValidationError> {
             "at most 11 frequencies are allowed".to_string(),
         ));
     }
+    let mut out = Vec::with_capacity(freqs.len());
     for f in freqs {
-        if !(1800.0..=30000.0).contains(f) {
+        if !f.is_finite() {
             return Err(ValidationError::InvalidFrequencies(format!(
-                "{f} kHz is outside the 1800..=30000 kHz HF range"
+                "{f} is not a finite frequency"
+            )));
+        }
+        if (1800.0..=30000.0).contains(f) {
+            out.push(*f);
+        } else if (1.8..=30.0).contains(f) {
+            out.push(f * 1000.0);
+        } else {
+            return Err(ValidationError::InvalidFrequencies(format!(
+                "{f} is outside the HF amateur range — give kHz (1800..=30000, \
+                 e.g. 7104) or MHz (1.8..=30, e.g. 7.104)"
             )));
         }
     }
-    Ok(())
+    Ok(out)
 }
 
 /// Validate an optional `history_hours` bound for a station search: when present,
@@ -477,6 +510,25 @@ mod tests {
     fn frequencies_valid_set_is_accepted() {
         assert!(validate_frequencies_khz(&[7104.0]).is_ok());
         assert!(validate_frequencies_khz(&[1800.0, 30000.0, 14105.0]).is_ok());
+
+        // The MHz spelling an operator actually writes. Every predict_path
+        // failure in the 405-unit v26 run was one of these (tuxlink-0rc3h).
+        assert_eq!(normalize_frequencies_khz(&[7.104]).unwrap(), vec![7104.0]);
+        assert_eq!(normalize_frequencies_khz(&[7.0]).unwrap(), vec![7000.0]);
+        assert_eq!(normalize_frequencies_khz(&[14.077]).unwrap(), vec![14077.0]);
+        assert_eq!(normalize_frequencies_khz(&[1.8]).unwrap(), vec![1800.0]);
+        assert_eq!(normalize_frequencies_khz(&[30.0]).unwrap(), vec![30000.0]);
+        // kHz passes through untouched, and a mixed list resolves per entry.
+        assert_eq!(
+            normalize_frequencies_khz(&[7104.0, 14.077]).unwrap(),
+            vec![7104.0, 14077.0]
+        );
+        // Still out of range in either reading.
+        assert!(normalize_frequencies_khz(&[0.5]).is_err());
+        assert!(normalize_frequencies_khz(&[31.0]).is_err());
+        assert!(normalize_frequencies_khz(&[1500.0]).is_err());
+        assert!(normalize_frequencies_khz(&[f64::NAN]).is_err());
+        assert!(normalize_frequencies_khz(&[f64::INFINITY]).is_err());
     }
 
     #[test]

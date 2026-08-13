@@ -515,11 +515,21 @@ pub fn parse_folder(folder: &str) -> Result<MailboxFolder, UiError> {
         "archive" => Ok(MailboxFolder::Archive),
         // tuxlink-wl7n: the Deleted (Trash) folder is a live backend folder.
         "deleted" => Ok(MailboxFolder::Deleted),
+        // Both arms NAME the valid set. The bench run produced 20 mailbox_list
+        // rejections whose only fault was not knowing which folders exist, and
+        // the old text said what was wrong without saying what was right
+        // (tuxlink-0rc3h).
         "drafts" => Err(UiError::Internal {
-            detail: "drafts is a local folder, not a backend folder".to_string(),
+            detail: "drafts is stored locally in the app, not on the backend, so it \
+                     cannot be listed or read here. Backend folders: inbox, outbox, \
+                     sent, archive, deleted."
+                .to_string(),
         }),
         other => Err(UiError::Internal {
-            detail: format!("unknown folder: {other}"),
+            detail: format!(
+                "unknown folder \"{other}\". Backend folders: inbox, outbox, sent, \
+                 archive, deleted."
+            ),
         }),
     }
 }
@@ -539,7 +549,11 @@ pub fn parse_folder_ref(folder: &str) -> Result<crate::native_mailbox::FolderRef
         "sent" => Ok(FolderRef::System(MailboxFolder::Sent)),
         "archive" => Ok(FolderRef::System(MailboxFolder::Archive)),
         "drafts" => Err(UiError::Internal {
-            detail: "drafts is a local folder, not a backend folder".to_string(),
+            detail: "drafts is stored locally in the app, not on the backend, so it \
+                     cannot be listed or read here. System folders: inbox, outbox, \
+                     sent, archive, deleted. For user folders, call \
+                     user_folders_list to see the available slugs."
+                .to_string(),
         }),
         // tuxlink-wl7n: the Deleted (Trash) folder is now a live backend folder.
         // `mailbox_list` / `message_read` route through here, so the Trash view
@@ -550,7 +564,14 @@ pub fn parse_folder_ref(folder: &str) -> Result<crate::native_mailbox::FolderRef
         "deleted" => Ok(FolderRef::System(MailboxFolder::Deleted)),
         other => {
             crate::user_folders::validate_slug(other).map_err(|e| UiError::Internal {
-                detail: format!("invalid folder slug: {e}"),
+                // Says where to LOOK, not just that the guess was wrong. 8 of
+                // the run's 20 mailbox_list rejections landed here, each one an
+                // invented slug (tuxlink-0rc3h).
+                detail: format!(
+                    "\"{other}\" is not a system folder and is not a valid user-folder \
+                     slug: {e}. System folders: inbox, outbox, sent, archive, deleted. \
+                     Call user_folders_list for the user folders that exist."
+                ),
             })?;
             Ok(FolderRef::User(other.to_string()))
         }

@@ -538,9 +538,12 @@ impl WritePort for MockWrite {
         &self,
         _folder: String,
         _id: String,
-        _filename: String,
-        dest: String,
+        filename: String,
+        dest: Option<String>,
     ) -> Result<String, WritePortError> {
+        // An omitted dest derives from the attachment name, mirroring the real
+        // port so the testserver exercises the same shape.
+        let dest = dest.unwrap_or_else(|| filename.replace(['/', '\\'], "_"));
         let path = validate_attachment_dest(&self.base, &dest)?;
         self.gated("attachment_save").await?;
         Ok(path.to_string_lossy().into_owned())
