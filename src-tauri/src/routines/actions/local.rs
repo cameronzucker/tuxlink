@@ -143,7 +143,7 @@ use tuxlink_routines::error::StepError;
 
 use crate::winlink_backend::OutboundMessage;
 
-use super::LocalService;
+use super::{LocalService, StationContext};
 
 // ============================================================================
 // local.compose
@@ -159,8 +159,44 @@ pub(crate) const LOCAL_COMPOSE: &str = "local.compose";
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TemplateParam {
+    /// The bundled form's canonical id, when this reference came from
+    /// `@template:` (the resolver emits it; see `routines/resolver.rs`).
+    ///
+    /// Its PRESENCE is what distinguishes a real form send from a plain
+    /// templated message, and it used to be dropped on the floor here — serde
+    /// ignores unrecognized keys, so a resolved `@template:Winlink_Check-In`
+    /// arrived carrying its id and this struct threw it away. The consequence
+    /// was tuxlink-3ddk2's silent interop failure: the body rendered as
+    /// "Winlink Check-in / 0. HEADER / 0a: Organization: ..." and staged with
+    /// NO form XML, so a human reading it sees a check-in and Winlink Express
+    /// does not. Nothing on our side is malformed, so nothing we own catches
+    /// it; the failure lands on the recipient's machine, over RF.
+    ///
+    /// `None` is a hand-written inline template (`{"bodyTemplate": "...",
+    /// "subjectTemplate": "..."}`), which is a legitimate plain-text message
+    /// and keeps the original behaviour.
+    #[serde(default)]
+    id: Option<String>,
+    /// Only consulted on the inline path. When `id` names a bundled form the
+    /// real templates come from the bundle, so these default to empty and a
+    /// step may simply write `{"id": "Winlink_Check-In"}` rather than
+    /// reproducing a template it does not own. A resolved `@template:`
+    /// reference supplies all four keys and is unaffected.
+    #[serde(default)]
     body_template: String,
+    #[serde(default)]
     subject_template: String,
+    /// The saved answers a `@draft:<slot_id>` reference brings with it.
+    ///
+    /// The draft resolves to this WHOLE object — the form and its answers
+    /// together — so a step writes `"template": "@draft:<slot_id>"` and the
+    /// two cannot get out of step. Naming the form separately would let a
+    /// routine reference form A and fill it with answers saved against form B.
+    ///
+    /// The step's own `vars` override these, so a routine can reuse a saved
+    /// check-in and change one line for a particular net.
+    #[serde(default)]
+    values: Map<String, Value>,
 }
 
 /// `local.compose`'s optional `from_identity` param — "object with
@@ -222,6 +258,98 @@ fn vars_to_field_values(vars: &Option<Map<String, Value>>) -> HashMap<String, St
             (k.to_ascii_lowercase(), s)
         })
         .collect()
+}
+
+/// The field ids a scheduled run fills for itself, and what fills them.
+///
+/// ## Why anything is filled at all
+///
+/// A saved form draft is PARTIAL BY DESIGN. `CheckInForm.tsx` saves the
+/// "which net is this" metadata — organization, recipient, contact name,
+/// status, service, band, session — and deliberately excludes the timestamp,
+/// the sender callsign, and every position field. Those are the ones that must
+/// not be stale, so the compose window recomputes them at open time and the
+/// draft never stores them. A routine has no compose window, so if nothing
+/// filled them a scheduled check-in would go out with a blank Date/Time and a
+/// blank From — a defective form, sent every morning, silently.
+///
+/// ## Where the values come from, and why this is not a new policy
+///
+/// Every one of them is an existing setting read at run time:
+///
+/// - The timestamp is the moment the run fires. There is no other defensible
+///   answer for a scheduled message, and the XML envelope's
+///   `submission_datetime` is already derived exactly this way.
+/// - The sender callsign is the step's `from_identity` when it set one, else
+///   the station's configured callsign. Same precedence the compose window
+///   uses.
+/// - The locator is [`StationContext::on_air_grid`], which came from
+///   `position::effective_broadcast_locator`. That function applies the
+///   operator's position-precision setting AND `gps_state`, so a routine
+///   transmits exactly the position they have already said may be
+///   transmitted — including none, when they have said none. Routing through
+///   the standing control is not a decision about what routines assert; it is
+///   the operator's own decision, honoured from a context with nobody at the
+///   keyboard.
+///
+/// ## Two rules that keep this honest
+///
+/// A value supplied in the step's own `vars` ALWAYS wins — an explicit
+/// authored value is never overwritten by a derived one. And a field is only
+/// filled when the form actually declares it, so an ICS-213 does not sprout a
+/// `locationsource` and a Position Report does not sprout a `datetime`.
+///
+/// `lat`/`lon` on the Position Report are the centre of the broadcast grid
+/// square, matching the square-centre convention `resolve_operator_broadcast_grid`
+/// already documents for distance ranking. A 4-character square centre is a
+/// coarse position, which is the point: it is as precise as the operator
+/// allows.
+fn form_field_values(
+    form: &crate::forms::types::FormDef,
+    saved: &Map<String, Value>,
+    vars: &Option<Map<String, Value>>,
+    station: &StationContext,
+    from_identity: Option<&str>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> HashMap<String, String> {
+    // Three layers, most specific first: the step's own `vars`, then whatever
+    // a `@draft:` reference carried, then the run-time fills below. A routine
+    // can therefore reuse a saved check-in and change one line for a
+    // particular net without editing the draft everyone else uses.
+    let mut values = vars_to_field_values(&Some(saved.clone()));
+    values.extend(vars_to_field_values(vars));
+
+    let declares = |id: &str| form.fields.iter().any(|f| f.id == id);
+    let mut fill = |id: &str, value: String| {
+        if declares(id) && !value.is_empty() {
+            values.entry(id.to_string()).or_insert(value);
+        }
+    };
+
+    // WLE's Check-In DateTime is operator-facing UTC in this exact shape; the
+    // Position Report's `thetime` is the same idea under a different name.
+    let stamp = now.format("%Y-%m-%d %H:%M").to_string();
+    fill("datetime", stamp.clone());
+    fill("thetime", stamp);
+
+    let callsign = from_identity
+        .map(str::to_string)
+        .or_else(|| station.callsign.clone())
+        .unwrap_or_default();
+    fill("msgsender", callsign);
+
+    fill("grid", station.on_air_grid.clone());
+    if let Some(src) = &station.location_source {
+        fill("locationsource", src.clone());
+    }
+    if !station.on_air_grid.is_empty() {
+        if let Some((lat, lon)) = crate::position::grid_to_lat_lon(&station.on_air_grid) {
+            fill("lat", format!("{lat:.4}"));
+            fill("lon", format!("{lon:.4}"));
+        }
+    }
+
+    values
 }
 
 /// `local.compose` — stage a B2F message via the real composer + outbox
@@ -292,9 +420,15 @@ impl Action for ComposeMessage {
                     key: "template",
                     ty: ValueType::Object,
                     required: false,
-                    description: "Winlink form template reference — exactly one of body or template",
+                    description: "Winlink form reference — exactly one of body or template. \
+                                  An @template:<form-id> reference stages a REAL form: the \
+                                  message carries the form XML a Winlink Express recipient \
+                                  needs to render it, and the run fills the timestamp, sender \
+                                  and position for you. An inline {bodyTemplate, \
+                                  subjectTemplate} object with no id stages a plain templated \
+                                  text message instead.",
                     allowed: None,
-                    example: r#"{"name":"ICS213"}"#,
+                    example: r#"{"id":"Winlink_Check-In"}"#,
                 },
                 ParamSpec {
                     key: "vars",
@@ -345,7 +479,9 @@ impl Action for ComposeMessage {
             });
         }
 
-        let (subject, body) = match (parsed.template, parsed.body) {
+        let from = parsed.from_identity.map(|f| f.callsign);
+
+        let msg = match (parsed.template, parsed.body) {
             (Some(_), Some(_)) => {
                 return Err(StepError::Action {
                     action: LOCAL_COMPOSE.to_string(),
@@ -359,9 +495,67 @@ impl Action for ComposeMessage {
                     cause: "exactly one of template or body is required".to_string(),
                 });
             }
+            // A reference to a REAL bundled form. Send an actual form: XML
+            // attachment, field structure, the lot. See `TemplateParam::id`.
+            (
+                Some(TemplateParam {
+                    id: Some(id),
+                    values: saved,
+                    ..
+                }),
+                None,
+            ) => {
+                let form = crate::forms::catalog::find_form(&id).ok_or_else(|| {
+                    // Loud, never a fallback to prose. A broken form reference
+                    // that quietly degrades to a text message is precisely the
+                    // failure this whole path exists to prevent.
+                    StepError::Action {
+                        action: LOCAL_COMPOSE.to_string(),
+                        cause: format!(
+                            "unknown form: {id}. A template reference must name a bundled form; \
+                             refusing rather than sending an unstructured message that reads \
+                             like one."
+                        ),
+                    }
+                })?;
+                let station = self.local.station_context().await;
+                let now = chrono::Utc::now();
+                let field_values =
+                    form_field_values(form, &saved, &parsed.vars, &station, from.as_deref(), now);
+                let senders_callsign = from
+                    .clone()
+                    .or_else(|| station.callsign.clone())
+                    .unwrap_or_default();
+                crate::forms::outbound::build_native_form_message(
+                    form,
+                    &field_values,
+                    parsed.to,
+                    Vec::new(),
+                    senders_callsign,
+                    station.on_air_grid.clone(),
+                    parsed.subject,
+                    now,
+                )
+            }
+            // Neither a form id nor any template text. Name both valid shapes
+            // rather than letting serde report a missing field, so one
+            // rejection carries the whole contract.
+            (Some(t), None) if t.body_template.is_empty() && t.subject_template.is_empty() => {
+                return Err(StepError::Action {
+                    action: LOCAL_COMPOSE.to_string(),
+                    cause: "template needs either an id naming a bundled form, e.g. \
+                            {\"id\": \"Winlink_Check-In\"} (stages a real form with its XML), \
+                            or inline text, e.g. {\"bodyTemplate\": \"...\", \
+                            \"subjectTemplate\": \"...\"} (stages a plain message). \
+                            It carried neither."
+                        .to_string(),
+                });
+            }
+            // A hand-written inline template: a plain templated text message,
+            // which is a legitimate thing to want and unchanged in behaviour.
             (Some(template), None) => {
                 let field_values = vars_to_field_values(&parsed.vars);
-                let rendered_body = crate::forms::serialize::render_body_template(
+                let body = crate::forms::serialize::render_body_template(
                     &template.body_template,
                     &field_values,
                 );
@@ -371,20 +565,23 @@ impl Action for ComposeMessage {
                         &field_values,
                     )
                 });
-                (subject, rendered_body)
+                OutboundMessage {
+                    to: parsed.to,
+                    cc: Vec::new(),
+                    subject,
+                    body,
+                    date: chrono::Utc::now().to_rfc3339(),
+                    attachments: Vec::new(),
+                }
             }
-            (None, Some(body)) => (parsed.subject.unwrap_or_default(), body),
-        };
-
-        let from = parsed.from_identity.map(|f| f.callsign);
-
-        let msg = OutboundMessage {
-            to: parsed.to,
-            cc: Vec::new(),
-            subject,
-            body,
-            date: chrono::Utc::now().to_rfc3339(),
-            attachments: Vec::new(),
+            (None, Some(body)) => OutboundMessage {
+                to: parsed.to,
+                cc: Vec::new(),
+                subject: parsed.subject.unwrap_or_default(),
+                body,
+                date: chrono::Utc::now().to_rfc3339(),
+                attachments: Vec::new(),
+            },
         };
 
         let mid = tokio::select! {
@@ -856,6 +1053,50 @@ impl LocalService for MonolithLocalService {
         Ok(mid.0)
     }
 
+    async fn station_context(&self) -> StationContext {
+        use crate::config::PositionSource;
+
+        let arbiter = self.app.state::<Arc<crate::position::PositionArbiter>>();
+        let arbiter: &crate::position::PositionArbiter = &arbiter;
+
+        // A missing config is the pre-wizard case: nothing configured, so
+        // nothing to sign as and nothing to broadcast. The form still goes out
+        // with those fields empty rather than the run failing, matching how the
+        // compose window behaves before the wizard has run.
+        let Ok(cfg) = crate::config::read_config() else {
+            return StationContext::default();
+        };
+
+        let on_air_grid = crate::position::effective_broadcast_locator(&cfg, Some(arbiter));
+        // "GPS" only when a live fix is what actually produced the locator.
+        // That needs all three of `effective_broadcast_locator`'s conditions to
+        // have held, not just the source chip: under a suppressing gps_state it
+        // returns the stored config grid, and even on the GPS branch
+        // `broadcast_grid` falls back to the manual grid when the fix has gone
+        // stale. Either fallback is operator-entered, and reporting it as GPS
+        // would misstate the provenance on a form that asks for it.
+        let from_live_fix = arbiter.source() == PositionSource::Gps
+            && cfg.privacy.gps_state == crate::config::GpsState::BroadcastAtPrecision
+            && arbiter.has_fresh_fix();
+        let location_source = if on_air_grid.is_empty() {
+            None
+        } else if from_live_fix {
+            Some("GPS".to_string())
+        } else {
+            Some("Operator".to_string())
+        };
+
+        StationContext {
+            callsign: cfg
+                .identity
+                .active_full
+                .clone()
+                .or_else(|| cfg.identity.identifier.clone()),
+            on_air_grid,
+            location_source,
+        }
+    }
+
     async fn log_append(&self, message: String) -> Result<(), String> {
         use crate::winlink_backend::{LogLevel, LogSource};
         let log = self.app.state::<Arc<crate::session_log::SessionLogState>>();
@@ -899,6 +1140,7 @@ mod tests {
         compose: Box<ComposeFn>,
         log: Box<LogFn>,
         notify: Box<NotifyFn>,
+        station: StationContext,
     }
 
     impl Default for FakeLocalService {
@@ -907,11 +1149,16 @@ mod tests {
                 compose: Box::new(|_, _| panic!("compose_stage not expected in this test")),
                 log: Box::new(|_| panic!("log_append not expected in this test")),
                 notify: Box::new(|_, _| panic!("notify not expected in this test")),
+                station: StationContext::default(),
             }
         }
     }
 
     impl FakeLocalService {
+        fn with_station(mut self, station: StationContext) -> Self {
+            self.station = station;
+            self
+        }
         fn with_compose(
             mut self,
             f: impl Fn(OutboundMessage, Option<String>) -> Result<String, String>
@@ -946,6 +1193,9 @@ mod tests {
             from: Option<String>,
         ) -> Result<String, String> {
             (self.compose)(msg, from)
+        }
+        async fn station_context(&self) -> StationContext {
+            self.station.clone()
         }
         async fn log_append(&self, message: String) -> Result<(), String> {
             (self.log)(message)
@@ -1036,8 +1286,11 @@ mod tests {
             .execute(
                 json!({
                     "to": ["W7DEF-10"],
+                    // No `id`: a hand-written inline template, which stays a
+                    // plain templated text message. A payload WITH an id is a
+                    // reference to a real bundled form and takes the form path
+                    // instead — see the form-send tests below.
                     "template": {
-                        "id": "ICS213_Initial",
                         "name": "ICS-213 General Message",
                         "subjectTemplate": "ICS-213: <var subjectline>",
                         "bodyTemplate": "To: <var inc_name>\nMsg: <var message>"
@@ -1104,6 +1357,322 @@ mod tests {
             "before[]after",
             "an unset var renders empty, never its own literal name"
         );
+    }
+
+    // ======================================================================
+    // local.compose — FORM sends (tuxlink-3ddk2)
+    //
+    // A step referencing a real bundled form must produce a real form: XML
+    // attachment, field structure, the parts a Winlink Express receiver needs
+    // to recognise it. Before this, the reference rendered the form's body
+    // text and staged it with no attachment, so the recipient got something
+    // that reads like an ICS-213 to a person and is not one to their client.
+    // ======================================================================
+
+    /// The resolved-`@template:` shape, exactly as `routines/resolver.rs`
+    /// emits it.
+    fn resolved_template(id: &str) -> Value {
+        let form = crate::forms::catalog::find_form(id).expect("bundled form");
+        json!({
+            "id": form.id,
+            "name": form.name,
+            "subjectTemplate": form.subject_template,
+            "bodyTemplate": form.body_template,
+        })
+    }
+
+    fn station_at(grid: &str, callsign: &str, source: &str) -> StationContext {
+        StationContext {
+            callsign: Some(callsign.to_string()),
+            on_air_grid: grid.to_string(),
+            location_source: Some(source.to_string()),
+        }
+    }
+
+    async fn stage_form(
+        station: StationContext,
+        params: Value,
+    ) -> Result<OutboundMessage, StepError> {
+        let observed: Arc<Mutex<Option<OutboundMessage>>> = Arc::new(Mutex::new(None));
+        let o = observed.clone();
+        let local = FakeLocalService::default()
+            .with_station(station)
+            .with_compose(move |msg, _from| {
+                *o.lock().unwrap() = Some(msg);
+                Ok("m1".to_string())
+            });
+        ComposeMessage::new(Arc::new(local))
+            .execute(params, CancellationToken::new())
+            .await?;
+        let msg = observed.lock().unwrap().clone().expect("staged a message");
+        Ok(msg)
+    }
+
+    fn xml_of(msg: &OutboundMessage) -> String {
+        assert_eq!(
+            msg.attachments.len(),
+            1,
+            "a form send stages exactly one attachment, its XML"
+        );
+        String::from_utf8_lossy(&msg.attachments[0].bytes).into_owned()
+    }
+
+    /// THE defect. Reverting the id-bearing arm makes this fail with zero
+    /// attachments, which is the shipped behaviour it replaces.
+    #[tokio::test]
+    async fn a_form_reference_stages_a_real_form_not_prose_that_resembles_one() {
+        let msg = stage_form(
+            station_at("CN87", "N0CALL", "Operator"),
+            json!({
+                "to": ["NET@winlink.org"],
+                "template": resolved_template("Winlink_Check-In"),
+                "vars": {"organization": "Cascadia Net", "msgto": "NET CONTROL",
+                         "newsubject": "Morning check-in", "status": "EXERCISE"}
+            }),
+        )
+        .await
+        .expect("a bundled form reference must stage");
+
+        assert_eq!(
+            msg.attachments[0].filename,
+            "RMS_Express_Form_Winlink_Check-In.xml"
+        );
+        let xml = xml_of(&msg);
+        assert!(xml.contains("<RMS_Express_Form>"));
+        assert!(xml.contains("<msgto>NET CONTROL</msgto>"));
+        assert!(xml.contains("<organization>Cascadia Net</organization>"));
+        // The readable body is still produced — it is the fallback for clients
+        // that cannot render the XML, not a substitute for it.
+        assert!(msg.body.contains("NET CONTROL"), "body: {}", msg.body);
+    }
+
+    /// The draft deliberately does not store these, so the run supplies them.
+    /// An empty Date/Time on a daily check-in is a defective form sent every
+    /// morning.
+    #[tokio::test]
+    async fn the_run_fills_the_fields_a_saved_draft_deliberately_omits() {
+        let msg = stage_form(
+            station_at("CN87", "N0CALL", "GPS"),
+            json!({
+                "to": ["NET@winlink.org"],
+                "template": resolved_template("Winlink_Check-In"),
+                "vars": {"msgto": "NET CONTROL"}
+            }),
+        )
+        .await
+        .expect("staged");
+        let xml = xml_of(&msg);
+
+        assert!(xml.contains("<msgsender>N0CALL</msgsender>"), "{xml}");
+        assert!(xml.contains("<grid>CN87</grid>"), "{xml}");
+        assert!(xml.contains("<locationsource>GPS</locationsource>"), "{xml}");
+        // The timestamp is the moment the run fired, in the shape WLE's
+        // Check-In uses. Assert the shape rather than a literal clock value.
+        let dt_open = xml.find("<datetime>").expect("datetime element") + "<datetime>".len();
+        let dt_close = xml[dt_open..].find("</datetime>").unwrap() + dt_open;
+        let dt = &xml[dt_open..dt_close];
+        assert_eq!(dt.len(), 16, "expected YYYY-MM-DD HH:MM, got {dt:?}");
+        assert!(dt.contains('-') && dt.contains(':'), "got {dt:?}");
+    }
+
+    /// An authored value is never overwritten by a derived one.
+    #[tokio::test]
+    async fn an_explicit_var_wins_over_the_runtime_fill() {
+        let msg = stage_form(
+            station_at("CN87", "N0CALL", "GPS"),
+            json!({
+                "to": ["NET@winlink.org"],
+                "template": resolved_template("Winlink_Check-In"),
+                "vars": {"grid": "DM33", "msgsender": "N0CALL-7", "datetime": "2026-01-01 00:00"}
+            }),
+        )
+        .await
+        .expect("staged");
+        let xml = xml_of(&msg);
+        assert!(xml.contains("<grid>DM33</grid>"), "{xml}");
+        assert!(xml.contains("<msgsender>N0CALL-7</msgsender>"), "{xml}");
+        assert!(xml.contains("<datetime>2026-01-01 00:00</datetime>"), "{xml}");
+    }
+
+    /// The operator has said no position may be transmitted. A routine is not
+    /// an exception to that: it is the same standing setting, read at run time.
+    #[tokio::test]
+    async fn nothing_broadcastable_means_no_position_on_the_form() {
+        let station = StationContext {
+            callsign: Some("N0CALL".into()),
+            on_air_grid: String::new(),
+            location_source: None,
+        };
+        let msg = stage_form(
+            station,
+            json!({
+                "to": ["NET@winlink.org"],
+                "template": resolved_template("Winlink_Check-In"),
+                "vars": {"msgto": "NET CONTROL"}
+            }),
+        )
+        .await
+        .expect("staged");
+        let xml = xml_of(&msg);
+        assert!(xml.contains("<grid></grid>"), "{xml}");
+        assert!(xml.contains("<locationsource></locationsource>"), "{xml}");
+        assert!(
+            xml.contains("<grid_square></grid_square>"),
+            "the envelope carries no position either: {xml}"
+        );
+    }
+
+    /// A field the form does not declare is never invented. An ICS-213 has no
+    /// location, so it does not sprout one.
+    #[tokio::test]
+    async fn a_form_without_a_field_does_not_grow_one() {
+        let msg = stage_form(
+            station_at("CN87", "N0CALL", "GPS"),
+            json!({
+                "to": ["W1AW"],
+                "template": resolved_template("ICS213_Initial"),
+                "vars": {"subjectline": "Road closure", "message": "Route 9 blocked"}
+            }),
+        )
+        .await
+        .expect("staged");
+        let xml = xml_of(&msg);
+        assert!(!xml.contains("<locationsource>"), "{xml}");
+        assert!(!xml.contains("<grid>"), "{xml}");
+        assert!(xml.contains("<message>Route 9 blocked</message>"), "{xml}");
+    }
+
+    /// `from_identity` is a run-scoped tactical call and outranks the station's
+    /// configured callsign in BOTH the envelope and the form's own From field.
+    #[tokio::test]
+    async fn a_run_scoped_identity_signs_the_form() {
+        let msg = stage_form(
+            station_at("CN87", "N0CALL", "GPS"),
+            json!({
+                "to": ["NET@winlink.org"],
+                "template": resolved_template("Winlink_Check-In"),
+                "from_identity": {"callsign": "SHELTER-1"}
+            }),
+        )
+        .await
+        .expect("staged");
+        let xml = xml_of(&msg);
+        assert!(xml.contains("<msgsender>SHELTER-1</msgsender>"), "{xml}");
+        assert!(
+            xml.contains("<senders_callsign>SHELTER-1</senders_callsign>"),
+            "{xml}"
+        );
+    }
+
+    /// The `@draft:` shape: the resolved reference carries the form AND the
+    /// operator's saved answers in one object, and the step's own vars still
+    /// override a single line of it.
+    #[tokio::test]
+    async fn a_resolved_draft_supplies_the_answers_and_vars_still_win() {
+        let mut template = resolved_template("Winlink_Check-In");
+        template["values"] = json!({
+            "organization": "Cascadia Net",
+            "msgto": "NET CONTROL",
+            "band": "40m",
+        });
+        template["draft"] = json!({"slotId": "abc", "label": "Cascadia Morning Net"});
+
+        let msg = stage_form(
+            station_at("CN87", "N0CALL", "GPS"),
+            json!({
+                "to": ["NET@winlink.org"],
+                "template": template,
+                // Tonight is on 80m; everything else comes from the draft.
+                "vars": {"band": "80m"}
+            }),
+        )
+        .await
+        .expect("staged");
+        let xml = xml_of(&msg);
+        assert!(xml.contains("<organization>Cascadia Net</organization>"), "{xml}");
+        assert!(xml.contains("<msgto>NET CONTROL</msgto>"), "{xml}");
+        assert!(
+            xml.contains("<band>80m</band>"),
+            "the step's own vars override the saved answer: {xml}"
+        );
+    }
+
+    /// A step may name the form and nothing else. The templates belong to the
+    /// bundle, so a routine author should not have to reproduce them.
+    #[tokio::test]
+    async fn a_bare_form_id_is_enough() {
+        let msg = stage_form(
+            station_at("CN87", "N0CALL", "GPS"),
+            json!({
+                "to": ["NET@winlink.org"],
+                "template": {"id": "Winlink_Check-In"},
+                "vars": {"msgto": "NET CONTROL", "newsubject": "Morning check-in"}
+            }),
+        )
+        .await
+        .expect("a bare id must be sufficient");
+        assert_eq!(msg.subject, "Morning check-in");
+        assert!(xml_of(&msg).contains("<msgto>NET CONTROL</msgto>"));
+    }
+
+    /// An empty template object names neither shape. One rejection carries
+    /// both, rather than serde reporting a missing field at a time.
+    #[tokio::test]
+    async fn an_empty_template_object_names_both_valid_shapes() {
+        let err = stage_form(
+            station_at("CN87", "N0CALL", "GPS"),
+            json!({"to": ["W1AW"], "template": {}}),
+        )
+        .await
+        .expect_err("an empty template must not stage");
+        match err {
+            StepError::Action { cause, .. } => {
+                assert!(cause.contains("\"id\""), "cause: {cause}");
+                assert!(cause.contains("bodyTemplate"), "cause: {cause}");
+            }
+            other => panic!("expected StepError::Action, got {other:?}"),
+        }
+    }
+
+    /// A reference naming a form we do not have fails the step. Falling back to
+    /// a plain message would ship exactly the bug this path exists to prevent.
+    #[tokio::test]
+    async fn an_unresolvable_form_reference_fails_the_step() {
+        let err = stage_form(
+            station_at("CN87", "N0CALL", "GPS"),
+            json!({
+                "to": ["W1AW"],
+                "template": {"id": "Not_A_Real_Form", "subjectTemplate": "s", "bodyTemplate": "b"}
+            }),
+        )
+        .await
+        .expect_err("an unknown form must not stage anything");
+        match err {
+            StepError::Action { action, cause } => {
+                assert_eq!(action, "local.compose");
+                assert!(cause.contains("Not_A_Real_Form"), "cause: {cause}");
+                assert!(cause.contains("unknown form"), "cause: {cause}");
+            }
+            other => panic!("expected StepError::Action, got {other:?}"),
+        }
+    }
+
+    /// An explicit subject still wins on the form path, same as everywhere
+    /// else.
+    #[tokio::test]
+    async fn an_explicit_subject_wins_on_the_form_path_too() {
+        let msg = stage_form(
+            station_at("CN87", "N0CALL", "GPS"),
+            json!({
+                "to": ["NET@winlink.org"],
+                "subject": "Cascadia Net check-in",
+                "template": resolved_template("Winlink_Check-In"),
+                "vars": {"newsubject": "Morning check-in"}
+            }),
+        )
+        .await
+        .expect("staged");
+        assert_eq!(msg.subject, "Cascadia Net check-in");
     }
 
     #[tokio::test]

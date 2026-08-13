@@ -1198,6 +1198,12 @@ pub fn build_routines_state(
     registry: ActionRegistry,
     arbiter: Arc<RadioArbiter>,
     sink: Arc<dyn RoutinesEventSink>,
+    // The saved-form slot library, for `@draft:` references. `None` where it
+    // is genuinely absent: the store lives beside the search index under
+    // app_data_dir, NOT under `config_dir`, so an app-free caller has no way
+    // to derive it and every test that does not exercise `@draft:` passes
+    // None. See `MonolithEntityResolver::drafts`.
+    drafts: Option<Arc<crate::forms::draft_library::DraftLibrary>>,
 ) -> RoutinesState {
     let store = Arc::new(DefinitionStore::open(config_dir.join("routines")));
     let presets = Arc::new(RadioPresetStore::open(
@@ -1211,6 +1217,7 @@ pub fn build_routines_state(
         presets.clone(),
         station_sets.clone(),
         identity_store_path.clone(),
+        drafts,
     ));
 
     // Consent wiring (slice 5b, spec §4): capture the transmitting action names
@@ -1284,7 +1291,14 @@ pub fn build_routines_state_for_app(app: &AppHandle) -> RoutinesState {
     let arbiter = Arc::new(RadioArbiter::new(unix_now_secs));
     let registry = build_default_registry(app, arbiter.clone());
     let sink: Arc<dyn RoutinesEventSink> = Arc::new(TauriRoutinesEventSink::new(app.clone()));
-    build_routines_state(config_dir, registry, arbiter, sink)
+    // `try_state`, not `state`: lib.rs treats a failed draft-library open as
+    // non-fatal, so this really can be absent at launch. A `@draft:` reference
+    // then fails at resolve time with a message saying so, instead of the
+    // routines subsystem panicking on an extractor.
+    let drafts = app
+        .try_state::<Arc<crate::forms::draft_library::DraftLibrary>>()
+        .map(|s| s.inner().clone());
+    build_routines_state(config_dir, registry, arbiter, sink, drafts)
 }
 
 // ============================================================================

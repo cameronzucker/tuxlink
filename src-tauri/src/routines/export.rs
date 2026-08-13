@@ -186,6 +186,7 @@ mod tests {
             reg,
             Arc::new(RadioArbiter::new(fixed_now)),
             sink,
+            None,
         ));
         (dir, state)
     }

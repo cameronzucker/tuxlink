@@ -1199,6 +1199,7 @@ mod tests {
                 reg,
                 Arc::new(RadioArbiter::new(|| BASE)),
                 sink_dyn,
+                None,
             ));
             Self {
                 _dir: dir,

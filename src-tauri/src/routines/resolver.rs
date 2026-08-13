@@ -95,6 +95,17 @@ pub struct MonolithEntityResolver {
     /// `StationSetStore`'s no-cache discipline — a concurrent identity
     /// add/remove is never served stale by this resolver).
     identity_store_path: PathBuf,
+    /// The saved-form slot library, for `@draft:`. `None` when it is not
+    /// available — it is opened at launch as a sibling SQLite file and that
+    /// open is deliberately non-fatal (`lib.rs`), so a session can legitimately
+    /// run without it. A `@draft:` reference then fails loudly at resolve time
+    /// rather than the whole routines subsystem refusing to start.
+    ///
+    /// Passed in as the already-managed handle rather than opened here by path:
+    /// `DraftLibrary::open` CREATES the database when it is absent, and a
+    /// resolver reading a reference must not bring the operator's saved-form
+    /// store into existence as a side effect.
+    drafts: Option<Arc<crate::forms::draft_library::DraftLibrary>>,
 }
 
 impl MonolithEntityResolver {
@@ -102,11 +113,13 @@ impl MonolithEntityResolver {
         presets: Arc<RadioPresetStore>,
         station_sets: Arc<StationSetStore>,
         identity_store_path: PathBuf,
+        drafts: Option<Arc<crate::forms::draft_library::DraftLibrary>>,
     ) -> Self {
         Self {
             presets,
             station_sets,
             identity_store_path,
+            drafts,
         }
     }
 }
@@ -144,6 +157,7 @@ impl EntityResolver for MonolithEntityResolver {
                     "bodyTemplate": form.body_template,
                 }))
             }
+            "draft" => self.resolve_draft(&entity.name),
             // Unknown kind — never silently pass through. `substitute()` in
             // `tuxlink_routines::snapshot` overwrites `UnresolvedRef`'s
             // payload with the original verbatim token regardless of what
@@ -161,6 +175,84 @@ impl MonolithEntityResolver {
     /// `Callsign::parse`/`Address::tactical`, which would reject a name
     /// that is merely case-different or otherwise wouldn't re-validate
     /// identically to how it was originally stored).
+    /// `@draft:<slot_id>` — a form the operator has already FILLED IN and saved
+    /// in the compose window, so a routine can file it rather than only being
+    /// able to send an empty template.
+    ///
+    /// ## Why the address is the slot id and never the label
+    ///
+    /// `slot_id` is a UUID v4 and the PRIMARY KEY of `form_draft_slots`
+    /// (`forms/draft_library.rs`), so it is globally unique on its own — no
+    /// `form_id` qualifier, no disambiguation. Labels are NOT unique and are
+    /// listed per form, so accepting one as an address would reintroduce the
+    /// guess-then-get-rejected loop that `tuxlink-0rc3h` removed from the tool
+    /// surface. The label comes BACK in the resolved value for readability; it
+    /// is never accepted as input.
+    ///
+    /// ## Resolved live, not pinned
+    ///
+    /// The draft is read at run start, so editing the saved check-in in the
+    /// form UI changes what tomorrow's run sends. That is the same behaviour
+    /// `@preset`, `@station-set` and `@identity` already have, and the run is
+    /// still reproducible after the fact because the engine journals the
+    /// resolved snapshot (`RunStarted`). Pinning would turn a reference into a
+    /// fork: the form UI would keep showing "Morning Check-In" while the
+    /// routine executed an invisible copy of it.
+    ///
+    /// ## The shape, and why it is the whole template
+    ///
+    /// It resolves to `local.compose`'s `template` object — id, name,
+    /// templates — PLUS the saved `values` and non-authoritative `draft`
+    /// metadata. One token therefore carries both the form and its answers, so
+    /// a step writes `"template": "@draft:<slot_id>"` and cannot get the pair
+    /// out of step. Splitting it (a `@template:` beside a separate values
+    /// reference) would let a routine name form A and fill it with answers
+    /// saved against form B.
+    fn resolve_draft(&self, slot_id: &str) -> Result<serde_json::Value, SnapshotError> {
+        let token = format!("@draft:{slot_id}");
+        let Some(drafts) = self.drafts.as_ref() else {
+            return Err(SnapshotError::Io(format!(
+                "{token}: the saved-form library is unavailable in this session, \
+                 so a saved draft cannot be read"
+            )));
+        };
+        let slot = drafts
+            .get(slot_id)
+            .map_err(|e| SnapshotError::Io(format!("{token}: reading the draft library: {e}")))?
+            .ok_or_else(|| SnapshotError::UnresolvedRef(token.clone()))?;
+
+        // The draft names a form we no longer bundle. It resolved as an id and
+        // still cannot be sent, and the operator cannot work that out from the
+        // token, so say which form is missing. Refusing is the only correct
+        // answer: falling back to an empty form would transmit structurally
+        // plausible garbage, and falling back to the unfilled template would
+        // hide the broken reference while changing what the message says.
+        let form = find_form(&slot.form_id).ok_or_else(|| {
+            SnapshotError::UnresolvedRef(format!(
+                "{token} (\"{label}\") is saved against form \"{form_id}\", which this build \
+                 does not have. Re-save the draft against a bundled form.",
+                label = slot.label,
+                form_id = slot.form_id,
+            ))
+        })?;
+
+        Ok(json!({
+            "id": form.id,
+            "name": form.name,
+            "subjectTemplate": form.subject_template,
+            "bodyTemplate": form.body_template,
+            "values": slot.payload,
+            // Non-authoritative: for display and for the journal, so a run can
+            // be read back knowing WHICH saved draft it used and when that
+            // draft last changed. Nothing branches on it.
+            "draft": {
+                "slotId": slot.slot_id,
+                "label": slot.label,
+                "updatedAt": slot.updated_at,
+            },
+        }))
+    }
+
     async fn resolve_identity(&self, name: &str) -> Option<serde_json::Value> {
         let store = IdentityStore::load(&self.identity_store_path).ok()?;
         if let Some(full) = store.full().iter().find(|f| f.callsign.as_str() == name) {
@@ -181,14 +273,33 @@ mod tests {
     use crate::routines::station_sets::StationSet;
 
     fn resolver_with_tempdirs() -> (tempfile::TempDir, MonolithEntityResolver) {
+        let (dir, resolver, _) = resolver_with_drafts();
+        (dir, resolver)
+    }
+
+    /// A resolver over tempdir stores INCLUDING a real (empty) draft library,
+    /// handed back so a test can seed it.
+    fn resolver_with_drafts() -> (
+        tempfile::TempDir,
+        MonolithEntityResolver,
+        Arc<crate::forms::draft_library::DraftLibrary>,
+    ) {
         let dir = tempfile::tempdir().unwrap();
         let presets = Arc::new(RadioPresetStore::open(
             dir.path().join("radio-presets.json"),
         ));
         let station_sets = Arc::new(StationSetStore::open(dir.path().join("station-sets.json")));
         let identity_store_path = dir.path().join("identities.json");
-        let resolver = MonolithEntityResolver::new(presets, station_sets, identity_store_path);
-        (dir, resolver)
+        let drafts = Arc::new(
+            crate::forms::draft_library::DraftLibrary::open(dir.path().join("drafts.db")).unwrap(),
+        );
+        let resolver = MonolithEntityResolver::new(
+            presets,
+            station_sets,
+            identity_store_path,
+            Some(drafts.clone()),
+        );
+        (dir, resolver, drafts)
     }
 
     #[tokio::test]
@@ -323,5 +434,175 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(&err, SnapshotError::UnresolvedRef(t) if t == "@mystery-kind:whatever"));
+    }
+
+    // ── @draft: — a form the operator already filled in (tuxlink-3ddk2) ──
+
+    #[tokio::test]
+    async fn a_draft_resolves_to_the_whole_form_plus_its_saved_answers() {
+        let (_dir, resolver, drafts) = resolver_with_drafts();
+        let slot = drafts
+            .upsert(
+                None,
+                "Winlink_Check-In".into(),
+                "Cascadia Morning Net".into(),
+                json!({"organization": "Cascadia Net", "msgto": "NET CONTROL",
+                       "status": "EXERCISE", "band": "40m"}),
+            )
+            .unwrap();
+
+        let value = resolver
+            .resolve(&EntityRef::parse(&format!("@draft:{}", slot.slot_id)).unwrap())
+            .await
+            .unwrap();
+
+        // The form half: this IS local.compose's `template` object, so one
+        // token supplies both the form and its answers and they cannot get
+        // out of step.
+        assert_eq!(value["id"], json!("Winlink_Check-In"));
+        assert_eq!(value["name"], json!("Winlink Check-In"));
+        assert!(value["bodyTemplate"].as_str().unwrap().contains("<var"));
+        // The answers half.
+        assert_eq!(value["values"]["msgto"], json!("NET CONTROL"));
+        assert_eq!(value["values"]["organization"], json!("Cascadia Net"));
+        // Non-authoritative metadata, for display and for the journal.
+        assert_eq!(value["draft"]["label"], json!("Cascadia Morning Net"));
+        assert_eq!(value["draft"]["slotId"], json!(slot.slot_id));
+        assert!(value["draft"]["updatedAt"].is_string());
+    }
+
+    /// A deleted draft fails the run. It must never fall back to an empty
+    /// form (structurally plausible garbage), to the unfilled template (hides
+    /// the broken reference while changing what the message says), or to a
+    /// last-known copy (silently converts a live reference into a pinned one
+    /// at the exact moment of failure).
+    #[tokio::test]
+    async fn a_missing_draft_refuses_rather_than_falling_back() {
+        let (_dir, resolver, drafts) = resolver_with_drafts();
+        let slot = drafts
+            .upsert(
+                None,
+                "Winlink_Check-In".into(),
+                "Gone".into(),
+                json!({"msgto": "NET CONTROL"}),
+            )
+            .unwrap();
+        drafts.delete(&slot.slot_id).unwrap();
+
+        let token = format!("@draft:{}", slot.slot_id);
+        let err = resolver
+            .resolve(&EntityRef::parse(&token).unwrap())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, SnapshotError::UnresolvedRef(t) if *t == token),
+            "got {err:?}"
+        );
+    }
+
+    /// The draft exists and still cannot be used. The token alone cannot tell
+    /// the operator why, so the message names the form that is missing.
+    #[tokio::test]
+    async fn a_draft_for_a_form_we_no_longer_bundle_says_which_form() {
+        let (_dir, resolver, drafts) = resolver_with_drafts();
+        let slot = drafts
+            .upsert(
+                None,
+                "Retired_Form_2019".into(),
+                "Old Net".into(),
+                json!({"msgto": "NET CONTROL"}),
+            )
+            .unwrap();
+
+        let err = resolver
+            .resolve(&EntityRef::parse(&format!("@draft:{}", slot.slot_id)).unwrap())
+            .await
+            .unwrap_err();
+        let SnapshotError::UnresolvedRef(detail) = &err else {
+            panic!("expected UnresolvedRef, got {err:?}");
+        };
+        assert!(detail.contains("Retired_Form_2019"), "detail: {detail}");
+        assert!(detail.contains("Old Net"), "detail: {detail}");
+    }
+
+    /// A label is not an address. Labels are not unique and are listed per
+    /// form, so accepting one would reintroduce the guess-then-get-rejected
+    /// loop the tool-surface work removed.
+    #[tokio::test]
+    async fn a_label_is_refused_as_an_address() {
+        let (_dir, resolver, drafts) = resolver_with_drafts();
+        drafts
+            .upsert(
+                None,
+                "Winlink_Check-In".into(),
+                "Cascadia Morning Net".into(),
+                json!({"msgto": "NET CONTROL"}),
+            )
+            .unwrap();
+
+        let err = resolver
+            .resolve(&EntityRef::parse("@draft:Cascadia Morning Net").unwrap())
+            .await
+            .unwrap_err();
+        assert!(matches!(&err, SnapshotError::UnresolvedRef(_)), "got {err:?}");
+    }
+
+    /// Two drafts may share a label. The slot id is the primary key, so each
+    /// still addresses exactly one record — which is why the address is flat
+    /// and needs no form qualifier.
+    #[tokio::test]
+    async fn two_drafts_sharing_a_label_still_address_distinctly() {
+        let (_dir, resolver, drafts) = resolver_with_drafts();
+        let a = drafts
+            .upsert(
+                None,
+                "Winlink_Check-In".into(),
+                "Evening Net".into(),
+                json!({"msgto": "ALPHA"}),
+            )
+            .unwrap();
+        let b = drafts
+            .upsert(
+                None,
+                "ICS213_Initial".into(),
+                "Evening Net".into(),
+                json!({"subjectline": "BRAVO"}),
+            )
+            .unwrap();
+        assert_ne!(a.slot_id, b.slot_id);
+
+        let va = resolver
+            .resolve(&EntityRef::parse(&format!("@draft:{}", a.slot_id)).unwrap())
+            .await
+            .unwrap();
+        let vb = resolver
+            .resolve(&EntityRef::parse(&format!("@draft:{}", b.slot_id)).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(va["id"], json!("Winlink_Check-In"));
+        assert_eq!(va["values"]["msgto"], json!("ALPHA"));
+        assert_eq!(vb["id"], json!("ICS213_Initial"));
+        assert_eq!(vb["values"]["subjectline"], json!("BRAVO"));
+    }
+
+    /// The library failed to open at launch (a non-fatal condition in lib.rs).
+    /// A `@draft:` reference says so rather than looking like a missing draft.
+    #[tokio::test]
+    async fn no_draft_library_is_reported_as_such_not_as_a_missing_draft() {
+        let dir = tempfile::tempdir().unwrap();
+        let resolver = MonolithEntityResolver::new(
+            Arc::new(RadioPresetStore::open(dir.path().join("p.json"))),
+            Arc::new(StationSetStore::open(dir.path().join("s.json"))),
+            dir.path().join("identities.json"),
+            None,
+        );
+        let err = resolver
+            .resolve(&EntityRef::parse("@draft:0f3c-whatever").unwrap())
+            .await
+            .unwrap_err();
+        match err {
+            SnapshotError::Io(msg) => assert!(msg.contains("unavailable"), "msg: {msg}"),
+            other => panic!("expected Io, got {other:?}"),
+        }
     }
 }

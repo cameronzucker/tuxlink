@@ -47,7 +47,18 @@ async fn substitute(
     match value {
         serde_json::Value::String(s) => match EntityRef::parse(&s) {
             Some(r) => resolver.resolve(&r).await.map_err(|e| match e {
-                SnapshotError::UnresolvedRef(_) => SnapshotError::UnresolvedRef(s),
+                // Normalise a bare restatement of the token back to the
+                // operator's verbatim text, but KEEP a resolver's own
+                // explanation when it gave one. Some references can fail for a
+                // reason the token alone does not convey: `@draft:<slot_id>`
+                // resolves fine as an id and still cannot be used if the form
+                // it was saved against is no longer bundled, and an operator
+                // reading "unresolved reference @draft:0f3c..." would have no
+                // way to learn that. Anything longer than the token is a real
+                // message and passes through.
+                SnapshotError::UnresolvedRef(detail) if detail.len() <= s.len() => {
+                    SnapshotError::UnresolvedRef(s)
+                }
                 other => other,
             }),
             None => Ok(serde_json::Value::String(s)),

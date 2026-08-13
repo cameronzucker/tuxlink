@@ -1093,6 +1093,7 @@ mod quit_gate_tests {
             reg,
             arbiter,
             sink,
+            None,
         ));
         (state, dir)
     }
