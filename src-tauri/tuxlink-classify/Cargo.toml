@@ -12,17 +12,16 @@
 #
 # A prior version of this comment also claimed the crate was held out because
 # "candle's MSRV is above the app's declared 1.75". That was never verified and
-# is FALSE: candle 0.9 declares no `rust-version` at all. The app's own
-# `rust-version = "1.75"` is a scaffold artifact that nothing builds or tests
-# against (CI uses `dtolnay/rust-toolchain@stable`) — under review in
-# bd tuxlink-qt7zi, operator-decided, do not act on it here. The ML stack is
-# kept out of the app's dependency closure by the `t1-candle` feature below,
-# which is a real mechanism with a CI check behind it, not by leaving the
-# crate unlinked.
+# is FALSE: candle 0.9 declares no `rust-version` at all. The 1.75 story ended
+# with tuxlink-qt7zi (2026-08-13): the floor is now the workspace-inherited,
+# MEASURED, CI-enforced 1.95. The ML stack is kept out of the app's dependency
+# closure by the `t1-candle` feature below, which is a real mechanism with a CI
+# check behind it, not by leaving the crate unlinked.
 [package]
 name = "tuxlink-classify"
 version = "0.0.0"
 edition = "2021"
+rust-version.workspace = true
 license = "AGPL-3.0-or-later"
 publish = false
 

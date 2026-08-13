@@ -2,7 +2,7 @@
 name = "tuxlink-stt"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version.workspace = true
 
 [dependencies]
 whisper-rs = "0.16"

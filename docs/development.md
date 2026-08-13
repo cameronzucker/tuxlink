@@ -10,7 +10,7 @@ Tuxlink is a native Rust + Tauri application. Tuxlink requires no Go toolchain. 
 
 | Dep | Version | Purpose |
 |---|---|---|
-| Rust | stable (1.75+) | Tuxlink's Tauri application |
+| Rust | 1.95+ (CI-tested floor; current stable also fine) | Tuxlink's Tauri application |
 | libax25-dev | any | Optional but recommended on Linux: enables AX.25 hardware modem support (KISS TNC). Without it, tuxlink builds but AX.25 features remain absent. |
 | libsecret-1-dev | any | Development headers for the secret-service D-Bus interface. Tuxlink's wizard writes the Winlink CMS password to the OS keyring via the Rust `keyring` crate. |
 | Tauri 2.x system deps | per Tauri docs | webkit2gtk, GTK dev libs, etc. |

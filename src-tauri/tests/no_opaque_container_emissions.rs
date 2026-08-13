@@ -147,7 +147,7 @@ fn no_opaque_container_types_emitted_in_tracing_macros() {
         if !entry.file_type().is_file() {
             continue;
         }
-        if entry.path().extension().map_or(true, |e| e != "rs") {
+        if entry.path().extension().is_none_or(|e| e != "rs") {
             continue;
         }
 

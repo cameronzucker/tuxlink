@@ -33,11 +33,12 @@ pre-push `lint:docs` hook passes. Full table: [CLAUDE.md §Commands](CLAUDE.md#c
 
 ## Testing
 
-CI (`.github/workflows/ci.yml`) gates every PR on two jobs, amd64 + arm64: **verify**
+CI (`.github/workflows/ci.yml`) gates every PR on amd64 + arm64: **verify**
 (`pnpm typecheck` + `pnpm vitest run` + `pnpm build` + `cargo clippy … -D warnings` +
-`cargo test … --locked`) and **build-linux** (`pnpm tauri build` deb/rpm/appimage +
-`pnpm lint:docs`). **MSRV 1.75** — clippy `incompatible_msrv` is denied, so 1.76+ APIs
-(e.g. `Result::inspect_err`) fail the build; use the pre-1.76 idiom. This Pi does not
+`cargo test … --locked`), **build-linux** (`pnpm tauri build` deb/rpm/appimage +
+`pnpm lint:docs`), and **msrv** (check + test at the pinned floor). **MSRV 1.95,
+measured and CI-enforced** (workspace-inherited `rust-version`; tuxlink-qt7zi) —
+clippy `incompatible_msrv` is denied, so APIs stabilized after 1.95 fail the build. This Pi does not
 finish a cold `cargo` build locally — write code + tests and let CI run them
 (`pnpm vitest run` is fine locally). On-air RF validation is operator-only (RADIO-1,
 [ADR 0018](docs/adr/0018-radio1-gates-operator-execution-not-agent-authorship.md)).

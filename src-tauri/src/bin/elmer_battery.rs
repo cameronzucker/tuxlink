@@ -1805,7 +1805,7 @@ async fn run_cell(args: RunCellArgs<'_>) -> Result<CellResult, String> {
                 }
                 ticks += 1;
                 // Poll credits every 15 s (30 ticks) — cheap GET, honest meter.
-                if ticks % 30 == 0 {
+                if ticks.is_multiple_of(30) {
                     if let Ok(now) = fetch_credits(&http_wd, &origin_wd, &key_wd).await {
                         live_spend = Some((now.total_usage - usage_before).max(0.0));
                     }

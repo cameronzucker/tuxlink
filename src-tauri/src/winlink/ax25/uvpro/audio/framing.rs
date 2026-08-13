@@ -265,7 +265,7 @@ mod tests {
         // A long run with no closing delimiter (and no delimiter byte) must not grow
         // the in-flight frame without bound.
         let mut junk = vec![0x7eu8]; // open a frame
-        junk.extend(std::iter::repeat(0x00u8).take(AudioDeframer::MAX_BUFFER + 100));
+        junk.extend(std::iter::repeat_n(0x00u8, AudioDeframer::MAX_BUFFER + 100));
         let _ = d.push(&junk);
         assert!(d.buffered_len() <= AudioDeframer::MAX_BUFFER);
     }

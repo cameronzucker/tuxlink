@@ -2,7 +2,7 @@
 name = "tuxlink-routines"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version.workspace = true
 license = "AGPL-3.0-or-later"
 publish = false
 description = "Deterministic station automation engine (Routines) — Tauri-free leaf crate"

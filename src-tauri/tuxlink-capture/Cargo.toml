@@ -2,7 +2,7 @@
 name = "tuxlink-capture"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.75"
+rust-version.workspace = true
 license = "AGPL-3.0-or-later"
 description = "Station Intelligence L2 pure-logic leaf: 48k→12k decimator, wall-clock-true slot assembler, slot-WAV writer, listener state machine, FT8 band table."
 

@@ -171,7 +171,7 @@ fn all_credential_structs_have_manual_debug_impl() {
         if !entry.file_type().is_file() {
             continue;
         }
-        if entry.path().extension().map_or(true, |e| e != "rs") {
+        if entry.path().extension().is_none_or(|e| e != "rs") {
             continue;
         }
 
