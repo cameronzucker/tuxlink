@@ -2420,11 +2420,15 @@ impl ComposePort for MonolithComposePort {
     }
 
     async fn send_form(&self, dto: SendFormDto) -> Result<String, WritePortError> {
-        // VALIDATE recipients + the sender callsign + grid for CR/LF + control
-        // chars (the addresses/identity fields are a header-injection surface).
+        // VALIDATE recipients + the sender callsign for CR/LF + control chars
+        // (the addresses/identity fields are a header-injection surface). The
+        // locator is NOT among them: tuxlink-bekbh removed it from this DTO
+        // entirely. An agent has no business naming the operator's position —
+        // it is derived inside `send_form` from the operator's own precision
+        // and gps_state settings, so there is nothing here to validate and
+        // nothing for a caller to over-specify.
         Self::validate_recipients(&dto.to, &dto.cc)?;
         validate_address(&dto.senders_callsign)?;
-        validate_address(&dto.grid_square)?;
         // send_form (ui_commands.rs:1893) takes a HashMap; the DTO carries a
         // BTreeMap. Convert.
         let field_values: std::collections::HashMap<String, String> =
@@ -2453,8 +2457,9 @@ impl ComposePort for MonolithComposePort {
             dto.to,
             dto.cc,
             dto.senders_callsign,
-            dto.grid_square,
             self.app.state::<crate::app_backend::BackendState>(),
+            self.app
+                .state::<std::sync::Arc<crate::position::PositionArbiter>>(),
         )
         .await
         .map_err(|e| WritePortError::Failed(redact_err(format!("{e:?}"))))?;

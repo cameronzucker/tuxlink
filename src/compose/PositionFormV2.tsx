@@ -7,7 +7,13 @@ import { listSlots, upsertSlot, deleteSlot, type FormDraftSlot } from './FormDra
 import './PositionFormV2.css';
 
 interface PositionFix {
+  /** Full stored precision. Local use only — never pre-fill an on-air field. */
   grid: string | null;
+  /**
+   * The grid that may actually go on the air, precision-reduced and gated on
+   * gps_state by the backend (tuxlink-bekbh).
+   */
+  broadcast_grid: string | null;
   /** PascalCase from Debug derive: "Gps" | "Manual" */
   source: string;
   fresh: boolean;
@@ -79,7 +85,7 @@ export function PositionFormV2({
         setFix(f);
         // Only pre-fill grid from GPS if the draft didn't provide one.
         // Uppercase for consistency with the input handler's normalization.
-        if (f.grid && !initialValues?.grid) setGrid(f.grid.toUpperCase());
+        if (f.broadcast_grid && !initialValues?.grid) setGrid(f.broadcast_grid.toUpperCase());
       })
       .catch((e) => {
         if (mounted) setError(String(e));

@@ -1963,9 +1963,19 @@ pub async fn message_send(
 /// `OutboundAttachment` named `RMS_Express_Form_<id>.xml`, and dispatches
 /// via `backend.send_message()` — the same pipeline as `message_send`.
 ///
-/// `senders_callsign` + `grid_square` come from the caller (typically the
-/// configured CMS callsign / locator); the XML's `<form_parameters>` block
-/// uses them.
+/// `senders_callsign` comes from the caller (typically the configured CMS
+/// callsign). The locator does NOT: it is derived here from the operator's own
+/// position-precision and `gps_state` settings via
+/// [`crate::position::effective_broadcast_locator`], the same function every
+/// other transmit path uses.
+///
+/// This command used to take `grid_square: String` and write it into the XML
+/// envelope verbatim, and the Compose window filled it from `config_read().grid`
+/// — stored at FULL 6-character precision and documented as unredacted. Under
+/// the DEFAULT `FourCharGrid` setting that transmitted a far more precise
+/// position than the operator had chosen (`tuxlink-bekbh`). The parameter is
+/// gone rather than merely corrected, because a privacy control that holds only
+/// when the frontend cooperates is not a control.
 ///
 /// Returns the MID string on success (mirrors `message_send` contract).
 #[tauri::command]
@@ -1975,46 +1985,24 @@ pub async fn send_form(
     to: Vec<String>,
     cc: Vec<String>,
     senders_callsign: String,
-    grid_square: String,
     state: State<'_, BackendState>,
+    arbiter: State<'_, std::sync::Arc<crate::position::PositionArbiter>>,
 ) -> Result<String, UiError> {
-    use crate::forms;
-
-    let form = forms::catalog::find_form(&form_id).ok_or_else(|| UiError::Internal {
-        detail: format!("unknown form: {}", form_id),
-    })?;
-
-    let now = chrono::Utc::now();
-    let params = forms::types::FormParameters {
-        xml_file_version: "1.0".to_string(),
-        rms_express_version: format!("Tuxlink/{}", env!("CARGO_PKG_VERSION")),
-        submission_datetime: now.format("%Y%m%d%H%M%S").to_string(),
-        senders_callsign,
-        grid_square,
-        display_form: form.display_form.to_string(),
-        reply_template: form.reply_template.to_string(),
-    };
-
-    let xml_bytes = forms::serialize::serialize_form_xml(form, &params, &field_values);
-    let body = forms::serialize::render_body_template(form.body_template, &field_values);
-    let subject = forms::serialize::render_body_template(form.subject_template, &field_values);
-
-    // OutboundAttachment has { filename, bytes } only — NO content_type field.
-    // The native B2F wire format does not use MIME content-type headers for
-    // attachments. See winlink_backend.rs ~105-108 for the canonical struct.
-    let attachment = crate::winlink_backend::OutboundAttachment {
-        filename: format!("RMS_Express_Form_{}.xml", form.id),
-        bytes: xml_bytes,
-    };
-
-    let msg = OutboundMessage {
+    // `None` is the pre-wizard case; see `compose_native_form` for why that
+    // sends an empty locator rather than guessing one.
+    let config = crate::config::read_config().ok();
+    let msg = crate::forms::outbound::compose_native_form(
+        &form_id,
+        &field_values,
         to,
         cc,
-        subject,
-        body,
-        date: now.to_rfc3339(),
-        attachments: vec![attachment],
-    };
+        senders_callsign,
+        config.as_ref(),
+        Some(arbiter.inner().as_ref()),
+        None,
+        chrono::Utc::now(),
+    )
+    .map_err(|detail| UiError::Internal { detail })?;
 
     let backend = state
         .current()
@@ -2059,7 +2047,6 @@ pub async fn send_webview_form(
     to: Vec<String>,
     cc: Vec<String>,
     senders_callsign: String,
-    grid_square: String,
     // tuxlink-hhfx / G10: when this submission is a reply via a SendReply form,
     // `reply_template` is the SendReply `.0` filename (from `open_webview_reply`).
     // The reply's To:/Subject:/Msg: then render from that `.0` (whose Msg
@@ -2079,8 +2066,16 @@ pub async fn send_webview_form(
     // governing template carries `SeqInc:`, the next serial is allocated from here
     // and stamped into `SeqNum` (and thus `<var SeqNum>`) before rendering.
     seq_store: State<'_, std::sync::Arc<std::sync::Mutex<crate::forms::sequence::SeqCounterStore>>>,
+    arbiter: State<'_, std::sync::Arc<crate::position::PositionArbiter>>,
 ) -> Result<String, UiError> {
     use crate::forms;
+
+    // tuxlink-bekbh: the locator is DERIVED, never taken from the caller. See
+    // `forms::outbound`'s module doc — the same reasoning and the same
+    // pre-wizard empty-string fallback as `send_form`.
+    let grid_square = crate::config::read_config()
+        .map(|cfg| crate::position::effective_broadcast_locator(&cfg, Some(arbiter.inner().as_ref())))
+        .unwrap_or_default();
 
     // 1. Verify form_id is in the live catalog (bundled snapshot + operator's
     //    custom-forms dir). This is the same lookup `open_webview_form` does,
@@ -7494,7 +7489,26 @@ pub async fn position_status(
 /// Wire-shape returned to PositionFormV2.tsx by `position_current_fix`.
 #[derive(Debug, Clone, Serialize)]
 pub struct PositionFix {
+    /// The active grid at FULL stored precision. Correct for local-only use —
+    /// distance-to-station ranking in FavoritesTabs / StationFinderPanel /
+    /// RadioConnectSection — and WRONG for anything that will be transmitted.
+    /// Use [`PositionFix::broadcast_grid`] for a compose-form pre-fill.
     pub grid: Option<String>,
+    /// The grid that may actually go on the air: precision-reduced and gated on
+    /// `gps_state` by `position::effective_broadcast_locator`, the same
+    /// function every transmit path uses.
+    ///
+    /// tuxlink-bekbh: the compose forms used to pre-fill their visible Grid
+    /// Square field from `grid`, so a message carried the full 6-character
+    /// locator in its body and XML even under the default 4-character setting.
+    /// Pre-filling from this field instead means the operator SEES the value
+    /// that will be transmitted. If they then type something more precise, that
+    /// is an explicit act on a visible field, which is theirs to make.
+    ///
+    /// `None` when nothing may be broadcast (no stored grid, or GPS suppressed
+    /// with no manual fallback) — distinct from an empty string, so a caller
+    /// can tell "no position" from "a position that reduced to nothing."
+    pub broadcast_grid: Option<String>,
     /// Source label — "Gps" | "Manual" (Debug-derived from PositionSource).
     pub source: String,
     /// True when the GPS fix is < 30 s old (FIX_STALENESS from arbiter).
@@ -7505,8 +7519,17 @@ pub struct PositionFix {
 pub async fn position_current_fix(
     arbiter: tauri::State<'_, std::sync::Arc<crate::position::PositionArbiter>>,
 ) -> Result<PositionFix, String> {
+    // A missing config (pre-wizard) means there is no precision setting to
+    // honour and nothing stored to broadcast, so the on-air grid is None.
+    let broadcast_grid = crate::config::read_config()
+        .ok()
+        .map(|cfg| {
+            crate::position::effective_broadcast_locator(&cfg, Some(arbiter.inner().as_ref()))
+        })
+        .filter(|g| !g.is_empty());
     Ok(PositionFix {
         grid: arbiter.active_grid(),
+        broadcast_grid,
         source: format!("{:?}", arbiter.source()),
         fresh: arbiter.has_fresh_fix(),
     })

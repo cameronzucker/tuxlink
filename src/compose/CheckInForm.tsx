@@ -5,7 +5,15 @@ import { listSlots, upsertSlot, deleteSlot, type FormDraftSlot } from './FormDra
 import './CheckInForm.css';
 
 interface PositionFix {
+  /** Full stored precision. Local use only — never pre-fill an on-air field. */
   grid: string | null;
+  /**
+   * The grid that may actually go on the air, precision-reduced and gated on
+   * gps_state by the backend. tuxlink-bekbh: pre-filling the visible Grid
+   * Square field from `grid` transmitted the full 6-character locator even
+   * under the default 4-character setting.
+   */
+  broadcast_grid: string | null;
   source: string;
   fresh: boolean;
 }
@@ -81,7 +89,7 @@ function currentDatetimeIsoMinute(): string {
  * Auto-fill sources:
  *   - msgsender ← config_read.callsign (operator's amateur call)
  *   - contactname ← config_read.identifier ?? '' (operator's full name)
- *   - grid ← position_current_fix.grid (PositionArbiter)
+ *   - grid ← position_current_fix.broadcast_grid (PositionArbiter, precision-reduced)
  *   - datetime ← UTC now (formatted YYYY-MM-DD HH:MM)
  *   - locationsource ← "GPS" when PositionArbiter has a fresh grid, else "Operator"
  *   - templateversion + mapfilename ← static template metadata
@@ -189,10 +197,10 @@ export function CheckInForm({
     invoke<PositionFix>('position_current_fix')
       .then((fix) => {
         if (!mounted) return;
-        if (fix.grid && !initialValues?.grid) {
-          setGrid(fix.grid.toUpperCase());
+        if (fix.broadcast_grid && !initialValues?.grid) {
+          setGrid(fix.broadcast_grid.toUpperCase());
         }
-        if (fix.fresh && fix.grid && !initialValues?.locationsource) {
+        if (fix.fresh && fix.broadcast_grid && !initialValues?.locationsource) {
           setLocationsource('GPS');
         }
       })

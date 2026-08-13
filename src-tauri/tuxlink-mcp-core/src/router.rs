@@ -1359,7 +1359,6 @@ impl TuxlinkMcp {
             to,
             cc,
             senders_callsign,
-            grid_square,
         }) = params;
         let mid = self
             .state
@@ -1370,7 +1369,6 @@ impl TuxlinkMcp {
                 to,
                 cc,
                 senders_callsign,
-                grid_square,
             })
             .await
             .map_err(write_err)?;
@@ -2535,8 +2533,6 @@ pub struct SendFormParams {
     pub cc: Vec<String>,
     /// The sender's callsign.
     pub senders_callsign: String,
-    /// The sender's grid square.
-    pub grid_square: String,
 }
 
 /// `{ "item_ids": ["FORM-1"] }` — input for `catalog_send_inquiry`.

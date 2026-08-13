@@ -1319,8 +1319,6 @@ pub struct SendFormDto {
     pub cc: Vec<String>,
     /// The sender's callsign.
     pub senders_callsign: String,
-    /// The sender's grid square.
-    pub grid_square: String,
 }
 
 /// A GRIB weather-product request to stage in the local outbox. `lat`/`lon` are

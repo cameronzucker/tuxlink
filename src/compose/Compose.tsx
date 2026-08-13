@@ -240,7 +240,6 @@ export function Compose({ draftId }: ComposeProps) {
   // Form mode state (T6.1)
   const [formMode, setFormMode] = useState<FormMode>({ kind: 'plain' });
   const [callsign, setCallsign] = useState<string>('');
-  const [grid, setGrid] = useState<string>('');
 
   // Contacts/groups for the To/Cc autocomplete + send-time group expansion.
   // Compose is a SEPARATE Tauri window, so this is its own useContacts
@@ -353,13 +352,21 @@ export function Compose({ draftId }: ComposeProps) {
     }
   }, [draftId]);
 
-  // Fetch config to populate callsign + grid for send_form (T6.1)
+  // Fetch config to populate the From callsign for send_form (T6.1).
+  //
+  // The LOCATOR is deliberately NOT read here. tuxlink-bekbh: this component
+  // used to pass `cfg.grid` to send_form as `gridSquare`, and `config_read`
+  // returns the grid at full 6-character precision (ui_core/config.rs asserts
+  // that in its own tests). Under the default 4-character broadcast setting
+  // that put a far more precise position on the air than the operator chose.
+  // The backend now derives the on-air locator itself via
+  // `position::effective_broadcast_locator`, which is the only function that
+  // applies both the precision setting and gps_state.
   useEffect(() => {
     invoke<{
       connect_to_cms?: boolean;
       callsign?: string | null;
       identifier?: string | null;
-      grid?: string;
     }>('config_read')
       .then((cfg) => {
         // Resolve the From identity the same way the ribbon does (spec §5.6):
@@ -373,11 +380,10 @@ export function Compose({ draftId }: ComposeProps) {
             identifier: cfg.identifier ?? null,
           }),
         );
-        setGrid(cfg.grid ?? '');
       })
       .catch(() => {
-        // pre-wizard launch — leave empty, send_form will still build XML
-        // with empty senders_callsign/grid_square; operator-pending verification
+        // pre-wizard launch — leave the From field empty; the backend sends an
+        // empty locator rather than guessing one.
       });
   }, []);
 
@@ -597,7 +603,6 @@ export function Compose({ draftId }: ComposeProps) {
         to: toAddrs,
         cc: ccAddrs,
         sendersCallsign: callsign,
-        gridSquare: grid,
       });
       sentRef.current = true;
       setSendState('success');
@@ -612,7 +617,7 @@ export function Compose({ draftId }: ComposeProps) {
         setErrorMsg(String(err));
       }
     }
-  }, [sendState, buildRecipients, draftId, callsign, grid]);
+  }, [sendState, buildRecipients, draftId, callsign]);
 
   // ============================================================================
   // Webview-form submit (T10)
@@ -656,7 +661,6 @@ export function Compose({ draftId }: ComposeProps) {
         to: toAddrs,
         cc: ccAddrs,
         sendersCallsign: callsign,
-        gridSquare: grid,
       });
       sentRef.current = true;
       setSendState('success');
@@ -671,7 +675,7 @@ export function Compose({ draftId }: ComposeProps) {
         setErrorMsg(String(err));
       }
     }
-  }, [sendState, buildRecipients, draftId, callsign, grid]);
+  }, [sendState, buildRecipients, draftId, callsign]);
 
   // ============================================================================
   // Webview-reply submit (tuxlink-hhfx / G10)
@@ -703,8 +707,7 @@ export function Compose({ draftId }: ComposeProps) {
           to: toAddrs,
           cc: ccAddrs,
           sendersCallsign: callsign,
-          gridSquare: grid,
-          replyTemplate,
+            replyTemplate,
           subjectHint: subject,
         });
         sentRef.current = true;
@@ -721,7 +724,7 @@ export function Compose({ draftId }: ComposeProps) {
         }
       }
     },
-    [sendState, buildRecipients, draftId, callsign, grid, subject],
+    [sendState, buildRecipients, draftId, callsign, subject],
   );
 
   // ============================================================================
