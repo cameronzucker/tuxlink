@@ -154,6 +154,31 @@ describe('<ClassifierWeights>', () => {
     expect(screen.getByText(/NOT what this release vouches for/)).toBeInTheDocument();
   });
 
+  it('a failed replacement outranks an existing install (ready is not a mask)', () => {
+    // Codex P2: an existing usable copy + a failed replacement job must show
+    // the failure and its guidance, not the green ready line.
+    hookState.status = baseStatus({
+      ready: true,
+      integrity: 'structure',
+      job: {
+        state: 'failed',
+        detail: 'model.safetensors: downloaded bytes hash to 1234… where this release pins 97a5…',
+        errorClass: 'digest-mismatch',
+        file: null,
+        filesDone: [],
+        source: 'x',
+        startedUnix: 1,
+        updatedUnix: 2,
+      },
+    });
+    render(<ClassifierWeights variant="panel" />);
+    expect(screen.queryByTestId('cw-ready')).toBeNull();
+    expect(screen.getByTestId('cw-job-error')).toBeInTheDocument();
+    expect(screen.getByTestId('cw-ready-despite-failure').textContent).toMatch(
+      /not digest-verified against this release/,
+    );
+  });
+
   it('idle wizard offers download with the size, skip, and a custom source', async () => {
     hookState.status = baseStatus();
     const onSkip = vi.fn();

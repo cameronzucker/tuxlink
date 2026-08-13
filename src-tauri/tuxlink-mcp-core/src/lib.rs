@@ -888,7 +888,6 @@ pub mod test_support {
         }
         async fn classify_weights_download(
             &self,
-            _source_url: Option<String>,
         ) -> Result<crate::ports::ClassifyWeightsStatusDto, PortError> {
             Ok(mock_weights_status(Some("waiting")))
         }

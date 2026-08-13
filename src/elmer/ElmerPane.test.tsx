@@ -3745,3 +3745,57 @@ describe('<ElmerPane> -- classifier-weights gate (tuxlink-13ofm)', () => {
     expect(screen.queryByTestId('elmer-weights-gate')).toBeNull();
   });
 });
+
+describe('<ElmerPane> -- weights gate stays visible for a failed job over a ready install', () => {
+  afterEach(() => {
+    weightsHookState.status = null;
+  });
+
+  it('ready=true with a failed job still shows the gate (Codex P2)', () => {
+    weightsHookState.status = {
+      modelId: 'bge-small-en-v1.5',
+      totalBytes: 134_178_443,
+      ready: true,
+      integrity: 'structure' as const,
+      location: '/x',
+      summary: 'ready',
+      defaultSource: 'https://github.com/cameronzucker/tuxlink/releases/download/v0.106.0',
+      job: {
+        state: 'failed' as const,
+        detail: 'digest mismatch',
+        errorClass: 'digest-mismatch' as const,
+        file: null,
+        filesDone: [],
+        source: 'x',
+        startedUnix: 1,
+        updatedUnix: 2,
+      },
+    };
+    render(<ElmerPane />);
+    expect(screen.getByTestId('elmer-weights-gate')).toBeInTheDocument();
+  });
+
+  it('ready=true with a completed job hides the gate', () => {
+    weightsHookState.status = {
+      modelId: 'bge-small-en-v1.5',
+      totalBytes: 134_178_443,
+      ready: true,
+      integrity: 'digest-pinned' as const,
+      location: '/x',
+      summary: 'ready',
+      defaultSource: 'https://github.com/cameronzucker/tuxlink/releases/download/v0.106.0',
+      job: {
+        state: 'complete' as const,
+        detail: null,
+        errorClass: null,
+        file: null,
+        filesDone: ['config.json', 'tokenizer.json', 'model.safetensors'],
+        source: 'x',
+        startedUnix: 1,
+        updatedUnix: 2,
+      },
+    };
+    render(<ElmerPane />);
+    expect(screen.queryByTestId('elmer-weights-gate')).toBeNull();
+  });
+});

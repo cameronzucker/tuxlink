@@ -89,8 +89,9 @@ export function ClassifierWeights({ variant, onContinue, onSkip }: ClassifierWei
   const jobFailed = job !== null && job.state === 'failed';
   const sizeLabel = formatMb(status.totalBytes);
 
-  // ---- ready ----
-  if (status.ready && !jobActive) {
+  // ---- ready (only when no job demands attention: a FAILED job must not be
+  // hidden behind an older install's green line — Codex P2) ----
+  if (status.ready && !jobActive && !jobFailed) {
     return (
       <div className="cw-root" data-testid="classifier-weights">
         <p className="cw-ok" data-testid="cw-ready">
@@ -208,6 +209,15 @@ export function ClassifierWeights({ variant, onContinue, onSkip }: ClassifierWei
             {job.detail ?? 'The weights job failed.'}
           </p>
           {failureGuidance !== null && <p className="cw-dim">{failureGuidance}</p>}
+          {status.ready && (
+            <p className="cw-dim" data-testid="cw-ready-despite-failure">
+              A previously installed copy remains in place
+              {status.integrity === 'digest-pinned'
+                ? ' (digest-verified against this release)'
+                : ' (not digest-verified against this release)'}
+              .
+            </p>
+          )}
         </>
       )}
 

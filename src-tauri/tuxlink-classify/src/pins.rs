@@ -24,6 +24,12 @@
 //! Two consumers, one table: the app's acquisition pipeline enforces these at
 //! download/import time, and the release workflow verifies the assets it
 //! attaches against the very same constants via `examples/print_pins.rs`.
+//!
+//! CHANGE POLICY: never change a pinned digest under an EXISTING model id +
+//! file name. Installed copies out in the field would silently lose their
+//! strongest integrity tier and re-download over metered field links. New or
+//! updated weights get a NEW model id (`bge-small-en-v1.5-r2`, a different
+//! model, …) so old and new installs stay independently verifiable.
 
 /// One required weights file and the exact content the release vouches for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

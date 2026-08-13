@@ -745,9 +745,8 @@ impl ProvisionPort for MockProvision {
         Ok(mock_weights_status(None))
     }
     async fn classify_weights_download(
-        &self,
-        _source_url: Option<String>,
-    ) -> Result<ClassifyWeightsStatusDto, PortError> {
+            &self,
+        ) -> Result<ClassifyWeightsStatusDto, PortError> {
         Ok(mock_weights_status(Some("waiting")))
     }
     async fn classify_weights_cancel(&self) -> Result<ClassifyWeightsStatusDto, PortError> {

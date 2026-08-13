@@ -1014,14 +1014,13 @@ pub trait ProvisionPort: Send + Sync {
     /// Classifier-weights readiness + job state (tuxlink-13ofm). Read-only,
     /// app-owned data — no taint.
     async fn classify_weights_status(&self) -> Result<ClassifyWeightsStatusDto, PortError>;
-    /// Start (or retry) the classifier-weights download. NON-TRANSMIT local
-    /// provisioning; every downloaded byte is verified against the digests
-    /// pinned in this release before installing, so the source URL cannot
-    /// change WHAT gets installed — only whether the transfer succeeds.
-    async fn classify_weights_download(
-        &self,
-        source_url: Option<String>,
-    ) -> Result<ClassifyWeightsStatusDto, PortError>;
+    /// Start (or retry) the classifier-weights download from this build's
+    /// DEFAULT release source. NON-TRANSMIT local provisioning. Deliberately
+    /// takes no URL: an agent-suppliable fetch target is an SSRF surface
+    /// (Codex 2026-08-13 P1; pitfalls SSRF-1) — digest pinning protects what
+    /// INSTALLS, not what the outbound GET can reach. Source overrides are an
+    /// operator act, in the UI.
+    async fn classify_weights_download(&self) -> Result<ClassifyWeightsStatusDto, PortError>;
     /// Cancel the running weights job. Partial files remain as the resume
     /// point; nothing partial can ever be mistaken for installed weights.
     async fn classify_weights_cancel(&self) -> Result<ClassifyWeightsStatusDto, PortError>;

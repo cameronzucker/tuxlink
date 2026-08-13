@@ -180,12 +180,13 @@ from tool names.
   so it cannot proceed unattended. Check `vara_engine_available` /
   `vara_install_status` first.
 - `classify_weights_download` — start (or retry) the ~134 MB on-device
-  classifier-model download. Non-transmit, not arm-gated. The job is
-  persistent and self-retrying: poll `classify_weights_status` instead of
-  re-invoking. Every byte is verified against digests pinned in the app
-  release before install, so the optional `source_url` changes where bytes
-  come from, never what can be installed. `classify_weights_cancel` stops
-  it; partial files remain as the resume point.
+  classifier-model download from this Tuxlink version's release source.
+  Non-transmit, not arm-gated, and takes NO parameters — pointing the fetch
+  at a different source is an operator act in the UI, not an agent one. The
+  job is persistent and self-retrying: poll `classify_weights_status`
+  instead of re-invoking. Every byte is verified against digests pinned in
+  the app release before install. `classify_weights_cancel` stops it;
+  partial files remain as the resume point.
 
 ### FT-8 band monitor: receive-only, no taint, no authorization
 

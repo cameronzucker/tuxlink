@@ -3902,23 +3902,23 @@ impl ProvisionPort for MonolithProvisionPort {
         .map_err(|e| PortError::Internal(format!("join: {e}")))
     }
 
-    async fn classify_weights_download(
-        &self,
-        source_url: Option<String>,
-    ) -> Result<ClassifyWeightsStatusDto, PortError> {
+    async fn classify_weights_download(&self) -> Result<ClassifyWeightsStatusDto, PortError> {
         let app = self.app.clone();
+        // No URL parameter by design (SSRF-1 / Codex P1): agents get exactly
+        // this build's default release source; overrides are an operator act
+        // in the UI.
         tokio::task::spawn_blocking(move || {
             let state: tauri::State<'_, std::sync::Arc<crate::classify_weights::WeightsState>> =
                 app.state();
             let state = state.inner().clone();
-            crate::classify_weights::try_download_start(source_url, &app, &state)
+            crate::classify_weights::try_download_start(None, &app, &state)
                 .map(|dto| weights_status_to_port(&dto))
                 .map_err(|e| match e {
-                    // A refused URL is the caller's to fix; a busy job is not
-                    // the call's fault — retry later or cancel first.
+                    // Unreachable with a None source, kept for shape-honesty.
                     crate::classify_weights::StartError::InvalidSource(m) => {
                         PortError::InvalidInput(m)
                     }
+                    // A busy job is not the call's fault — wait or cancel.
                     crate::classify_weights::StartError::Busy(m) => PortError::Unavailable(m),
                 })
         })

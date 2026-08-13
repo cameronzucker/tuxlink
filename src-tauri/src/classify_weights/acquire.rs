@@ -46,6 +46,13 @@ const FREE_SPACE_SLACK: u64 = 8 * 1024 * 1024;
 /// Staging suffix beside the final file name.
 pub const PART_SUFFIX: &str = ".part";
 
+/// Quarantine suffix for a final file whose content failed the current pins
+/// (Codex 2026-08-13 P1: a known-mismatched file must not stay under a name
+/// the locator reports as ready while its replacement downloads — or forever,
+/// if the replacement never arrives). Removed when a verified replacement
+/// installs.
+pub const REJECTED_SUFFIX: &str = ".rejected";
+
 /// How one pipeline step failed, before it is folded into the job record.
 #[derive(Debug)]
 pub enum StepFail {
@@ -115,6 +122,15 @@ fn set_phase(ctx: &RunCtx<'_>, record: &mut JobRecord, phase: Phase) {
     (ctx.announce)(record);
 }
 
+/// fsync the directory so a just-completed rename survives power loss (the
+/// file's own `sync_all` does not make its NAME durable). Best-effort on
+/// filesystems that refuse directory fsync.
+fn fsync_dir(dir: &Path) {
+    if let Ok(d) = std::fs::File::open(dir) {
+        let _ = d.sync_all();
+    }
+}
+
 /// Free bytes on the filesystem holding `path` (statvfs), `None` when it
 /// cannot be determined — which callers treat as "do not proceed", same
 /// contract as the basemap pre-flight.
@@ -173,9 +189,10 @@ struct Opened {
     resumed: bool,
 }
 
-/// Redirect hop filter: a chain that starts https must never be able to hop
-/// to plain http on a non-loopback host (the forms-updater posture). Content
-/// is digest-pinned so this is defense in depth, not the integrity mechanism.
+/// Redirect hop filter for the DEFAULT (binary-controlled) source: a chain
+/// that starts https must never be able to hop to plain http on a
+/// non-loopback host (the forms-updater posture). Content is digest-pinned so
+/// this is defense in depth, not the integrity mechanism.
 fn redirect_hop_allowed(next: &reqwest::Url) -> bool {
     if next.scheme() == "https" {
         return true;
@@ -183,19 +200,94 @@ fn redirect_hop_allowed(next: &reqwest::Url) -> bool {
     matches!(next.host_str(), Some("localhost") | Some("127.0.0.1") | Some("[::1]"))
 }
 
-fn http_client() -> Result<reqwest::Client, StepFail> {
-    reqwest::Client::builder()
+/// Whether an operator-typed host names loopback EXPLICITLY (a literal, not a
+/// name that merely resolves there). Explicit loopback is operator intent —
+/// a local mirror; a NAME resolving to loopback is the DNS-rebind shape.
+fn host_is_explicit_loopback(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    host.trim_start_matches('[')
+        .trim_end_matches(']')
+        .parse::<std::net::IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
+}
+
+/// SSRF-1 fetch-time address gate for CUSTOM sources
+/// (`docs/pitfalls/implementation-pitfalls.md`): resolve the host NOW, refuse
+/// hostile address classes, and return the vetted addresses so the client can
+/// be PINNED to them — closing the validate-then-refetch DNS-rebind window.
+/// Public and private/ULA addresses are both legitimate weights mirrors (the
+/// default source is public GitHub; a field mirror is a LAN box); loopback is
+/// allowed only when the operator named it explicitly.
+fn resolve_gated(url: &reqwest::Url) -> Result<Vec<std::net::SocketAddr>, StepFail> {
+    use std::net::ToSocketAddrs as _;
+    let host = url
+        .host_str()
+        .ok_or_else(|| StepFail::Src("source URL has no host".to_string()))?;
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| StepFail::Src("source URL has no usable port".to_string()))?;
+    let explicit_loopback = host_is_explicit_loopback(host);
+
+    let addrs = (host, port)
+        .to_socket_addrs()
+        .map_err(|e| StepFail::Net(format!("resolve {host}: {e}")))?;
+
+    let mut permitted = Vec::new();
+    for addr in addrs {
+        let ip = addr.ip();
+        let hostile = ip.is_multicast()
+            || ip.is_unspecified()
+            || (ip.is_loopback() && !explicit_loopback)
+            || match ip {
+                std::net::IpAddr::V4(v4) => v4.is_link_local() || v4.is_broadcast(),
+                std::net::IpAddr::V6(v6) => (v6.segments()[0] & 0xffc0) == 0xfe80,
+            };
+        if !hostile {
+            permitted.push(addr);
+        }
+    }
+    if permitted.is_empty() {
+        return Err(StepFail::Src(format!(
+            "{host} resolves only to refused address classes (loopback via a name, \
+             link-local, multicast, or unspecified) — not a usable weights source"
+        )));
+    }
+    Ok(permitted)
+}
+
+/// Build the client for one source. Default release source: https-only
+/// redirect chain (GitHub serves assets via one hop). Custom source: NO
+/// redirects, and the connection is pinned to the addresses the gate vetted.
+fn http_client(source_url: Option<&reqwest::Url>) -> Result<reqwest::Client, StepFail> {
+    let mut builder = reqwest::Client::builder()
         .user_agent(concat!("tuxlink/", env!("CARGO_PKG_VERSION")))
-        .connect_timeout(Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if attempt.previous().len() > 8 {
-                attempt.error("too many redirects")
-            } else if redirect_hop_allowed(attempt.url()) {
-                attempt.follow()
-            } else {
-                attempt.error("refusing redirect to plain http on a non-loopback host")
+        .connect_timeout(Duration::from_secs(30));
+
+    match source_url {
+        None => {
+            builder = builder.redirect(reqwest::redirect::Policy::custom(|attempt| {
+                if attempt.previous().len() > 8 {
+                    attempt.error("too many redirects")
+                } else if redirect_hop_allowed(attempt.url()) {
+                    attempt.follow()
+                } else {
+                    attempt.error("refusing redirect to plain http on a non-loopback host")
+                }
+            }));
+        }
+        Some(url) => {
+            builder = builder.redirect(reqwest::redirect::Policy::none());
+            let addrs = resolve_gated(url)?;
+            if let Some(host) = url.host_str() {
+                builder = builder.resolve_to_addrs(host, &addrs);
             }
-        }))
+        }
+    }
+
+    builder
         .build()
         .map_err(|e| StepFail::Net(format!("http client: {e}")))
 }
@@ -207,14 +299,16 @@ async fn open_stream(
     offset: u64,
 ) -> Result<Opened, StepFail> {
     match source {
-        Source::Release { base_url } => {
+        Source::Release { base_url, custom } => {
             let url = format!(
                 "{}/{}",
                 base_url.trim_end_matches('/'),
                 model.asset_name(pin)
             );
-            let client = http_client()?;
-            let mut req = client.get(&url);
+            let parsed = reqwest::Url::parse(&url)
+                .map_err(|e| StepFail::Src(format!("source URL unusable: {e}")))?;
+            let client = http_client(custom.then_some(&parsed))?;
+            let mut req = client.get(parsed);
             if offset > 0 {
                 req = req.header(reqwest::header::RANGE, format!("bytes={offset}-"));
             }
@@ -225,6 +319,15 @@ async fn open_stream(
             };
 
             let status = resp.status();
+            if *custom && status.is_redirection() {
+                // Policy::none surfaces the 3xx itself. Custom sources must
+                // serve the bytes directly (SSRF-1: a redirect is how a vetted
+                // host hands the connection to an unvetted one).
+                return Err(StepFail::Src(format!(
+                    "{url}: source answered with a redirect (HTTP {status}); custom sources \
+                     must serve the files directly"
+                )));
+            }
             let resumed = status == reqwest::StatusCode::PARTIAL_CONTENT && offset > 0;
             if !(status.is_success() || resumed) {
                 // 5xx / 429 are worth retrying; anything else 4xx means the
@@ -347,12 +450,27 @@ async fn acquire_file(
                 file: pin.name.to_string(),
             },
         );
-        let digest = hash_existing(&final_path, pin.bytes, pin.name, ctx)?;
-        if digest == pin.sha256 {
-            return Ok(());
+        // Size first: a wrong-length file can never match, and hashing an
+        // arbitrarily large stray file before concluding that would let it
+        // monopolize the worker (Codex P2).
+        let len = std::fs::metadata(&final_path)
+            .map_err(|e| StepFail::Io(format!("stat {}: {e}", final_path.display())))?
+            .len();
+        if len == pin.bytes {
+            let digest = hash_existing(&final_path, pin.bytes, pin.name, ctx)?;
+            if digest == pin.sha256 {
+                return Ok(());
+            }
         }
-        // Mismatched final copy: left in place; the verified replacement
-        // lands over it atomically at rename time.
+        // Known-mismatched content must not keep answering to a name the
+        // locator reports as usable while (or in case) the replacement
+        // download runs (Codex P1). Quarantine it, and drop the manifest
+        // that vouched for the now-broken set.
+        let rejected = dir.join(format!("{}{REJECTED_SUFFIX}", pin.name));
+        std::fs::rename(&final_path, &rejected)
+            .map_err(|e| StepFail::Io(format!("quarantine {}: {e}", final_path.display())))?;
+        let _ = std::fs::remove_file(dir.join(tuxlink_classify::hosting::MANIFEST_FILE));
+        fsync_dir(dir);
     }
 
     // Work out the resume offset and bring the hasher up to it.
@@ -482,6 +600,10 @@ async fn acquire_file(
     drop(out);
     std::fs::rename(&part_path, &final_path)
         .map_err(|e| StepFail::Io(format!("install {}: {e}", final_path.display())))?;
+    // Make the rename itself durable, and clear any quarantined predecessor —
+    // its verified replacement has landed.
+    let _ = std::fs::remove_file(dir.join(format!("{}{REJECTED_SUFFIX}", pin.name)));
+    fsync_dir(dir);
     Ok(())
 }
 
@@ -515,6 +637,7 @@ fn write_manifest(dir: &Path, model: &PinnedModel) -> Result<(), StepFail> {
         .map_err(|e| StepFail::Io(format!("write {}: {e}", tmp.display())))?;
     std::fs::rename(&tmp, &path)
         .map_err(|e| StepFail::Io(format!("rename {}: {e}", tmp.display())))?;
+    fsync_dir(dir);
     Ok(())
 }
 
@@ -559,13 +682,17 @@ pub async fn run_once(ctx: &RunCtx<'_>, record: &mut JobRecord) -> Phase {
         }
     }
 
+    // Every file is verified on every pass — `files_done` is display-only,
+    // never a skip-list. A skip-list trusted (a) the rename that installed
+    // the file surviving power loss the record survived, and (b) the pins
+    // that vouched for it still being this build's pins; the keep-if-matches
+    // re-hash in `acquire_file` costs seconds and assumes neither (Codex P1).
     for pin in &ctx.model.files {
-        if record.files_done.iter().any(|f| f == pin.name) {
-            continue;
-        }
         match acquire_file(ctx, record, &dir, pin).await {
             Ok(()) => {
-                record.files_done.push(pin.name.to_string());
+                if !record.files_done.iter().any(|f| f == pin.name) {
+                    record.files_done.push(pin.name.to_string());
+                }
                 record.updated_unix = now_unix();
                 (ctx.announce)(record);
             }
@@ -930,6 +1057,111 @@ mod tests {
 
         assert!(matches!(phase, Phase::Complete { .. }), "{phase:?}");
         assert_eq!(std::fs::read(dir.join("model.safetensors")).unwrap(), t_weights());
+    }
+
+    #[test]
+    fn a_mismatched_final_is_quarantined_even_when_the_replacement_never_arrives() {
+        // Codex P1: known-wrong bytes must not keep answering to a name the
+        // locator reports as usable. Source dir lacks the weights file, so
+        // the replacement download fails — the mismatched final must be OUT
+        // of the way (quarantined) regardless.
+        let root = scratch("quarantine");
+        let dir = root.join("test-model");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("config.json"), T_CONFIG).unwrap();
+        std::fs::write(dir.join("tokenizer.json"), T_TOKENIZER).unwrap();
+        std::fs::write(dir.join("model.safetensors"), T_EVIL_WEIGHTS).unwrap();
+        std::fs::write(dir.join("manifest.json"), r#"{"files":{}}"#).unwrap();
+        let src = scratch("quarantine-src");
+        write_source_dir(&src);
+        std::fs::remove_file(src.join("model.safetensors")).unwrap();
+        let model = test_model();
+        let mut rec = sideload_record(&src);
+        let probe = Probe::new();
+
+        let phase = run(&root, &model, &mut rec, &AtomicBool::new(false), &probe);
+
+        assert!(matches!(phase, Phase::Failed { .. }), "{phase:?}");
+        assert!(
+            !dir.join("model.safetensors").exists(),
+            "mismatched final must not remain under the locator-visible name"
+        );
+        assert!(dir.join("model.safetensors.rejected").exists());
+        assert!(
+            !dir.join("manifest.json").exists(),
+            "the manifest that vouched for the broken set must go with it"
+        );
+        // The locator now reports the truth: nothing usable here.
+        let status =
+            tuxlink_classify::hosting::ModelLocator::new([root.clone()]).locate("test-model");
+        assert!(!status.is_ready());
+    }
+
+    #[test]
+    fn a_successful_replacement_clears_the_quarantine() {
+        let root = scratch("quarantine-heal");
+        let dir = root.join("test-model");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("model.safetensors"), T_EVIL_WEIGHTS).unwrap();
+        let src = scratch("quarantine-heal-src");
+        write_source_dir(&src);
+        let model = test_model();
+        let mut rec = sideload_record(&src);
+        let probe = Probe::new();
+
+        let phase = run(&root, &model, &mut rec, &AtomicBool::new(false), &probe);
+
+        assert!(matches!(phase, Phase::Complete { .. }), "{phase:?}");
+        assert_eq!(std::fs::read(dir.join("model.safetensors")).unwrap(), t_weights());
+        assert!(
+            !dir.join("model.safetensors.rejected").exists(),
+            "quarantine must not linger once a verified replacement landed"
+        );
+    }
+
+    #[test]
+    fn a_wrong_size_stray_final_is_not_hashed_before_being_set_aside() {
+        // Codex P2: size gates the hash. An oversized stray still gets
+        // quarantined and replaced, but progress events show only the
+        // replacement's bytes — hash_existing never walked the stray.
+        let root = scratch("stray");
+        let dir = root.join("test-model");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("model.safetensors"),
+            [T_EVIL_WEIGHTS, &b"-and-then-some"[..]].concat(),
+        )
+        .unwrap();
+        let src = scratch("stray-src");
+        write_source_dir(&src);
+        let model = test_model();
+        let mut rec = sideload_record(&src);
+        let probe = Probe::new();
+
+        let phase = run(&root, &model, &mut rec, &AtomicBool::new(false), &probe);
+        assert!(matches!(phase, Phase::Complete { .. }), "{phase:?}");
+        assert_eq!(std::fs::read(dir.join("model.safetensors")).unwrap(), t_weights());
+    }
+
+    #[test]
+    fn explicit_loopback_hosts_are_distinguished_from_names() {
+        assert!(host_is_explicit_loopback("localhost"));
+        assert!(host_is_explicit_loopback("127.0.0.1"));
+        assert!(host_is_explicit_loopback("[::1]"));
+        assert!(!host_is_explicit_loopback("weights.example.com"));
+        assert!(!host_is_explicit_loopback("192.168.1.10"));
+    }
+
+    #[test]
+    fn the_custom_source_gate_refuses_hostile_literals_and_allows_mirrors() {
+        let gate = |u: &str| resolve_gated(&reqwest::Url::parse(u).unwrap());
+        // Explicit loopback literal = operator intent, permitted.
+        assert!(gate("http://127.0.0.1:8080/w").is_ok());
+        // LAN mirror literal (field self-hosting) permitted.
+        assert!(gate("http://192.168.1.10:8000/w").is_ok());
+        // Link-local / unspecified literals are never a weights mirror.
+        assert!(gate("http://169.254.169.254/latest").is_err());
+        assert!(gate("http://0.0.0.0:9/x").is_err());
     }
 
     #[test]

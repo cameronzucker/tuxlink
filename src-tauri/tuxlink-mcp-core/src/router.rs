@@ -959,17 +959,13 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "classify_weights_download",
-        description = "Start (or retry after failure) the classifier-weights download (~134 MB, three files). NON-TRANSMIT local provisioning - never keys a radio, no send authority needed. The job is persistent: it survives app restart, resumes partial transfers, auto-retries network failures with backoff, and fires a desktop notification when done - so call classify_weights_status to follow it rather than re-invoking this. Every downloaded byte is verified against sha256 digests pinned in this release BEFORE installing and a mismatched file is refused by name, so the optional `source_url` (default: this version's GitHub release assets) can change where bytes come from but never what gets installed. Rejects a second concurrent job."
+        description = "Start (or retry after failure) the classifier-weights download (~134 MB, three files) from this Tuxlink version's release source. NON-TRANSMIT local provisioning - never keys a radio, no send authority needed. The job is persistent: it survives app restart, resumes partial transfers, auto-retries network failures with backoff, and fires a desktop notification when done - so call classify_weights_status to follow it rather than re-invoking this. Every downloaded byte is verified against sha256 digests pinned in this release BEFORE installing; a mismatched file is refused by name. There is no source parameter - pointing the fetch elsewhere is an operator act in the UI. Rejects a second concurrent job."
     )]
-    pub async fn classify_weights_download(
-        &self,
-        params: Parameters<ClassifyWeightsDownloadParams>,
-    ) -> Result<CallToolResult, ErrorData> {
-        let Parameters(ClassifyWeightsDownloadParams { source_url }) = params;
+    pub async fn classify_weights_download(&self) -> Result<CallToolResult, ErrorData> {
         let dto = self
             .state
             .provision
-            .classify_weights_download(source_url)
+            .classify_weights_download()
             .await
             .map_err(port_err)?;
         Ok(CallToolResult::success(vec![ContentBlock::json(dto)?]))
@@ -2645,15 +2641,6 @@ pub struct VaraInstallParams {
     pub installer_path: String,
 }
 
-/// Input for `classify_weights_download` (tuxlink-13ofm).
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct ClassifyWeightsDownloadParams {
-    /// Optional download base URL override. Default (absent) is this app
-    /// version's GitHub release assets. Content is digest-verified against
-    /// the release pins regardless of source; https required except on
-    /// loopback.
-    pub source_url: Option<String>,
-}
 
 /// Input for `export_report` (tuxlink-z2nwx, Contract 3).
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]

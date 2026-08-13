@@ -117,9 +117,33 @@ impl WeightsState {
     /// job so a restart renders the job exactly where it stood.
     pub fn init() -> Self {
         let models_root = user_models_root();
-        let record = models_root
-            .as_deref()
-            .and_then(|root| job::load(root).ok().flatten());
+        // A record that EXISTS but cannot be read is a visible failure, not
+        // "no job" (Codex P2): silently discarding it would hide an
+        // interrupted transfer from the operator. The synthetic record is
+        // in-memory only — the unreadable file is never overwritten until a
+        // fresh start replaces it, and `.part` files still drive the resume.
+        let record = match models_root.as_deref().map(job::load) {
+            Some(Ok(record)) => record,
+            Some(Err(e)) => Some({
+                let mut rec = JobRecord::new(
+                    primary_model().model_id,
+                    Source::Release {
+                        base_url: default_release_base(),
+                        custom: false,
+                    },
+                    0,
+                );
+                rec.phase = Phase::Failed {
+                    detail: format!(
+                        "the saved weights-job record is unreadable ({e}) — starting a \
+                         download replaces it, and partial files still resume"
+                    ),
+                    class: FailureClass::Io,
+                };
+                rec
+            }),
+            None => None,
+        };
         WeightsState {
             models_root,
             inner: Mutex::new(Inner {
@@ -186,7 +210,11 @@ fn job_dto(record: &JobRecord) -> JobDto {
 }
 
 /// Read the provenance stanza this pipeline writes into `manifest.json`.
-/// Bounded read; any irregularity simply means "no digest provenance".
+/// Bounded read; any irregularity simply means "no digest provenance". The
+/// claim is RELEASE-SCOPED (Codex P1): "digest-pinned" means verified against
+/// THIS build's pins — an install verified by an older release whose pins may
+/// differ reports the weaker size-verified tier instead of inheriting the
+/// strongest label.
 fn digest_provenance(dir: &Path) -> bool {
     let path = dir.join(tuxlink_classify::hosting::MANIFEST_FILE);
     let small = std::fs::metadata(&path)
@@ -198,7 +226,10 @@ fn digest_provenance(dir: &Path) -> bool {
     std::fs::read_to_string(&path)
         .ok()
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-        .map(|doc| doc["verified"]["method"] == "sha256-release-pins")
+        .map(|doc| {
+            doc["verified"]["method"] == "sha256-release-pins"
+                && doc["verified"]["release"] == job::CURRENT_RELEASE
+        })
         .unwrap_or(false)
 }
 
@@ -298,7 +329,16 @@ async fn drive(app: AppHandle, state: Arc<WeightsState>, mut record: JobRecord, 
             on_progress: &on_progress,
             announce: &announce_cb,
         };
-        let phase = acquire::run_once(&ctx, &mut record).await;
+        let mut phase = acquire::run_once(&ctx, &mut record).await;
+        // Cancellation wins over any non-terminal classification (Codex P2):
+        // a transfer that broke BECAUSE it was cancelled must not persist as
+        // a Network failure, which boot-resume would put back to work.
+        if cancel.load(Ordering::Relaxed) && !matches!(phase, Phase::Complete { .. }) {
+            phase = Phase::Failed {
+                detail: "cancelled".to_string(),
+                class: FailureClass::Cancelled,
+            };
+        }
         record.phase = phase;
         announce(&app, &state, &record);
 
@@ -437,13 +477,17 @@ pub fn try_download_start(
     app: &AppHandle,
     state: &Arc<WeightsState>,
 ) -> Result<WeightsStatusDto, StartError> {
-    let base_url = match source_url.as_deref().map(str::trim) {
-        Some(raw) if !raw.is_empty() => {
-            validate_base_url(raw).map_err(StartError::InvalidSource)?
-        }
-        _ => default_release_base(),
+    // `custom` routes the fetch through the SSRF-1 posture (no redirects,
+    // resolve-gated + pinned addresses); the binary-controlled default keeps
+    // its https-only redirect chain.
+    let (base_url, custom) = match source_url.as_deref().map(str::trim) {
+        Some(raw) if !raw.is_empty() => (
+            validate_base_url(raw).map_err(StartError::InvalidSource)?,
+            true,
+        ),
+        _ => (default_release_base(), false),
     };
-    start(app, state, Source::Release { base_url }).map_err(StartError::Busy)?;
+    start(app, state, Source::Release { base_url, custom }).map_err(StartError::Busy)?;
     Ok(status_snapshot(state))
 }
 
@@ -469,15 +513,33 @@ pub fn classify_weights_download_start(
 /// Cancel the running job. Partial files stay on disk — they are the resume
 /// point, and the pins guarantee they can never be mistaken for installed
 /// weights.
+///
+/// The cancelled phase is PERSISTED immediately (Codex P2): the driver may
+/// not observe the flag for up to a stalled-chunk timeout, and an app exit in
+/// that window would otherwise leave a resumable phase on disk — a cancelled
+/// download that silently restarts on next launch.
 #[tauri::command]
 pub fn classify_weights_download_cancel(
+    app: AppHandle,
     state: State<'_, Arc<WeightsState>>,
 ) -> WeightsStatusDto {
-    {
-        let inner = state.inner.lock().expect("weights state lock");
+    let record = {
+        let mut inner = state.inner.lock().expect("weights state lock");
         if inner.running {
             inner.cancel.store(true, Ordering::Relaxed);
+            inner.record.as_mut().map(|rec| {
+                rec.phase = Phase::Failed {
+                    detail: "cancelled".to_string(),
+                    class: FailureClass::Cancelled,
+                };
+                rec.clone()
+            })
+        } else {
+            None
         }
+    };
+    if let Some(record) = record {
+        announce(&app, &state, &record);
     }
     status_snapshot(&state)
 }
@@ -546,11 +608,62 @@ mod tests {
     }
 
     #[test]
+    fn digest_provenance_is_release_scoped() {
+        // Codex P1: "digest-pinned" must mean verified against THIS build's
+        // pins, not any release's.
+        let dir = std::env::temp_dir().join(format!(
+            "tuxlink-provenance-{}-{}",
+            std::process::id(),
+            line!()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |release: &str| {
+            std::fs::write(
+                dir.join("manifest.json"),
+                format!(
+                    r#"{{"files":{{}},"verified":{{"method":"sha256-release-pins","release":"{release}","at_unix":1}}}}"#
+                ),
+            )
+            .unwrap();
+        };
+
+        write(job::CURRENT_RELEASE);
+        assert!(digest_provenance(&dir));
+
+        write("0.0.1-older");
+        assert!(
+            !digest_provenance(&dir),
+            "an install verified by another release's pins must not claim the strongest tier"
+        );
+
+        std::fs::write(dir.join("manifest.json"), r#"{"files":{}}"#).unwrap();
+        assert!(!digest_provenance(&dir));
+    }
+
+    #[test]
+    fn a_pre_custom_release_source_parses_with_custom_defaulting_off() {
+        // Records written before the `custom` field must load (additive serde).
+        let rec: Source = serde_json::from_str(
+            r#"{"kind":"release","base_url":"https://example.invalid/dl"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            rec,
+            Source::Release {
+                base_url: "https://example.invalid/dl".into(),
+                custom: false,
+            }
+        );
+    }
+
+    #[test]
     fn job_dto_maps_every_phase_and_class() {
         let mut rec = JobRecord::new(
             "m",
             Source::Release {
                 base_url: "https://x".into(),
+                custom: false,
             },
             1,
         );

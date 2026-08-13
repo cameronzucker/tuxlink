@@ -1089,7 +1089,14 @@ export const ElmerPane = memo(function ElmerPane({
   // are ready, at which point the banner disappears (and the Rust side fired
   // the desktop notification).
   const { status: weightsStatus } = useWeightsJob();
-  const weightsGateVisible = weightsStatus != null && !weightsStatus.ready;
+  // Visible while weights are missing OR while a job needs attention — a
+  // failed replacement over an existing install must stay visible even
+  // though `ready` is still true (Codex P2).
+  const weightsJobState = weightsStatus?.job?.state;
+  const weightsGateVisible =
+    weightsStatus != null &&
+    (!weightsStatus.ready ||
+      (weightsJobState !== undefined && weightsJobState !== 'complete'));
 
   // G3: Eagerly load config on mount so the empty-state "Connect a model"
   // button can be shown without the operator needing to open the disclosure first.

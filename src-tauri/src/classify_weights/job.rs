@@ -32,7 +32,18 @@ pub enum Source {
     /// HTTP(S) release assets under a base URL, e.g.
     /// `https://github.com/cameronzucker/tuxlink/releases/download/v0.106.0`.
     /// Asset names come from [`tuxlink_classify::pins::PinnedModel::asset_name`].
-    Release { base_url: String },
+    ///
+    /// `custom` marks an operator-typed base (anything but this build's
+    /// default). Custom sources fetch under the SSRF-1 egress posture
+    /// (`docs/pitfalls/implementation-pitfalls.md`): no redirects, and the
+    /// resolved address is gated + pinned at fetch time. The default source
+    /// is binary-controlled, so it keeps its https-only redirect chain
+    /// (GitHub serves assets via one redirect hop).
+    Release {
+        base_url: String,
+        #[serde(default)]
+        custom: bool,
+    },
     /// A local directory holding the three files under their plain names
     /// (USB stick, LAN mount, operator-fetched folder).
     Sideload { dir: PathBuf },
@@ -42,7 +53,7 @@ impl Source {
     /// One-line operator-facing description of the source.
     pub fn describe(&self) -> String {
         match self {
-            Source::Release { base_url } => base_url.clone(),
+            Source::Release { base_url, .. } => base_url.clone(),
             Source::Sideload { dir } => format!("folder {}", dir.display()),
         }
     }
@@ -158,11 +169,11 @@ impl JobRecord {
         }
     }
 
-    /// Prepare a persisted record for THIS build. If a different app version
-    /// wrote it, the verified-file skip-list is discarded — already-installed
-    /// finals are then re-hashed against the CURRENT pins by the pipeline's
-    /// keep-if-matches path, so a pin change is re-verified instead of
-    /// silently trusted.
+    /// Stamp a resumed record as continued by THIS build. `files_done` is
+    /// display-only — the pipeline re-verifies every already-present final
+    /// against the CURRENT pins on each pass (the Codex round demonstrated a
+    /// skip-list can outlive both the release and the rename durability that
+    /// justified it) — so crossing releases only needs the stamp corrected.
     pub fn rebase_onto_release(&mut self) {
         if self.release != CURRENT_RELEASE {
             self.files_done.clear();
@@ -225,6 +236,7 @@ mod tests {
             "bge-small-en-v1.5",
             Source::Release {
                 base_url: "https://example.invalid/dl/v1".into(),
+                custom: false,
             },
             1_700_000_000,
         );
@@ -292,6 +304,7 @@ mod tests {
             "m",
             Source::Release {
                 base_url: "https://x".into(),
+                custom: false,
             },
             1,
         );
