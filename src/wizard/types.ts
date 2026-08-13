@@ -58,6 +58,13 @@ export type WizardStep =
   // in the field. The step self-skips on non-x86_64 hardware (VARA unsupported) and
   // when the setup engine is not bundled. Skippable everywhere (ARDOP is the floor).
   | 'vara_provision'
+  // Classifier weights acquisition (tuxlink-13ofm). Last onboarding step, for
+  // the same reason VARA provisioning sits here: the ~134 MB download is
+  // internet-bound and belongs in prep, not the field. The download is a
+  // persistent JOB — "Continue setup while it downloads" advances the wizard
+  // and the Elmer panel takes over as the gate surface. Skippable everywhere;
+  // a folder sideload (digest-verified identically) covers the offline case.
+  | 'classifier_weights'
   | 'complete';
 
 export interface WizardState {
@@ -108,8 +115,13 @@ export type WizardAction =
   // fires, so it only advances `location → complete`. Location is non-blocking:
   // Continue is always available (grid is optional everywhere in onboarding).
   | { type: 'ADVANCE_FROM_LOCATION' }
-  // ADVANCE_FROM_VARA_PROVISION: leave the VARA provisioning step → complete.
-  // Fired whether the user provisioned VARA, skipped it, or the step self-skipped
-  // (unsupported hardware / engine not bundled). VARA provisioning writes no wizard
-  // config, so this only advances the step.
-  | { type: 'ADVANCE_FROM_VARA_PROVISION' };
+  // ADVANCE_FROM_VARA_PROVISION: leave the VARA provisioning step → classifier
+  // weights. Fired whether the user provisioned VARA, skipped it, or the step
+  // self-skipped (unsupported hardware / engine not bundled). VARA provisioning
+  // writes no wizard config, so this only advances the step.
+  | { type: 'ADVANCE_FROM_VARA_PROVISION' }
+  // ADVANCE_FROM_CLASSIFIER_WEIGHTS: leave the weights step → complete. Fired
+  // on Continue (weights ready), "Continue setup while it downloads" (the job
+  // persists; the Elmer panel is the gate surface from here), and Skip. The
+  // step writes no wizard config — the job record is backend state.
+  | { type: 'ADVANCE_FROM_CLASSIFIER_WEIGHTS' };

@@ -15,7 +15,7 @@
  * G2: Model form -- preset/endpoint/key-affordance/model+Detect, Save & use.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { clearProviderDrafts } from './providerDrafts';
 import { render, screen, fireEvent, waitFor, act, within, cleanup } from '@testing-library/react';
 import { ElmerPane, ModelForm } from './ElmerPane';
@@ -91,6 +91,26 @@ const mockListen = vi.fn(async (event: string, handler: ListenerFn<unknown>) => 
 
 vi.mock('@tauri-apps/api/event', () => ({
   listen: (event: string, handler: ListenerFn<unknown>) => mockListen(event, handler),
+}));
+
+// ---------------------------------------------------------------------------
+// Mock the classifier-weights hook (tuxlink-13ofm)
+// ---------------------------------------------------------------------------
+// The gate banner's own behavior is tested in classify/ClassifierWeights.
+// Mocking the hook here (a) keeps this suite's carefully-sequenced invoke
+// mocks undisturbed by the hook's mount-time status probe, and (b) lets the
+// gate-visibility test below state weights status directly.
+const weightsHookState: {
+  status: import('../classify/weightsApi').WeightsStatus | null;
+} = { status: null };
+
+vi.mock('../classify/useWeightsJob', () => ({
+  useWeightsJob: () => ({
+    status: weightsHookState.status,
+    progress: null,
+    refresh: async () => {},
+    accept: () => {},
+  }),
 }));
 
 // Helper: fire a typed event payload into the registered listener.
@@ -3685,5 +3705,43 @@ describe('<ElmerPane> -- conversation token plumbing (bd tuxlink-mfssz)', () => 
     await waitFor(() => {
       expect(reports[reports.length - 1].running).toBe(false);
     });
+  });
+});
+
+describe('<ElmerPane> -- classifier-weights gate (tuxlink-13ofm)', () => {
+  afterEach(() => {
+    weightsHookState.status = null;
+  });
+
+  const absentStatus = {
+    modelId: 'bge-small-en-v1.5',
+    totalBytes: 134_178_443,
+    ready: false,
+    integrity: null,
+    location: null,
+    summary: 'not found',
+    defaultSource: 'https://github.com/cameronzucker/tuxlink/releases/download/v0.106.0',
+    job: null,
+  };
+
+  it('shows the gate while weights are not ready', () => {
+    weightsHookState.status = absentStatus;
+    render(<ElmerPane />);
+    expect(screen.getByTestId('elmer-weights-gate')).toBeInTheDocument();
+  });
+
+  it('hides the gate once weights are ready (completion flips the surface)', () => {
+    weightsHookState.status = {
+      ...absentStatus,
+      ready: true,
+      integrity: 'digest-pinned' as const,
+    };
+    render(<ElmerPane />);
+    expect(screen.queryByTestId('elmer-weights-gate')).toBeNull();
+  });
+
+  it('renders no gate before the first status probe resolves', () => {
+    render(<ElmerPane />);
+    expect(screen.queryByTestId('elmer-weights-gate')).toBeNull();
   });
 });

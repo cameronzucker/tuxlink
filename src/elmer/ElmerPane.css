@@ -561,6 +561,18 @@
   font-size: 12px;
 }
 
+/* ── Classifier-weights gate (tuxlink-13ofm) — the panel surface of the
+      persistent weights job; visible until the weights are ready. ─────────── */
+.elmer-weights-gate {
+  flex: 0 0 auto;
+  margin: 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-2, var(--surface-1));
+  font-size: 12px;
+}
+
 /* ── Context meter (T7) — slim fill bar above the composer input ─────────── */
 /*    Hidden until the first EV_CONTEXT event; shown unconditionally after.   */
 .elmer-context-meter {

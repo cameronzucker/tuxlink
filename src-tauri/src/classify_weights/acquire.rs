@@ -603,10 +603,28 @@ mod tests {
     use std::sync::Mutex;
 
     /// A tiny stand-in for the real pinned model: same shape, test-sized
-    /// content, digests precomputed from the fixed bytes below.
-    const T_CONFIG: &[u8] = b"tuxlink-test-config";
-    const T_TOKENIZER: &[u8] = b"tuxlink-test-tokenizer";
-    const T_WEIGHTS: &[u8] = b"tuxlink-test-weights";
+    /// content, digests precomputed from the fixed bytes below. The fixtures
+    /// are STRUCTURALLY VALID (parseable JSON, well-formed safetensors
+    /// container) because the happy path asserts the locator accepts the
+    /// install — a fixture only the pipeline likes would prove nothing about
+    /// the component the install exists to feed.
+    const T_CONFIG: &[u8] = br#"{"test":"config"}"#;
+    const T_TOKENIZER: &[u8] = br#"{"test":"tokenizer"}"#;
+
+    /// Minimal well-formed safetensors: 8-byte LE header length, that many
+    /// bytes of JSON object, one byte of "tensor data" (the same construction
+    /// as the hosting module's own test helper).
+    fn t_weights() -> Vec<u8> {
+        let header = br#"{"__metadata__":{}}"#;
+        let mut v = (header.len() as u64).to_le_bytes().to_vec();
+        v.extend_from_slice(header);
+        v.push(0);
+        v
+    }
+
+    /// Same length as [`t_weights`] (28 bytes), different content — the case
+    /// size checks cannot catch.
+    const T_EVIL_WEIGHTS: &[u8] = b"tuxlink-EVIL-weights-1234567";
 
     fn test_model() -> PinnedModel {
         PinnedModel {
@@ -615,17 +633,17 @@ mod tests {
                 tuxlink_classify::pins::PinnedFile {
                     name: "config.json",
                     bytes: T_CONFIG.len() as u64,
-                    sha256: "7fa1e634df325c4d67f692dbc7bb01a6e3e7c653199810e9e231b564af7e34bf",
+                    sha256: "1bda028d49e6a9094741f7be1360be2e159892ce746bcd952f5d95e6c7be35ea",
                 },
                 tuxlink_classify::pins::PinnedFile {
                     name: "tokenizer.json",
                     bytes: T_TOKENIZER.len() as u64,
-                    sha256: "503c89d5b0cb652d65a1ad3daa70a4f3d51b0e5add4e8f77893f92308e7e5def",
+                    sha256: "b4b9e30c506ab028c2a894d52113893167e513702a646bb844ba23b3adc38dc2",
                 },
                 tuxlink_classify::pins::PinnedFile {
                     name: "model.safetensors",
-                    bytes: T_WEIGHTS.len() as u64,
-                    sha256: "032e76f4684f29e7874ae142180b0506f51c2ab42070e53b5708a274e73e2997",
+                    bytes: t_weights().len() as u64,
+                    sha256: "97a565298293bc21746716ecdc691340bb6ad1723ef492014687ab00ad4c7fbb",
                 },
             ],
         }
@@ -648,7 +666,7 @@ mod tests {
         std::fs::create_dir_all(dir).unwrap();
         std::fs::write(dir.join("config.json"), T_CONFIG).unwrap();
         std::fs::write(dir.join("tokenizer.json"), T_TOKENIZER).unwrap();
-        std::fs::write(dir.join("model.safetensors"), T_WEIGHTS).unwrap();
+        std::fs::write(dir.join("model.safetensors"), t_weights()).unwrap();
     }
 
     struct Probe {
@@ -748,7 +766,7 @@ mod tests {
         let src = scratch("corrupt-src");
         write_source_dir(&src);
         // Same length, different content — the case size checks cannot catch.
-        std::fs::write(src.join("model.safetensors"), b"tuxlink-EVIL-weights").unwrap();
+        std::fs::write(src.join("model.safetensors"), T_EVIL_WEIGHTS).unwrap();
         let model = test_model();
         let mut rec = sideload_record(&src);
         let probe = Probe::new();
@@ -759,7 +777,7 @@ mod tests {
             Phase::Failed { detail, class } => {
                 assert_eq!(class, FailureClass::DigestMismatch);
                 assert!(detail.contains("model.safetensors"), "{detail}");
-                assert!(detail.contains("032e76f4684f"), "{detail}");
+                assert!(detail.contains("97a565298293"), "{detail}");
             }
             other => panic!("expected DigestMismatch, got {other:?}"),
         }
@@ -821,7 +839,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("config.json"), T_CONFIG).unwrap();
         std::fs::write(dir.join("tokenizer.json"), T_TOKENIZER).unwrap();
-        std::fs::write(dir.join("model.safetensors"), T_WEIGHTS).unwrap();
+        std::fs::write(dir.join("model.safetensors"), t_weights()).unwrap();
         // The source directory is EMPTY: if the pipeline reached for it,
         // every file would fail as missing.
         let src = scratch("keep-src-empty");
@@ -840,8 +858,8 @@ mod tests {
         let dir = root.join("test-model");
         std::fs::create_dir_all(&dir).unwrap();
         // First half of the weights already on disk from a dead transfer.
-        let half = T_WEIGHTS.len() / 2;
-        std::fs::write(dir.join("model.safetensors.part"), &T_WEIGHTS[..half]).unwrap();
+        let half = t_weights().len() / 2;
+        std::fs::write(dir.join("model.safetensors.part"), &t_weights()[..half]).unwrap();
         let src = scratch("resume-src");
         write_source_dir(&src);
         let model = test_model();
@@ -851,7 +869,7 @@ mod tests {
         let phase = run(&root, &model, &mut rec, &AtomicBool::new(false), &probe);
 
         assert!(matches!(phase, Phase::Complete { .. }), "{phase:?}");
-        assert_eq!(std::fs::read(dir.join("model.safetensors")).unwrap(), T_WEIGHTS);
+        assert_eq!(std::fs::read(dir.join("model.safetensors")).unwrap(), t_weights());
     }
 
     #[test]
@@ -861,7 +879,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("model.safetensors.part"),
-            b"tuxlink-test-weightsEXTRA",
+            b"tuxlink-EVIL-weights-1234567-way-past-the-pin",
         )
         .unwrap();
         let src = scratch("overpart-src");
@@ -873,7 +891,7 @@ mod tests {
         let phase = run(&root, &model, &mut rec, &AtomicBool::new(false), &probe);
 
         assert!(matches!(phase, Phase::Complete { .. }), "{phase:?}");
-        assert_eq!(std::fs::read(dir.join("model.safetensors")).unwrap(), T_WEIGHTS);
+        assert_eq!(std::fs::read(dir.join("model.safetensors")).unwrap(), t_weights());
     }
 
     #[test]
@@ -901,7 +919,7 @@ mod tests {
         std::fs::write(dir.join("config.json"), T_CONFIG).unwrap();
         std::fs::write(dir.join("tokenizer.json"), T_TOKENIZER).unwrap();
         // A stale/foreign weights file of the RIGHT length but WRONG content.
-        std::fs::write(dir.join("model.safetensors"), b"tuxlink-EVIL-weights").unwrap();
+        std::fs::write(dir.join("model.safetensors"), T_EVIL_WEIGHTS).unwrap();
         let src = scratch("replace-src");
         write_source_dir(&src);
         let model = test_model();
@@ -911,7 +929,7 @@ mod tests {
         let phase = run(&root, &model, &mut rec, &AtomicBool::new(false), &probe);
 
         assert!(matches!(phase, Phase::Complete { .. }), "{phase:?}");
-        assert_eq!(std::fs::read(dir.join("model.safetensors")).unwrap(), T_WEIGHTS);
+        assert_eq!(std::fs::read(dir.join("model.safetensors")).unwrap(), t_weights());
     }
 
     #[test]
