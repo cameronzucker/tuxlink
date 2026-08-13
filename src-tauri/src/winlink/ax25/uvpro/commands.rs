@@ -158,7 +158,7 @@ where
                 continue;
             }
             tick = tick.wrapping_add(1);
-            let result = if tick % BATTERY_EVERY_N_TICKS == 0 {
+            let result = if tick.is_multiple_of(BATTERY_EVERY_N_TICKS) {
                 session.poll_battery()
             } else {
                 session.poll_tick()

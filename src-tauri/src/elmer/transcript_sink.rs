@@ -329,7 +329,7 @@ impl ElmerTranscriptSink {
     /// so a wedged disk is loud in the logs without a warn-per-line flood.
     fn count_drop(&self, reason: &str) {
         let n = self.dropped.fetch_add(1, Ordering::Relaxed);
-        if n == 0 || (n + 1) % 1000 == 0 {
+        if n == 0 || (n + 1).is_multiple_of(1000) {
             tracing::warn!(target: "elmer", dropped_total = n + 1, reason,
                 "transcript line(s) dropped under queue pressure");
         }

@@ -87,11 +87,7 @@ pub fn sweep(
 
         // Clock-backward grace: if mtime and filename disagree by more than
         // an hour, skip and don't delete.
-        let disagreement = if age > filename_age {
-            age - filename_age
-        } else {
-            filename_age - age
-        };
+        let disagreement = age.abs_diff(filename_age);
         if disagreement > Duration::from_secs(3600) {
             result.clock_grace_skips += 1;
             result.retained_count += 1;
