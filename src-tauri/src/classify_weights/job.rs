@@ -121,6 +121,12 @@ pub struct JobRecord {
     /// Record-format version for forward compatibility.
     pub version: u32,
     pub model_id: String,
+    /// App version whose pins vouched for `files_done`. A job resumed by a
+    /// DIFFERENT app version must not honor the list: the pins may have
+    /// changed under the same file names, and `files_done` is a skip-list
+    /// around re-verification. See [`JobRecord::rebase_onto_release`].
+    #[serde(default)]
+    pub release: String,
     pub source: Source,
     #[serde(flatten)]
     pub phase: Phase,
@@ -133,11 +139,15 @@ pub struct JobRecord {
 
 pub const RECORD_VERSION: u32 = 1;
 
+/// The app version whose compiled-in pins this build enforces.
+pub const CURRENT_RELEASE: &str = env!("CARGO_PKG_VERSION");
+
 impl JobRecord {
     pub fn new(model_id: &str, source: Source, now_unix: u64) -> Self {
         JobRecord {
             version: RECORD_VERSION,
             model_id: model_id.to_string(),
+            release: CURRENT_RELEASE.to_string(),
             source,
             phase: Phase::Waiting {
                 detail: "starting".to_string(),
@@ -145,6 +155,18 @@ impl JobRecord {
             files_done: Vec::new(),
             started_unix: now_unix,
             updated_unix: now_unix,
+        }
+    }
+
+    /// Prepare a persisted record for THIS build. If a different app version
+    /// wrote it, the verified-file skip-list is discarded — already-installed
+    /// finals are then re-hashed against the CURRENT pins by the pipeline's
+    /// keep-if-matches path, so a pin change is re-verified instead of
+    /// silently trusted.
+    pub fn rebase_onto_release(&mut self) {
+        if self.release != CURRENT_RELEASE {
+            self.files_done.clear();
+            self.release = CURRENT_RELEASE.to_string();
         }
     }
 }
@@ -262,6 +284,43 @@ mod tests {
         assert!(!FailureClass::DigestMismatch.auto_retryable());
         assert!(!FailureClass::Io.auto_retryable());
         assert!(!FailureClass::Cancelled.auto_retryable());
+    }
+
+    #[test]
+    fn a_record_from_another_release_forfeits_its_skip_list() {
+        let mut rec = JobRecord::new(
+            "m",
+            Source::Release {
+                base_url: "https://x".into(),
+            },
+            1,
+        );
+        rec.files_done = vec!["config.json".into()];
+
+        // Same release: the list survives.
+        rec.rebase_onto_release();
+        assert_eq!(rec.files_done, vec!["config.json"]);
+
+        // Different release (an upgrade happened mid-job): the list is a
+        // skip-around-verification and must be discarded.
+        rec.release = "0.0.1-other".into();
+        rec.rebase_onto_release();
+        assert!(rec.files_done.is_empty());
+        assert_eq!(rec.release, CURRENT_RELEASE);
+
+        // A pre-`release`-field record deserializes to an empty string and is
+        // treated as another release.
+        let legacy: JobRecord = serde_json::from_str(
+            &serde_json::to_string(&rec).unwrap().replace(
+                &format!("\"release\":\"{CURRENT_RELEASE}\""),
+                "\"release\":\"\"",
+            ),
+        )
+        .unwrap();
+        let mut legacy = legacy;
+        legacy.files_done = vec!["config.json".into()];
+        legacy.rebase_onto_release();
+        assert!(legacy.files_done.is_empty());
     }
 
     #[test]

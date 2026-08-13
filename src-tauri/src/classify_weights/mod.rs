@@ -391,6 +391,9 @@ pub fn resume_on_boot(app: &AppHandle) {
             inner.running = true;
             inner.cancel = Arc::new(AtomicBool::new(false));
         }
+        // An app upgrade may have changed the pins; the skip-list must not
+        // outlive the release that vouched for it.
+        record.rebase_onto_release();
         record.phase = Phase::Waiting {
             detail: "resuming after restart".to_string(),
         };
