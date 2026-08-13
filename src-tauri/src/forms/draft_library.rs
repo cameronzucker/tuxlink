@@ -182,6 +182,53 @@ impl DraftLibrary {
         Ok(slots)
     }
 
+    /// Fetch ONE slot by its `slot_id`, or `None` if no such row exists.
+    ///
+    /// `slot_id` is a UUID v4 and the table's PRIMARY KEY, so it addresses a
+    /// row globally with no `form_id` qualification. That is what makes a flat
+    /// `@draft:<slot_id>` routine reference possible (tuxlink-3ddk2): `label`
+    /// is NOT unique and cannot address anything, but the id can.
+    ///
+    /// Returning `Option` rather than an error for the missing case is
+    /// deliberate: "this draft is gone" is a normal outcome a caller must
+    /// handle explicitly (a routine referencing a deleted draft has to fail
+    /// loudly rather than fall back to an empty form), and making it an
+    /// `Err` alongside genuine storage failures would blur the two.
+    pub fn get(&self, slot_id: &str) -> Result<Option<FormDraftSlot>, DraftLibraryError> {
+        let conn = self.conn.lock().map_err(|_| DraftLibraryError::LockPoisoned)?;
+        let mut stmt = conn.prepare(
+            "SELECT slot_id, form_id, label, payload_json, created_at, updated_at
+             FROM form_draft_slots
+             WHERE slot_id = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![slot_id], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+            ))
+        })?;
+
+        match rows.next() {
+            None => Ok(None),
+            Some(row) => {
+                let (slot_id, form_id, label, payload_json, created_at, updated_at) = row?;
+                let payload = serde_json::from_str(&payload_json)?;
+                Ok(Some(FormDraftSlot {
+                    slot_id,
+                    form_id,
+                    label,
+                    payload,
+                    created_at,
+                    updated_at,
+                }))
+            }
+        }
+    }
+
     /// Insert or update a slot.
     ///
     /// - If `slot_id` is `None`, a new UUID v4 is minted and `created_at` is
@@ -296,6 +343,80 @@ mod tests {
         let dir = tempdir().unwrap();
         let lib = DraftLibrary::open(dir.path().join("form_draft_library.db")).unwrap();
         (lib, dir)
+    }
+
+    // -----------------------------------------------------------------------
+    // get() — addressing a single slot by its primary key
+    // -----------------------------------------------------------------------
+
+    /// The property `@draft:<slot_id>` depends on (tuxlink-3ddk2): a slot_id
+    /// addresses exactly one row GLOBALLY, with no form_id qualification, so a
+    /// routine reference can be flat. Labels cannot do this and are asserted
+    /// non-unique below.
+    #[test]
+    fn get_addresses_one_slot_globally_without_a_form_id() {
+        let (lib, _dir) = open_tmp();
+        let a = lib
+            .upsert(None, "ICS213".into(), "morning check-in".into(), json!({"msg": "operational"}))
+            .unwrap();
+        let b = lib
+            .upsert(None, "ICS309".into(), "morning check-in".into(), json!({"msg": "other"}))
+            .unwrap();
+
+        // Same label, different forms: the LABEL cannot address either one.
+        assert_eq!(a.label, b.label);
+        assert_ne!(a.slot_id, b.slot_id);
+
+        // The id can, and it does not need to be told which form it belongs to.
+        let got = lib.get(&a.slot_id).unwrap().expect("slot a must resolve");
+        assert_eq!(got.slot_id, a.slot_id);
+        assert_eq!(got.form_id, "ICS213");
+        assert_eq!(got.payload, json!({"msg": "operational"}));
+
+        let got_b = lib.get(&b.slot_id).unwrap().expect("slot b must resolve");
+        assert_eq!(got_b.form_id, "ICS309");
+    }
+
+    /// A missing slot is `Ok(None)`, not an error. A routine referencing a
+    /// deleted draft must be able to tell "gone" apart from "storage broke",
+    /// because the correct response to gone is to fail the run loudly rather
+    /// than fall back to an empty form.
+    #[test]
+    fn get_reports_a_missing_slot_as_none_not_an_error() {
+        let (lib, _dir) = open_tmp();
+        assert!(lib.get("no-such-slot").unwrap().is_none());
+
+        let s = lib
+            .upsert(None, "ICS213".into(), "temp".into(), json!({"a": 1}))
+            .unwrap();
+        assert!(lib.get(&s.slot_id).unwrap().is_some());
+        lib.delete(&s.slot_id).unwrap();
+        assert!(
+            lib.get(&s.slot_id).unwrap().is_none(),
+            "a deleted draft must resolve to None so the caller can refuse loudly"
+        );
+    }
+
+    /// get() must see an edit immediately. This is the mechanism a LIVE
+    /// resolution strategy would rest on, so it is asserted rather than
+    /// assumed (the pin-vs-live policy itself is still an open decision).
+    #[test]
+    fn get_reflects_an_edit_to_the_payload() {
+        let (lib, _dir) = open_tmp();
+        let s = lib
+            .upsert(None, "ICS213".into(), "check-in".into(), json!({"msg": "v1"}))
+            .unwrap();
+        lib.upsert(
+            Some(s.slot_id.clone()),
+            "ICS213".into(),
+            "check-in".into(),
+            json!({"msg": "v2"}),
+        )
+        .unwrap();
+
+        let got = lib.get(&s.slot_id).unwrap().unwrap();
+        assert_eq!(got.payload, json!({"msg": "v2"}));
+        assert_eq!(got.created_at, s.created_at, "created_at is preserved");
     }
 
     // -----------------------------------------------------------------------
