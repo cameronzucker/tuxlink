@@ -44,7 +44,10 @@ recent_commits=$(git log --oneline -5 2>/dev/null)
 campaign_line=""
 ledger="docs/campaigns/2026-08-surface-repair-ledger.md"
 if [[ -f "$ledger" ]]; then
-    open_rows=$(grep -cE '^[0-9]+\. \*\*' "$ledger" 2>/dev/null || echo "?")
+    # grep -c prints 0 (with exit 1) on no matches, so zero is a VALID
+    # count; "?" is reserved for a genuinely unreadable ledger.
+    open_rows=$(grep -cE '^[0-9]+\. \*\*' "$ledger" 2>/dev/null)
+    [[ -z "$open_rows" ]] && open_rows="?"
     campaign_line=$'\n- **Surface-repair campaign:** '"${open_rows} open rows — READ \`${ledger}\` before touching the MCP/routines tool surface; PRs cite the row they advance."
 fi
 

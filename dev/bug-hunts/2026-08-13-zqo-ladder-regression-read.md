@@ -413,7 +413,7 @@ without reasoning tokens.
 
 P7 as stated above is WRONG in its central claim. The executor has
 interpolated embedded `$sN.key` refs inside longer strings since 6epl8
-(commit 48b4e03e, 2026-07-21, shipped v0.100+, locked by
+(commit 48b4e03e, 2026-07-21, shipped v0.98+, locked by
 `embedded_refs_interpolate_inside_strings`) — the measured 0.104.0 build
 interpolates correctly, so the models' embedded log refs would have worked
 at runtime. What is actually broken: the `local.log` catalog description

@@ -11,8 +11,10 @@ evidence; this page carries the STATE). Rules:
   in its body. "No row" is a valid citation; silence is not.
 - Rows marked **[test]** have a tripwire test asserting current behavior
   (grep `known_defect` / the named test). If your change turns it red, you
-  are standing on a ledger row: fix properly, flip the test, close the row
-  in the same PR.
+  are standing on a ledger row: fix properly, then in the same PR flip the
+  assertions, RENAME the test out of the `known_defect_` namespace (it
+  becomes ordinary regression coverage), and close the row — `grep
+  known_defect` must always list exactly the OPEN tripwires.
 - The session-start briefing prints this file's path and open-row count.
 - Lesson baked into row 1: verify every row against CODE, not docs — this
   campaign's first "defect" turned out to be a stale doc describing a
@@ -23,7 +25,7 @@ evidence; this page carries the STATE). Rules:
 1. **Stale interpolation prose in the local.log catalog entry** — the
    param description still says embedded `$sN.key` refs "do NOT
    interpolate and log as literal text"; the executor has interpolated
-   embedded refs since 2026-07-21 (6epl8, v0.100+, locked by
+   embedded refs since 2026-07-21 (6epl8, shipped v0.98+, locked by
    `embedded_refs_interpolate_inside_strings`). The stale line actively
    teaches agents the wrong constraint, is fossilized in the bench
    contract, and grounded several wrong judge verdicts. Closes when: the
@@ -115,7 +117,8 @@ a stale doc). Re-baseline the A/B on the real-gating class
 
 ## Bench-side (relayed; theirs, not ours)
 
-21. One consolidated relay: responder answer-key starvation; judge-reducer
+21. **Bench relay batch** — one consolidated relay: responder answer-key
+    starvation; judge-reducer
     scope on interpretive claims; propagation fixture per-index curves;
     judge+contract pinning for cross-run comparisons;
     `-32603`→invalid_args stat mapping; invisible harness-layer
