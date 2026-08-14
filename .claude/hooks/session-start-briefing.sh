@@ -37,6 +37,17 @@ fi
 
 recent_commits=$(git log --oneline -5 2>/dev/null)
 
+# Surface-repair campaign ledger (2026-08-14): while it exists, every
+# session sees its path and open-row count. Rows live under "## Fix" /
+# "## Operator queue" / "## Bench-side" headings as "N. **name**" lines;
+# closed rows are removed, so a simple count is the open count.
+campaign_line=""
+ledger="docs/campaigns/2026-08-surface-repair-ledger.md"
+if [[ -f "$ledger" ]]; then
+    open_rows=$(grep -cE '^[0-9]+\. \*\*' "$ledger" 2>/dev/null || echo "?")
+    campaign_line=$'\n- **Surface-repair campaign:** '"${open_rows} open rows — READ \`${ledger}\` before touching the MCP/routines tool surface; PRs cite the row they advance."
+fi
+
 # Branch-protection reminder when on integration branches.
 branch_warning=""
 case "$branch" in
@@ -53,7 +64,7 @@ briefing=$(cat <<EOF
 
 - **Branch:** \`${branch}\`${ahead_behind:+ ${ahead_behind}}
 - **Working tree:** ${status_count} uncommitted file(s)
-- **Most recent handoff:** ${last_handoff_line:-none}
+- **Most recent handoff:** ${last_handoff_line:-none}${campaign_line}
 
 ### Recent commits
 \`\`\`

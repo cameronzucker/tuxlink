@@ -408,3 +408,24 @@ without reasoning tokens.
    judge+contract; F9's invisible-rejection channel corrupts attribution.
 5. **Compiler premise**: strengthened on both sides — proceed with the IR
    spike gates as planned (operator one-pager read pending).
+
+## CORRECTION (2026-08-14, moss-tamarack-taiga) — the interpolation finding was a stale doc
+
+P7 as stated above is WRONG in its central claim. The executor has
+interpolated embedded `$sN.key` refs inside longer strings since 6epl8
+(commit 48b4e03e, 2026-07-21, shipped v0.100+, locked by
+`embedded_refs_interpolate_inside_strings`) — the measured 0.104.0 build
+interpolates correctly, so the models' embedded log refs would have worked
+at runtime. What is actually broken: the `local.log` catalog description
+still teaches the pre-6epl8 rule ("do NOT interpolate"), the bench
+contract fossilized that rule as ground truth, the judge graded runtime
+behavior from the fossil, and this read validated the fossil against the
+doc instead of the code. Consequences: AS-EDIT-ROUTINE is fully exonerated
+(correct artifact, judged against a stale doc; the spike baseline is
+re-selected to the real-gating class); the log-criterion verdicts on
+COLLAB-NET-CLEAR a2, AS-NEAREST5-DIAL a3, and AS-FALLBACK-CLEAN a3 are
+instrument errors needing re-judgment; the spike's "fix interpolation
+first" dependency is void. Canonical state:
+`docs/campaigns/2026-08-surface-repair-ledger.md` rows 1 and 21. The
+error was caught by writing the row's known-defect test, which forced the
+code read — the campaign mechanism working one PR before it existed.
