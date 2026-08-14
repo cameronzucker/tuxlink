@@ -15206,3 +15206,35 @@ mod fix1_password_gate_tests {
         assert_eq!(nulls.endpoint_id, None);
     }
 }
+
+#[cfg(test)]
+mod known_defects_surface_repair {
+    //! Known-defect tests for the surface-repair campaign
+    //! (docs/campaigns/2026-08-surface-repair-ledger.md). Each test asserts
+    //! CURRENT DEFECTIVE behavior on purpose: if your change turns one red,
+    //! you are standing on a ledger row — fix it properly, flip the
+    //! assertions to the correct behavior, and close the row in the same PR.
+
+    use super::*;
+
+    #[test]
+    fn known_defect_row4_folder_ref_is_case_sensitive_and_reports_internal() {
+        // Ledger row 4: "Outbox" is not case-folded to the system folder and
+        // the failure surfaces as UiError::Internal (MCP -32603) rather than
+        // an invalid-params class. Correct future behavior: case-fold system
+        // folder names AND classify a bad folder ref as invalid params.
+        assert!(parse_folder_ref("outbox").is_ok());
+        match parse_folder_ref("Outbox") {
+            Err(UiError::Internal { detail }) => {
+                assert!(
+                    detail.contains("not a system folder"),
+                    "row 4 tripwire: deny text changed — re-check the ledger row"
+                );
+            }
+            _ => panic!(
+                "row 4 tripwire: \"Outbox\" no longer fails as Internal — \
+                 if you fixed case folding, flip this test and close ledger row 4"
+            ),
+        }
+    }
+}
