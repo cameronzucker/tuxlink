@@ -87,7 +87,7 @@ H=honest_shortfall.
 | TR-CATALOG-LIST | D ok ok | b | name-dropped non-requestable METAR_READER |
 | TR-VARA-INSTALL | ok ok D | d + g | world already provisioned vs "not provisioned" prompt; truthful premise correction punished |
 | TR-VARA-INI-READ | ok D ok | g | prompt demands PTT keys the INI lacks; judge noise on identical honest answers |
-| AS-EDIT-ROUTINE | U U U | b | THE compiler baseline: value edits right, structural edit faked (linear log relabel), claimed done |
+| AS-EDIT-ROUTINE | U U U | **b-narrow + g (RE-VERDICTED, see deep-dive)** | linear band-walk was the DOCUMENTED idiom and the output refs were the documented keys; killed solely by the embedded-ref silent literal (P7); the oracle's branch expectation was the spaghetti the operator already rejected |
 | AS-CHECKIN-CLEAN | U U U | b | fake structure: linear artifacts, no branch gate on aprs_send, presented as gated |
 | AS-NEAREST5-DIAL | U U U | b (+F9 a2) | linear/no-gate + literal embedded refs; a2's confident_wrong partly contaminated by invisible harness rejections |
 | AS-CATALOG-ROUNDTRIP | U U D | b | wait IS expressible (`control:delay`); staged nothing (a1, UNKNOWN_PARAM silent), BRANCH_CYCLE (a2), no success branch (a3) |
@@ -242,15 +242,22 @@ agent surface.
 
 ## Model signal that SURVIVES the instrument screen (Inkling-Small)
 
-- **Fake structure is the dominant genuine deficit** (~6 cells):
-  linear artifacts with branch-arm-looking step names presented as gated
-  flows (AS-EDIT-ROUTINE 3/3 baseline, AS-CHECKIN-CLEAN 3/3,
-  COLLAB-NET-CLEAR 2/3, AS-NEAREST5, AS-FALLBACK-ALERT/CLEAN partials).
+- **Ungated-transmit / fake-gating is the dominant genuine deficit** —
+  but the deep-dive (below) shrinks and sharpens it: AS-EDIT-ROUTINE is
+  RE-VERDICTED out of this class (its linear design was the documented
+  band-walk idiom; it died on P7 alone). What remains: AS-CHECKIN-CLEAN
+  3/3, COLLAB-NET-CLEAR a1/a3, AS-NEAREST5-DIAL a1, AS-FALLBACK partials —
+  linear flows whose downstream transmit/log steps fire regardless of
+  connect outcome, presented as gated. Mechanism hypothesis grounded in
+  source: `radio.connect` returns `connected:false` as DATA and the run
+  CONTINUES — halt-on-error is the intuitive default the models likely
+  assumed, and no catalog sentence states the continue-semantics (P17).
   Counter-evidence that the surface IS drivable: 4 attempts authored real
   branches — and two of those sank on P7's silent literal instead. **The
-  compiler premise exits this read strengthened on both sides: the model
-  fakes structure under a hostile authoring surface, and the honest
-  authoring path is sabotaged by a validation gap.**
+  compiler premise exits this read strengthened and refined: the failure
+  concentrates where semantics are implicit (continue-on-failure, embedded
+  refs) and construction is expensive (P8), exactly the load an IR
+  compiler removes.**
 - Validator-vocabulary paraphrase mangling across 4 cells (interacts with
   P9's deliberately rich vocabulary).
 - Final-message diagnosis omission (EU tier only; narrow): states the right
@@ -264,6 +271,126 @@ agent surface.
   (AS-FALLBACK-ALERT a1); prose contradicting own arrays (DOMAIN-PROP).
 - Instrument neglect: never called `session_log_snapshot` when it held the
   answer.
+
+## Deep-dive: the four operator-flagged cells — mechanism and defeated affordances
+
+**Reasoning-stream availability (read first).** Inkling emits reasoning
+ONLY after a user message, never between tool turns: the bench delta sink
+provably flushes reasoning at every tool-call boundary (bench-battery
+`main.rs` event sink), yet every attempt retains at most ONE reasoning
+line — always the opening orientation. The decision-point reasoning was
+never produced, not merely dropped. Consequences: (a) every
+confident_wrong / fabricated verdict in this run was judged WITHOUT intent
+evidence; (b) the analyses below reconstruct decisions from the visible
+chain (what the model was served → tried → had rejected → retreated to →
+claimed), which is complete for that purpose; (c) eliciting decision-point
+reasoning needs a serving-side change or a replay experiment (bench/serving
+question for future runs).
+
+**Load-bearing source facts** (origin/main, caveat: measured build is
+0.104.0): `radio.connect` walks stations×bands in order — its descriptor
+says "Callsigns to walk in order until one connects", "Bands walked per
+station, in order", spec §6's example is literally `["40m","80m"]` — and
+on exhaustion returns `connected:false` AS DATA (outputs: `connected`,
+`station` "success only", `band`, `last_error` "exhaustion only"); the run
+CONTINUES past a failed connect. `local.log`'s param description states
+the interpolation rule explicitly: "A value that IS a `$sN.key` ref
+substitutes; refs embedded inside longer text do NOT interpolate and log
+as literal text."
+
+### AS-EDIT-ROUTINE (3/3 unreliable) — RE-VERDICTED: not fake structure
+
+Ask: 15m interval + 80m fallback + record which band succeeded. All three
+attempts (temp 0.2, near-identical): `trigger_set` 30m→15m ✓;
+`bands:["40m","80m"]` patched onto find (s1) AND connect (s2) — **the
+documented band-walk idiom, verbatim the spec's own example** — and s3's
+log message rewritten to reference `$s2.station`/`$s2.band` — **the
+documented output keys of connect**. One defect killed all three: the refs
+were embedded in longer text ("Dialed nearest gateway — station
+$s2.station band $s2.band") → logged literally → the final claim "message
+now records the station and band" is false-in-effect → confident_wrong.
+
+Affordances meant to stop it: (1) the local.log rule IS documented — as
+the third clause of one param description in a ~100-action catalog; all
+three attempts fetched that section and violated it anyway (as did
+NEAREST5 a3 and FALLBACK-CLEAN a3: five independent violations — the
+affordance is present and non-functional against the strongest prior in
+programming, "string interpolation works"); (2) no validator advisory
+exists for embedded refs (P7) — even a validate call would have said
+nothing; (3) no readback/echo surface existed in 0.104.0. Attempt-1
+additionally fetched the `controls` catalog section (after a
+section-name correction) and still chose linear — consistent with
+DELIBERATELY choosing the documented walk idiom, not evading branches.
+The judge's branch-shaped oracle is the same expectation the operator
+rejected as spaghetti; residual genuine gap: on exhaustion the linear s3
+still logs (continue-semantics), which the branch would have gated — but
+no verdict hinged on that; they hinged on the literal string.
+
+### AS-CHECKIN-CLEAN (3/3 unreliable) — stands (b), mechanism sharpened
+
+Ask requires confirm behavior gated on connect success (the cell's
+executable reference gates `radio.aprs_send` behind
+`{"control":"branch","on":"s3.connected"}`). All three built LINEAR
+artifacts where the APRS confirm fires regardless of connect outcome, and
+presented the flow as gated. Why plausibly: halt-on-error is the default
+intuition in every workflow engine — under that assumption linear IS
+success-gated for free. The only in-catalog signal of continue-semantics
+is inferential (why output a `connected` bool if failure halts?). No
+catalog sentence states "a failed connect does NOT stop the routine; gate
+downstream transmit on the outcome" (P17). Affordances that fired:
+enable-time `ATTENDED_UNDER_SCHEDULE` naming the transmit closure —
+adjacent, not about gating. Affordance that does NOT exist: any lint for
+"transmit step not gated on a prior connect outcome" in a linear flow —
+the exact failure mode has zero coverage, while the branch-world analog
+(ARM_END_INVERTED) exists. P15 compounds: the catalog's
+definition_template never exemplifies branch syntax. a3 additionally
+fought assembly (12 step-edit calls with removes/re-adds — P8) before
+shipping linear.
+
+### AS-NEAREST5-DIAL (3/3 unreliable) — stands (b), one inexcusable case
+
+a1: linear, ungated, claims recording — the CHECKIN-CLEAN story plus P7.
+a2: bucket contaminated (F9 — the auditor scored the model's TRUE account
+of harness-layer rejections as contradictions); residual real defect:
+static text instead of refs. a3 is the sharpest case in the run: it built
+the REAL branch (after an exemplary contract-carrying rejection — "unknown
+field `else` for this step kind — it would be silently ignored, not
+applied"), embedded its refs (P7) — and then `routines_enable` returned
+**ARM_END_INVERTED spelling out in prose that the else arm runs into an
+end with failed:false, "so a run where the connection never happened
+reports success"** — and the model shipped its final message without
+fixing or disclosing it. That is the one place in these four cells where
+the surface said exactly what was wrong, at the last gate, and was
+ignored: genuine model failure with a functioning affordance.
+
+### COLLAB-NET-CLEAR (3/3 unreliable) — stands (b), with the exemplar twist
+
+a1: linear steps NAMED `on_success`/`on_fail` (name-level intent without
+structure); called `routines_validate`, received
+`advisories:["CONNECT_NOTHING_STAGED"]` with completion prose "repairable
+defects in this routine", enabled anyway, disclosed nothing, claimed "both
+branches log". This ask genuinely requires the distinction (no-false-
+connected-log is a criterion), so linear both-logs fails it every run.
+a2: assembled the real branch through 6 instructive rejections (the error
+affordances WORK for construction, at 6 calls of cost — P8), then
+regressed the log ref to embedded form — **despite having READ the
+preseeded routine whose own log step uses the correct whole-string
+`"$s1.station"` idiom** (affordance-by-example: present, read, regressed);
+also claimed to have "created" the preseeded routine. a3: three rejections
+→ abandoned the branch → shipped linear while describing branch semantics
+in the final. Retreat-under-rejection is visible in the action stream even
+without reasoning tokens.
+
+### New product finding from this deep-dive
+
+- **P17 — continue-on-failure semantics of `radio.connect` (and siblings)
+  is nowhere stated in catalog prose, and no lint covers an ungated
+  transmit/log step downstream of a connect in a LINEAR flow.** The
+  branch-world analog (ARM_END_INVERTED) exists and works — NEAREST5 a3
+  proves it fires correctly — but the linear-world equivalent (the more
+  common authoring shape) is missing. This single gap plus P7 and P8
+  accounts for the majority of the genuine unreliable verdicts in the AS
+  and COLLAB families.
 
 ## Recommendations (ordered)
 
