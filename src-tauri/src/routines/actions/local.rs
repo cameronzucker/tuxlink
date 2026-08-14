@@ -883,8 +883,10 @@ impl Action for LogEntry {
                 ty: ValueType::String,
                 required: true,
                 description: "Line to append to the station/session log. A value that IS a \
-                              \"$sN.key\" ref substitutes; refs embedded inside longer text \
-                              do NOT interpolate and log as literal text.",
+                              \"$sN.key\" ref substitutes the typed value; refs embedded \
+                              inside longer text interpolate as text (6epl8). Unresolvable \
+                              embedded tokens are left verbatim; an unset whole-string ref \
+                              fails the step.",
                 allowed: None,
                 example: r#""Hourly check complete""#,
             }],

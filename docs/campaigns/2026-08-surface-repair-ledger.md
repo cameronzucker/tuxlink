@@ -16,22 +16,9 @@ evidence; this page carries the STATE). Rules:
   becomes ordinary regression coverage), and close the row — `grep
   known_defect` must always list exactly the OPEN tripwires.
 - The session-start briefing prints this file's path and open-row count.
-- Lesson baked into row 1: verify every row against CODE, not docs — this
-  campaign's first "defect" turned out to be a stale doc describing a
-  fixed one.
-
-## Fix FIRST — small, unblocking
-
-1. **Stale interpolation prose in the local.log catalog entry** — the
-   param description still says embedded `$sN.key` refs "do NOT
-   interpolate and log as literal text"; the executor has interpolated
-   embedded refs since 2026-07-21 (6epl8, shipped v0.98+, locked by
-   `embedded_refs_interpolate_inside_strings`). The stale line actively
-   teaches agents the wrong constraint, is fossilized in the bench
-   contract, and grounded several wrong judge verdicts. Closes when: the
-   description matches the executor (remember the tool-surface corpus
-   regen gate). NOTE: the earlier "fix embedded interpolation first"
-   spike dependency is VOID — the IR log construct compiles fine onto v1.
+- Founding lesson (see the first Closed entry): verify every row against
+  CODE, not docs — this campaign's first "defect" turned out to be a stale
+  doc describing a fixed one.
 
 ## Fix now — orthogonal to the refactor
 
@@ -131,3 +118,11 @@ a stale doc). Re-baseline the A/B on the real-gating class
     AS-NEAREST5-DIAL a3 log_station, AS-FALLBACK-CLEAN a3) need
     re-judgment.** Full text: read doc §"Consolidated BENCH findings" +
     its 2026-08-14 correction. Closes when: relayed and acknowledged.
+
+## Closed
+
+- 1 — stale interpolation prose in the local.log catalog entry — closed
+  2026-08-14, row-1 PR under umbrella tuxlink-4280b. (The spike's
+  "fix interpolation first" dependency was void; note preserved in the
+  write-off section's spike note. A 2026-07-24 battery disagreement file
+  had already flagged this exact stale line — fossils leave paper trails.)
