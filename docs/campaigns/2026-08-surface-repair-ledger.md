@@ -22,25 +22,29 @@ evidence; this page carries the STATE). Rules:
 
 ## Fix now — orthogonal to the refactor
 
-2. **Modem status split-brain** — `ardop_connect`/`vara_open_session`
-   return ok while `modem_get_status`/`vara_status` read idle/closed and
-   `selected` sticks on vara-hf; diligent agents get told nothing
-   happened. Open fork: transient-sessions-undisclosed vs status-lies —
-   discriminate with one bench `ardop_lane_smoke`/`vara_lane_smoke` run
-   watching both surfaces, then fix (likely: a last-session summary on the
-   observation surface). Closes when: discriminator ran + chosen fix
-   merged.
+2. **Modem status is amnesiac (fork SETTLED 2026-08-14, operator-approved
+   comparison test)** — the retained zqo fixture teardown reports settled
+   it without a new run: the ARDOP gateway logged a real completed
+   secure-login B2F session (one message moved), so the action tools were
+   TRUTHFUL; sessions are transient and `modem_get_status` honestly
+   reports idle afterward while disclosing nothing about what just
+   happened (and `selected` misleads by sticking on vara-hf). VARA half:
+   no false-success proven (open ≠ dial; the B2F attempts were
+   taint-denied) — the open-ok vs status-closed contradiction is app-layer
+   only. Fix: a last-session summary on the observation surface + the
+   `selected` affordance + VARA open/status coherence unit tests (which
+   also answer the remaining open-ok question). Caveat carried: whether a
+   bare `ardop_connect` ok leaves a gateway-visible link is pinned by
+   those tests, not yet by evidence. Closes when: that fix merges.
 3. **Mode-advice docs contradict each other** — user-guide doc 16 says
    VARA is more robust at low SNR; doc 17 says ARDOP is, twice. Doc 16 is
    right. Closes when: doc 17 reconciled.
-4. **Folder refs are case-sensitive and misreport as internal errors**
-   [test: `known_defect_row4_folder_ref_is_case_sensitive_and_reports_internal`]
-   — `mailbox_list {folder:"Outbox"}` → `-32603 internal`; `"outbox"`
-   works. Closes when: case-folded + classified invalid-params.
 5. **Precondition failures wear the internal-error code** — "VARA session
    not open", "audio devices not configured", "rig I/O refused" all
-   surface as `-32603 internal error`. Closes when: mapped to a
-   precondition/invalid-state class.
+   surface as `-32603 internal error`. These cross a DIFFERENT boundary
+   than row 4 did (raw String errors through the egress layer, not
+   UiError), so this row is its own PR with a small typed-precondition
+   design. Closes when: mapped to a precondition/invalid-state class.
 6. **Zero-sentinels read as absence** — `packet_config_get` returns
    `baud:0, kiss_port:0, kiss_host:""` for unset values; models report
    "not shown". Closes when: nulls or explicit unset marker. (Tripwire
@@ -53,11 +57,6 @@ evidence; this page carries the STATE). Rules:
    requires `goal`; the description doesn't say so; every first call
    fails. Closes when: the description states it (corpus regen gate).
    (Tripwire test pending.)
-9. **Ignored-payload steps read as acceptable** — an undeclared param
-   (whole payload silently unused) files under `acceptable_warnings`
-   (UNKNOWN_PARAM) while the disposition prose says only advisories are
-   defects. Closes when: UNKNOWN_PARAM becomes an advisory (or the prose
-   stops promising that).
 10. **VARA reachability is a stale cache** — `vara_status.reachable` is a
     TTL-cached bare TCP probe that said true while `vara_open_session` got
     connection-refused in the same session. Closes when: cache invalidated
@@ -126,3 +125,13 @@ a stale doc). Re-baseline the A/B on the real-gating class
   "fix interpolation first" dependency was void; note preserved in the
   write-off section's spike note. A 2026-07-24 battery disagreement file
   had already flagged this exact stale line — fossils leave paper trails.)
+- 4 — folder refs case-sensitive + misreported as internal — closed
+  2026-08-16, error-hygiene batch PR (umbrella tuxlink-4280b): system
+  names case-fold, user slugs validate the original spelling, list/read
+  boundary classifies parse failures as InvalidInput (matching the move
+  path); tripwire flipped and renamed to
+  folder_ref_case_folds_system_names_and_stays_strict_on_slugs.
+- 9 — ignored-payload steps read as acceptable — closed 2026-08-16, same
+  PR: UNKNOWN_PARAM moved into ADVISORY_CODES (repairable, named in
+  advisories, completion sentence stops calling it unrepairable); new
+  classify test pins the membership.

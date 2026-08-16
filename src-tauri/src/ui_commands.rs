@@ -543,7 +543,13 @@ pub fn parse_folder(folder: &str) -> Result<MailboxFolder, UiError> {
 /// A string that's neither a known system folder nor a valid slug → Err.
 pub fn parse_folder_ref(folder: &str) -> Result<crate::native_mailbox::FolderRef, UiError> {
     use crate::native_mailbox::FolderRef;
-    match folder {
+    // Surface-repair row 4: system-folder names case-fold ("Outbox" ==
+    // "outbox") — agents and operators both type them cased. User-folder
+    // slugs stay case-sensitive below (slugs ARE their canonical lowercase
+    // form; folding them would alias distinct invalid inputs onto valid
+    // slugs instead of teaching the slug rule).
+    let folded = folder.to_ascii_lowercase();
+    match folded.as_str() {
         "inbox" => Ok(FolderRef::System(MailboxFolder::Inbox)),
         "outbox" => Ok(FolderRef::System(MailboxFolder::Outbox)),
         "sent" => Ok(FolderRef::System(MailboxFolder::Sent)),
@@ -562,18 +568,22 @@ pub fn parse_folder_ref(folder: &str) -> Result<crate::native_mailbox::FolderRef
         // through `message_delete` (which writes the `.trash` sidecar), not the
         // generic `message_move`; the UI does not offer Trash as a move target.
         "deleted" => Ok(FolderRef::System(MailboxFolder::Deleted)),
-        other => {
-            crate::user_folders::validate_slug(other).map_err(|e| UiError::Internal {
+        _ => {
+            // Validate the ORIGINAL spelling, not the folded one: user slugs
+            // are canonically lowercase, and folding first would alias a
+            // cased invalid input onto a valid slug instead of teaching the
+            // slug rule.
+            crate::user_folders::validate_slug(folder).map_err(|e| UiError::Internal {
                 // Says where to LOOK, not just that the guess was wrong. 8 of
                 // the run's 20 mailbox_list rejections landed here, each one an
                 // invented slug (tuxlink-0rc3h).
                 detail: format!(
-                    "\"{other}\" is not a system folder and is not a valid user-folder \
+                    "\"{folder}\" is not a system folder and is not a valid user-folder \
                      slug: {e}. System folders: inbox, outbox, sent, archive, deleted. \
                      Call user_folders_list for the user folders that exist."
                 ),
             })?;
-            Ok(FolderRef::User(other.to_string()))
+            Ok(FolderRef::User(folder.to_string()))
         }
     }
 }
@@ -15208,33 +15218,38 @@ mod fix1_password_gate_tests {
 }
 
 #[cfg(test)]
-mod known_defects_surface_repair {
-    //! Known-defect tests for the surface-repair campaign
-    //! (docs/campaigns/2026-08-surface-repair-ledger.md). Each test asserts
-    //! CURRENT DEFECTIVE behavior on purpose: if your change turns one red,
-    //! you are standing on a ledger row — fix it properly, flip the
-    //! assertions to the correct behavior, and close the row in the same PR.
+mod surface_repair_regression {
+    //! Surface-repair campaign coverage
+    //! (docs/campaigns/2026-08-surface-repair-ledger.md). OPEN tripwires are
+    //! named `known_defect_*` and assert current-defective behavior; closed
+    //! rows leave ordinary regression tests here (renamed per the ledger's
+    //! closure protocol). No open tripwires live in this file right now.
 
     use super::*;
 
     #[test]
-    fn known_defect_row4_folder_ref_is_case_sensitive_and_reports_internal() {
-        // Ledger row 4: "Outbox" is not case-folded to the system folder and
-        // the failure surfaces as UiError::Internal (MCP -32603) rather than
-        // an invalid-params class. Correct future behavior: case-fold system
-        // folder names AND classify a bad folder ref as invalid params.
-        assert!(parse_folder_ref("outbox").is_ok());
-        match parse_folder_ref("Outbox") {
+    fn folder_ref_case_folds_system_names_and_stays_strict_on_slugs() {
+        // Row 4 (CLOSED): system folder names case-fold; user slugs keep the
+        // original spelling and stay case-sensitive.
+        use crate::native_mailbox::FolderRef;
+        assert!(matches!(
+            parse_folder_ref("Outbox"),
+            Ok(FolderRef::System(MailboxFolder::Outbox))
+        ));
+        assert!(matches!(
+            parse_folder_ref("INBOX"),
+            Ok(FolderRef::System(MailboxFolder::Inbox))
+        ));
+        // A cased NON-system name must not fold into a valid user slug: the
+        // original spelling is what gets validated, and uppercase fails the
+        // slug rule with the teaching message.
+        match parse_folder_ref("MyFolder") {
             Err(UiError::Internal { detail }) => {
-                assert!(
-                    detail.contains("not a system folder"),
-                    "row 4 tripwire: deny text changed — re-check the ledger row"
-                );
+                assert!(detail.contains("not a system folder"));
             }
-            _ => panic!(
-                "row 4 tripwire: \"Outbox\" no longer fails as Internal — \
-                 if you fixed case folding, flip this test and close ledger row 4"
-            ),
+            _ => panic!("cased non-system name must still fail slug validation"),
         }
+        // "Drafts" folds into the drafts arm and keeps its teaching error.
+        assert!(parse_folder_ref("Drafts").is_err());
     }
 }

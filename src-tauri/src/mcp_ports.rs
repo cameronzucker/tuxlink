@@ -556,8 +556,11 @@ fn unknown_folder_msg(slug: &str, user_slugs: &[String]) -> String {
 impl MailboxPort for MonolithMailboxPort {
     async fn list(&self, folder: &str) -> Result<Vec<MessageMetaDto>, PortError> {
         let backend = self.backend()?;
+        // Surface-repair row 4: a bad folder ref is CALLER input, not a server
+        // fault — classify InvalidInput (-> invalid_request) so agents read it
+        // as "fix your argument", matching mailbox_move's pre-gate handling.
         let parsed = crate::ui_commands::parse_folder_ref(folder)
-            .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
+            .map_err(|e| PortError::InvalidInput(redact_err(format!("{e:?}"))))?;
         if let crate::native_mailbox::FolderRef::User(slug) = &parsed {
             let user = backend
                 .list_user_folders()
@@ -578,8 +581,9 @@ impl MailboxPort for MonolithMailboxPort {
         use crate::native_mailbox::FolderRef;
         use crate::winlink_backend::MessageId;
         let backend = self.backend()?;
+        // Row 4: same caller-input classification as `list` above.
         let parsed = crate::ui_commands::parse_folder_ref(folder)
-            .map_err(|e| PortError::Internal(redact_err(format!("{e:?}"))))?;
+            .map_err(|e| PortError::InvalidInput(redact_err(format!("{e:?}"))))?;
         let mid = MessageId::new(id);
         // Same fetch path as the `message_read` command.
         let body = match &parsed {
