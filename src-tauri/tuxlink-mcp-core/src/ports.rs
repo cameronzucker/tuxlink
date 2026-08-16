@@ -1842,6 +1842,14 @@ const ADVISORY_CODES: &[&str] = &[
     // triggers.rs: the finding's own message instructs a definition edit
     // (split the cadences into separate routines) — Codex 2026-07-29 P2
     "MULTIPLE_SCHEDULES",
+    // params.rs (surface-repair row 9): a param the action does not declare
+    // is silently ignored at runtime — the step false-succeeds with part of
+    // its payload dropped. That is a REPAIRABLE authoring defect (rename or
+    // remove the param), not an environmental fact; leaving it in
+    // acceptable_warnings had the completion prose calling it "cannot be
+    // repaired by editing", which coached ignoring it (zqo
+    // AS-CATALOG-ROUNDTRIP a1: an entire compose payload silently unused).
+    "UNKNOWN_PARAM",
 ];
 
 /// Dedupe finding codes preserving first-seen order — a routine commonly
@@ -2571,6 +2579,25 @@ mod authoring_disposition_tests {
             c.contains("repairable"),
             "must state the defects are repairable by editing: {c}"
         );
+    }
+
+    #[test]
+    fn unknown_param_is_a_repairable_advisory_not_environmental() {
+        // Surface-repair row 9 (zqo AS-CATALOG-ROUNDTRIP a1): an undeclared
+        // param means the step silently drops part of its payload — that is
+        // an authoring defect an edit fixes, and filing it under
+        // acceptable_warnings had the completion prose calling it
+        // unrepairable, which coached ignoring it.
+        let d = AuthoringDispositionDto::classify(
+            &[warn("UNKNOWN_PARAM", "param \"message\" is not declared")],
+            "r",
+            "rev1",
+        );
+        assert_eq!(d.state, DispositionState::Valid, "advisories never block");
+        assert_eq!(d.advisories, vec!["UNKNOWN_PARAM".to_string()]);
+        assert!(d.acceptable_warnings.is_empty());
+        let c = d.completion.as_ref().expect("Valid still carries a sentence");
+        assert!(!c.contains("COMPLETE"), "not complete over a dropped payload: {c}");
     }
 
     #[test]
