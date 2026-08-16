@@ -552,7 +552,6 @@ fn unknown_folder_msg(slug: &str, user_slugs: &[String]) -> String {
     )
 }
 
-#[async_trait]
 /// The human/agent-facing detail of a folder-ref parse failure, WITHOUT the
 /// debug-formatted enum wrapper (`Internal { detail: ... }` noise on the
 /// wire defeats the teaching message). parse_folder_ref only ever fails as
@@ -564,6 +563,7 @@ fn folder_ref_detail(e: crate::ui_commands::UiError) -> String {
     }
 }
 
+#[async_trait]
 impl MailboxPort for MonolithMailboxPort {
     async fn list(&self, folder: &str) -> Result<Vec<MessageMetaDto>, PortError> {
         // Surface-repair row 4: a bad folder ref is CALLER input, not a server
