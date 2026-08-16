@@ -553,14 +553,28 @@ fn unknown_folder_msg(slug: &str, user_slugs: &[String]) -> String {
 }
 
 #[async_trait]
+/// The human/agent-facing detail of a folder-ref parse failure, WITHOUT the
+/// debug-formatted enum wrapper (`Internal { detail: ... }` noise on the
+/// wire defeats the teaching message). parse_folder_ref only ever fails as
+/// `Internal { detail }` today; any future variant falls back to debug.
+fn folder_ref_detail(e: crate::ui_commands::UiError) -> String {
+    match e {
+        crate::ui_commands::UiError::Internal { detail } => detail,
+        other => format!("{other:?}"),
+    }
+}
+
 impl MailboxPort for MonolithMailboxPort {
     async fn list(&self, folder: &str) -> Result<Vec<MessageMetaDto>, PortError> {
-        let backend = self.backend()?;
         // Surface-repair row 4: a bad folder ref is CALLER input, not a server
         // fault — classify InvalidInput (-> invalid_request) so agents read it
-        // as "fix your argument", matching mailbox_move's pre-gate handling.
+        // as "fix your argument". Parse BEFORE resolving the backend so the
+        // classification is not state-dependent (a malformed folder reads the
+        // same online and offline), and surface the teaching detail bare
+        // rather than a debug-formatted enum wrapper (both: Codex 2026-08-16).
         let parsed = crate::ui_commands::parse_folder_ref(folder)
-            .map_err(|e| PortError::InvalidInput(redact_err(format!("{e:?}"))))?;
+            .map_err(|e| PortError::InvalidInput(redact_err(folder_ref_detail(e))))?;
+        let backend = self.backend()?;
         if let crate::native_mailbox::FolderRef::User(slug) = &parsed {
             let user = backend
                 .list_user_folders()
@@ -580,10 +594,10 @@ impl MailboxPort for MonolithMailboxPort {
     async fn read(&self, folder: &str, id: &str) -> Result<ParsedMessageDto, PortError> {
         use crate::native_mailbox::FolderRef;
         use crate::winlink_backend::MessageId;
-        let backend = self.backend()?;
-        // Row 4: same caller-input classification as `list` above.
+        // Row 4: same parse-first caller-input classification as `list` above.
         let parsed = crate::ui_commands::parse_folder_ref(folder)
-            .map_err(|e| PortError::InvalidInput(redact_err(format!("{e:?}"))))?;
+            .map_err(|e| PortError::InvalidInput(redact_err(folder_ref_detail(e))))?;
+        let backend = self.backend()?;
         let mid = MessageId::new(id);
         // Same fetch path as the `message_read` command.
         let body = match &parsed {
