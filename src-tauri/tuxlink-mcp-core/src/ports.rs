@@ -182,12 +182,16 @@ pub struct VaraConfigDto {
     pub drive_level: u8,
 }
 
-/// Non-secret packet (AX.25 / KISS) config.
+/// Non-secret packet (AX.25 / KISS) config. Unset / not-applicable fields are
+/// `None` (null on the wire): a TCP KISS link has no serial `baud`, and a
+/// never-configured link has no host/port. The previous shape emitted
+/// `0`/`""` sentinels, which models read as configured values (surface-repair
+/// ledger row 6).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PacketConfigDto {
-    pub kiss_host: String,
-    pub kiss_port: u16,
-    pub baud: u32,
+    pub kiss_host: Option<String>,
+    pub kiss_port: Option<u16>,
+    pub baud: Option<u32>,
     pub tx_delay: u32,
 }
 
@@ -889,8 +893,12 @@ pub struct ChannelReliabilityDto {
     pub rel_by_hour: Vec<f64>,
     /// Predicted SNR (dB) per UTC hour (24-long).
     pub snr_by_hour: Vec<f64>,
-    /// MUF-day fraction per UTC hour (24-long).
-    pub mufday_by_hour: Vec<f64>,
+    /// MUFday FRACTION per UTC hour (24-long): the fraction of days
+    /// (`0.0..=1.0`) the dial frequency is below the predicted MUF at that
+    /// hour. Not a frequency — the name carries the unit because a model and
+    /// a judge both read the bare `mufday_by_hour` as MHz (surface-repair
+    /// ledger row 7).
+    pub mufday_fraction_by_hour: Vec<f64>,
 }
 
 /// A full path prediction from the operator's station to the target grid.
@@ -2459,6 +2467,37 @@ mod authoring_disposition_tests {
             step: None,
             message: msg.into(),
         }
+    }
+
+    /// Ledger row 6 (CLOSED): unset packet-config fields are explicit nulls
+    /// on the wire, never `0`/`""` sentinels — a model reads a sentinel as a
+    /// configured value. The keys stay PRESENT (null, not absent) so the
+    /// field inventory of a config read is stable across configured and
+    /// unconfigured stations.
+    #[test]
+    fn packet_config_unset_fields_serialize_as_null_not_sentinels() {
+        let unset = PacketConfigDto {
+            kiss_host: None,
+            kiss_port: None,
+            baud: None,
+            tx_delay: 30,
+        };
+        let j = serde_json::to_value(&unset).unwrap();
+        assert!(j["kiss_host"].is_null(), "unset host must be null: {j}");
+        assert!(j["kiss_port"].is_null(), "unset port must be null: {j}");
+        assert!(j["baud"].is_null(), "unset baud must be null: {j}");
+        assert_eq!(j["tx_delay"], 30);
+
+        let configured = PacketConfigDto {
+            kiss_host: Some("127.0.0.1".into()),
+            kiss_port: Some(8001),
+            baud: Some(1200),
+            tx_delay: 30,
+        };
+        let j = serde_json::to_value(&configured).unwrap();
+        assert_eq!(j["kiss_host"], "127.0.0.1");
+        assert_eq!(j["kiss_port"], 8001);
+        assert_eq!(j["baud"], 1200);
     }
 
     #[test]

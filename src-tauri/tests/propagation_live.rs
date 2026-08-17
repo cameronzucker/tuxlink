@@ -175,10 +175,10 @@ fn live_dm43_to_dm34_full_pipeline() {
             ch.snr_by_hour.len()
         );
         assert_eq!(
-            ch.mufday_by_hour.len(),
+            ch.mufday_fraction_by_hour.len(),
             24,
-            "channel {i}: mufday_by_hour must have 24 entries, got {}",
-            ch.mufday_by_hour.len()
+            "channel {i}: mufday_fraction_by_hour must have 24 entries, got {}",
+            ch.mufday_fraction_by_hour.len()
         );
     }
 

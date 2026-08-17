@@ -45,14 +45,6 @@ evidence; this page carries the STATE). Rules:
    than row 4 did (raw String errors through the egress layer, not
    UiError), so this row is its own PR with a small typed-precondition
    design. Closes when: mapped to a precondition/invalid-state class.
-6. **Zero-sentinels read as absence** — `packet_config_get` returns
-   `baud:0, kiss_port:0, kiss_host:""` for unset values; models report
-   "not shown". Closes when: nulls or explicit unset marker. (Tripwire
-   test pending.)
-7. **Unlabeled fraction on the propagation wire** — `mufdayByHour` is a
-   0–1 fraction; a model AND the judge read it as MHz. Existing shape test
-   `path_prediction_serializes_camel_case` locks the current name (rename
-   lands there). Closes when: renamed or documented in the result schema.
 8. **find_stations hides its goal requirement** — `intent:"recommend"`
    requires `goal`; the description doesn't say so; every first call
    fails. Closes when: the description states it (corpus regen gate).
@@ -126,12 +118,28 @@ a stale doc). Re-baseline the A/B on the real-gating class
   write-off section's spike note. A 2026-07-24 battery disagreement file
   had already flagged this exact stale line — fossils leave paper trails.)
 - 4 — folder refs case-sensitive + misreported as internal — closed
-  2026-08-16, error-hygiene batch PR (umbrella tuxlink-4280b): system
+  2026-08-16, error-hygiene batch PR #1354 (umbrella tuxlink-4280b): system
   names case-fold, user slugs validate the original spelling, list/read
   boundary classifies parse failures as InvalidInput (matching the move
   path); tripwire flipped and renamed to
   folder_ref_case_folds_system_names_and_stays_strict_on_slugs.
 - 9 — ignored-payload steps read as acceptable — closed 2026-08-16, same
-  PR: UNKNOWN_PARAM moved into ADVISORY_CODES (repairable, named in
+  PR (#1354): UNKNOWN_PARAM moved into ADVISORY_CODES (repairable, named in
   advisories, completion sentence stops calling it unrepairable); new
   classify test pins the membership.
+- 6 — zero-sentinels read as absence — closed 2026-08-16, wire-shape batch
+  PR (umbrella tuxlink-4280b): mcp-core `PacketConfigDto` host/port/baud
+  are `Option`, unset passes through as explicit null from the monolith DTO
+  (the sentinels were manufactured at the mapping); keys stay present so
+  the config-read field inventory is stable. New regression test
+  `packet_config_unset_fields_serialize_as_null_not_sentinels` pins the
+  shape; the routines `data.read packet_config` byte-identical test now
+  carries a null `baud` through the whole path.
+- 7 — unlabeled fraction on the propagation wire — closed 2026-08-16, same
+  PR: `mufday_by_hour`/`mufdayByHour` renamed to
+  `mufday_fraction_by_hour`/`mufdayFractionByHour` on BOTH wires (mcp-core
+  DTO and the camelCase UI shape) so the name carries the unit; doc
+  comments state "fraction of days below the predicted MUF, not a
+  frequency". Rename landed in `path_prediction_serializes_camel_case` as
+  the row predicted. Tool descriptions untouched — the corpus regen gate
+  stays with row 8.

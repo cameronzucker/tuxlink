@@ -244,9 +244,9 @@ impl ConfigPort for MockConfig {
     }
     async fn packet(&self) -> Result<PacketConfigDto, PortError> {
         Ok(PacketConfigDto {
-            kiss_host: "127.0.0.1".into(),
-            kiss_port: 8001,
-            baud: 1200,
+            kiss_host: Some("127.0.0.1".into()),
+            kiss_port: Some(8001),
+            baud: Some(1200),
             tx_delay: 30,
         })
     }
@@ -649,7 +649,7 @@ impl PredictionPort for MockPrediction {
                 frequency_khz: SEED_GW_FREQ_KHZ,
                 rel_by_hour: vec![0.5; 24],
                 snr_by_hour: vec![10.0; 24],
-                mufday_by_hour: vec![0.8; 24],
+                mufday_fraction_by_hour: vec![0.8; 24],
             }],
         })
     }

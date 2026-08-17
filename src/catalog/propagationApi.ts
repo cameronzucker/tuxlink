@@ -21,8 +21,9 @@ export interface ChannelReliability {
   relByHour: number[];
   /** 24 SNR values (dB), indexed by UTC hour. */
   snrByHour: number[];
-  /** 24 MUFday values 0..1, indexed by UTC hour. */
-  mufdayByHour: number[];
+  /** 24 MUFday fractions 0..1 (fraction of days the dial is below the
+   *  predicted MUF), indexed by UTC hour. Not a frequency. */
+  mufdayFractionByHour: number[];
 }
 
 export interface PathPrediction {

@@ -34,7 +34,7 @@ function prediction(rels: Record<number, number>): PathPrediction {
       voacapMhz: Number(khz) / 1000,
       relByHour: new Array(24).fill(rel),
       snrByHour: new Array(24).fill(10),
-      mufdayByHour: new Array(24).fill(1),
+      mufdayFractionByHour: new Array(24).fill(1),
     })),
   };
 }

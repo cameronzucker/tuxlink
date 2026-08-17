@@ -892,10 +892,12 @@ impl ConfigPort for MonolithConfigPort {
         // DTO surfaces the KISS-link parameters only. If a future mcp-core
         // PacketConfigDto adds a bt_mac field, minimize it here:
         //   let _bt = cfg.bt_mac.as_deref().map(minimize_bt_mac);
+        // Unset stays None (null on the wire) — no 0/"" sentinels; a model
+        // reads those as configured values (surface-repair ledger row 6).
         Ok(PacketConfigDto {
-            kiss_host: cfg.tcp_host.unwrap_or_default(),
-            kiss_port: cfg.tcp_port.unwrap_or(0),
-            baud: cfg.serial_baud.unwrap_or(0),
+            kiss_host: cfg.tcp_host,
+            kiss_port: cfg.tcp_port,
+            baud: cfg.serial_baud,
             tx_delay: u32::from(cfg.txdelay),
         })
     }
@@ -3688,7 +3690,7 @@ impl PredictionPort for MonolithPredictionPort {
                     frequency_khz: c.frequency_khz,
                     rel_by_hour: c.rel_by_hour,
                     snr_by_hour: c.snr_by_hour,
-                    mufday_by_hour: c.mufday_by_hour,
+                    mufday_fraction_by_hour: c.mufday_fraction_by_hour,
                 })
                 .collect(),
         })

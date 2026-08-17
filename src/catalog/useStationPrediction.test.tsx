@@ -33,7 +33,7 @@ describe('useStationPrediction', () => {
       cmd === 'propagation_predict_path'
         ? ({
             bearingDeg: 318, distanceKm: 77, ssn: 118, year: 2026, month: 6,
-            channels: [{ frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.8), snrByHour: Array(24).fill(12), mufdayByHour: Array(24).fill(0.9) }],
+            channels: [{ frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.8), snrByHour: Array(24).fill(12), mufdayFractionByHour: Array(24).fill(0.9) }],
           } as unknown as never)
         : (undefined as unknown as never),
     );

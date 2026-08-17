@@ -2328,10 +2328,13 @@ mod tests {
 
     #[tokio::test]
     async fn packet_config_source_equals_mcp_packet_config_get_output() {
+        // `baud: None` on purpose: a TCP KISS link has no serial baud, and the
+        // null must survive byte-identical through the routines data.read path
+        // (ledger row 6 — no 0-sentinel resurrection downstream).
         let dto = tuxlink_mcp_core::ports::PacketConfigDto {
-            kiss_host: "127.0.0.1".to_string(),
-            kiss_port: 8001,
-            baud: 9600,
+            kiss_host: Some("127.0.0.1".to_string()),
+            kiss_port: Some(8001),
+            baud: None,
             tx_delay: 300,
         };
         let mcp_output = serde_json::to_value(&dto).unwrap();

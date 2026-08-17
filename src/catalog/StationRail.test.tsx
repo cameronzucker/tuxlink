@@ -42,8 +42,8 @@ const station: Station = {
 const prediction: PathPrediction = {
   bearingDeg: 318, distanceKm: 77, ssn: 118, year: 2026, month: 6,
   channels: [
-    { frequencyKhz: 3590, voacapMhz: 4, relByHour: Array(24).fill(0.74), snrByHour: Array(24).fill(10), mufdayByHour: Array(24).fill(0.9) },
-    { frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.86), snrByHour: Array(24).fill(15), mufdayByHour: Array(24).fill(1) },
+    { frequencyKhz: 3590, voacapMhz: 4, relByHour: Array(24).fill(0.74), snrByHour: Array(24).fill(10), mufdayFractionByHour: Array(24).fill(0.9) },
+    { frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.86), snrByHour: Array(24).fill(15), mufdayFractionByHour: Array(24).fill(1) },
   ],
 };
 
@@ -392,8 +392,8 @@ describe('StationRail', () => {
       const crossModePrediction: PathPrediction = {
         ...prediction,
         channels: [
-          { frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.4), snrByHour: Array(24).fill(8), mufdayByHour: Array(24).fill(0.9) },
-          { frequencyKhz: 14101, voacapMhz: 14, relByHour: Array(24).fill(0.9), snrByHour: Array(24).fill(18), mufdayByHour: Array(24).fill(1) },
+          { frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.4), snrByHour: Array(24).fill(8), mufdayFractionByHour: Array(24).fill(0.9) },
+          { frequencyKhz: 14101, voacapMhz: 14, relByHour: Array(24).fill(0.9), snrByHour: Array(24).fill(18), mufdayFractionByHour: Array(24).fill(1) },
         ],
       };
       render(
