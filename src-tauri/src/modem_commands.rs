@@ -2069,6 +2069,17 @@ pub async fn modem_ardop_b2f_exchange(
         // chokepoint.
         crate::connection_history::record_success(&target_for_history, "ardop-hf");
     }
+    // Ledger row 2 (tuxlink-wovan): the session surface returns to idle after
+    // every exchange — record the outcome (both branches) so
+    // `modem_get_status.last_session` can disclose what just happened.
+    let store = app_for_emit.state::<Arc<crate::modem_status::LastB2fSessionStore>>();
+    store.record(crate::modem_status::LastB2fSession {
+        transport: "ardop".to_string(),
+        target: Some(target_for_history.clone()),
+        ok: result.is_ok(),
+        detail: result.as_ref().err().cloned(),
+        ended_at_ms: crate::modem_status::unix_now_ms(),
+    });
     result
 }
 

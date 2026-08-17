@@ -604,7 +604,8 @@ fn data_read_dry_run_shape(params: &Value) -> Value {
         "grid" => json!({"grid": "AA00aa"}),
         "modem_status" => json!({
             "kind": "idle", "connected": false, "state": "idle",
-            "running": [], "selected": null, "conflict": false
+            "running": [], "selected": null, "conflict": false,
+            "last_session": null
         }),
         "backend_status" => json!({
             "connected": false, "transport": "", "state": "not_configured"
@@ -2118,6 +2119,7 @@ mod tests {
         let selected = Some(SelectedConnectionDto {
             session_type: "radio".to_string(),
             protocol: "ardop".to_string(),
+            note: String::new(),
         });
         let dto = crate::mcp_ports::derive_modem_status(
             &ModemState::ConnectedIrs,

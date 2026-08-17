@@ -297,6 +297,56 @@ impl ModemStatus {
 /// token + the live `ModemTransport` handle (when a connect has succeeded).
 /// `Arc<ModemSession>` is stored in Tauri state and shared between command
 /// handlers and the broadcaster.
+/// Ledger row 2 (tuxlink-wovan): the most recent completed/failed transient
+/// B2F session. Sessions are transient by design — `reset_to_stopped` (ARDOP)
+/// / `finish_vara_b2f_exchange` (VARA) return the status surface to idle
+/// after every exchange — so this store is the observation surface's memory
+/// of what just happened. Written at the two b2f-exchange outcome points;
+/// read by the MCP `modem_get_status` gather (and, byte-identically, the
+/// routines `data.read modem_status` source, which delegates to the same
+/// seam). One app-managed instance shared by both modems: "most recent" is
+/// deliberately cross-modem.
+#[derive(Debug, Default)]
+pub struct LastB2fSessionStore(Mutex<Option<LastB2fSession>>);
+
+/// One recorded session outcome. Monolith-plain type; `mcp_ports` maps it
+/// onto the wire DTO (`LastSessionSummaryDto`) and applies redaction there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LastB2fSession {
+    /// `"ardop"` / `"vara-hf"` / `"vara-fm"` — which transport ran it.
+    pub transport: String,
+    /// The dialed target (gateway callsign), when the seam knew it.
+    pub target: Option<String>,
+    /// Whether the B2F exchange returned Ok.
+    pub ok: bool,
+    /// The failure detail for failed outcomes (raw seam text; the wire
+    /// boundary redacts).
+    pub detail: Option<String>,
+    /// When the session ended (unix ms).
+    pub ended_at_ms: u64,
+}
+
+impl LastB2fSessionStore {
+    /// Overwrite with the newest outcome (last-writer-wins is the point).
+    pub fn record(&self, s: LastB2fSession) {
+        if let Ok(mut g) = self.0.lock() {
+            *g = Some(s);
+        }
+    }
+
+    pub fn snapshot(&self) -> Option<LastB2fSession> {
+        self.0.lock().ok().and_then(|g| g.clone())
+    }
+}
+
+/// Unix ms "now" for [`LastB2fSession::ended_at_ms`].
+pub fn unix_now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 pub struct ModemSession {
     inner: Mutex<ModemSessionInner>,
     /// Busy guard: set to `true` while a connect is in flight.

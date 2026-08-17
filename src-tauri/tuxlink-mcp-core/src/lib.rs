@@ -237,6 +237,7 @@ pub mod test_support {
                 running: vec![],
                 selected: None,
                 conflict: false,
+                last_session: None,
             })
         }
         async fn vara_status(&self) -> Result<VaraStatusDto, PortError> {
