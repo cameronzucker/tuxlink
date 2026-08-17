@@ -36,12 +36,6 @@ evidence; this page carries the STATE). Rules:
    also answer the remaining open-ok question). Caveat carried: whether a
    bare `ardop_connect` ok leaves a gateway-visible link is pinned by
    those tests, not yet by evidence. Closes when: that fix merges.
-5. **Precondition failures wear the internal-error code** — "VARA session
-   not open", "audio devices not configured", "rig I/O refused" all
-   surface as `-32603 internal error`. These cross a DIFFERENT boundary
-   than row 4 did (raw String errors through the egress layer, not
-   UiError), so this row is its own PR with a small typed-precondition
-   design. Closes when: mapped to a precondition/invalid-state class.
 10. **VARA reachability is a stale cache** — `vara_status.reachable` is a
     TTL-cached bare TCP probe that said true while `vara_open_session` got
     connection-refused in the same session. Closes when: cache invalidated
@@ -159,3 +153,14 @@ a stale doc). Re-baseline the A/B on the real-gating class
   ADR 0030 note: the tuxlink-tools threshold entry was calibrated against
   the prior corpus content; recalibration is recorded on tuxlink-4280b as
   owed at classifier wiring time (the classifier is not live yet).
+- 5 — precondition failures wear the internal-error code — closed
+  2026-08-16, row-5 PR #1359 (umbrella tuxlink-4280b): new
+  `EgressPortError::Precondition` ("precondition not met (your call was
+  fine; fix the named state, then retry): <seam detail>") with a
+  marker classifier at the egress seams; UiError-typed seams classify
+  NotConfigured/Unavailable directly while Transport marker-gates (a
+  blanket promotion would mislabel real network faults — Codex round).
+  Carrier deliberately stays internal_error per the write-tier
+  Unavailable anti-guess-loop rationale; the class lives in the message
+  the agent reads. Classifier inventory + router wire shape pinned by
+  tests against the real seam strings.
