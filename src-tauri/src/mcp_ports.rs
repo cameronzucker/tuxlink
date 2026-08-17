@@ -127,6 +127,16 @@ fn classify_egress_str(e: String) -> EgressPortError {
         "modem busy",
         "already started",
         "already in flight",
+        // winlink_backend.rs connect_in_progress gates ("a CMS connection is
+        // already in progress" / "a connection is already in progress") —
+        // typed seams classify these via UiError::Unavailable, but the same
+        // strings cross raw seams inside Debug-formatted wrappers (Codex
+        // round).
+        "already in progress",
+        // BackendError::NoActiveIdentity's #[error] text (typed seams promote
+        // it via NotConfigured; a Debug-formatted crossing has no space in
+        // "NotConfigured", so it needs its own marker — Codex round).
+        "no active identity",
     ];
     let lower = e.to_lowercase();
     if PRECONDITION_MARKERS.iter().any(|m| lower.contains(m)) {
@@ -146,9 +156,15 @@ fn classify_egress_ui_err(e: crate::ui_commands::UiError) -> EgressPortError {
     use crate::ui_commands::UiError;
     match e {
         UiError::NotConfigured(detail) => EgressPortError::Precondition(redact_err(detail)),
-        UiError::Unavailable { reason } | UiError::Transport { reason } => {
-            EgressPortError::Precondition(redact_err(reason))
-        }
+        // BackendUnavailable family: subsystem-off / busy gates ("a
+        // connection is already in progress") — state, not input.
+        UiError::Unavailable { reason } => EgressPortError::Precondition(redact_err(reason)),
+        // Transport wraps genuinely-operational failures too (TCP refused,
+        // DNS, a Debug-formatted protocol error via TransportFailed) — a
+        // blanket promotion would tell the agent to "fix the named state"
+        // about a network fault (Codex round). Promote only marker-shaped
+        // reasons; the rest stay Failed.
+        UiError::Transport { reason } => classify_egress_str(reason),
         other => classify_egress_str(format!("{other:?}")),
     }
 }
@@ -5526,6 +5542,11 @@ mod tests {
             "modem busy — inbound exchange in progress",
             "outbound exchange already in flight",
             "VARA session already started — call vara_close_session first",
+            // winlink_backend.rs connect_in_progress gates
+            "a CMS connection is already in progress",
+            "a connection is already in progress",
+            // BackendError::NoActiveIdentity #[error] text
+            "no active identity — authenticate before transmitting",
         ];
         for msg in preconditions {
             assert!(
@@ -5568,6 +5589,26 @@ mod tests {
         assert!(matches!(
             classify_egress_ui_err(not_configured),
             EgressPortError::Precondition(_)
+        ));
+
+        // Busy-gate family (BackendUnavailable): state, promotes.
+        let busy = crate::ui_commands::UiError::Unavailable {
+            reason: "a CMS connection is already in progress".to_string(),
+        };
+        assert!(matches!(
+            classify_egress_ui_err(busy),
+            EgressPortError::Precondition(_)
+        ));
+
+        // An OPERATIONAL transport failure must NOT promote — telling the
+        // agent to "fix the named state" about a network fault misleads
+        // (Codex round on this PR).
+        let refused = crate::ui_commands::UiError::Transport {
+            reason: "transport failed: Connection refused (os error 111)".to_string(),
+        };
+        assert!(matches!(
+            classify_egress_ui_err(refused),
+            EgressPortError::Failed(_)
         ));
     }
 
