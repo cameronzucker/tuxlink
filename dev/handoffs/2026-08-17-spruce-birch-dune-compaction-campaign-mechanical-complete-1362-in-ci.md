@@ -6,11 +6,20 @@ anchor (operator-directed), not a session end.
 
 ## Headline state
 
-The surface-repair campaign's MECHANICAL PHASE is one merge from complete.
-Rows 1,3,4,5,6,7,8,9,10 of
-`docs/campaigns/2026-08-surface-repair-ledger.md` are closed AND merged;
-row 2's PR **#1362 is in its final CI run** with the in-file ledger closure
-aboard (head b4e20cb2, prior run was 14-green on the hardened code).
+**AMENDED before this anchor's own merge: #1362 MERGED on green (head
+b4e20cb2 verified), tuxlink-wovan CLOSED, the wovan worktree disposed per
+ritual (row-2 transcript preserved to the main checkout's
+dev/adversarial/), its branch deleted. The campaign's MECHANICAL PHASE IS
+COMPLETE — all ten fix-now rows closed and merged; the ledger's Fix-now
+section is empty on main. Live-thread steps 1-2 below are DONE; only step
+3 (this anchor's merge + worktree re-park) remains. `bd dolt push` is a
+documented no-op (no Dolt remote configured; issues are local +
+repo-versioned).**
+
+Original snapshot: rows 1,3,4,5,6,7,8,9,10 of
+`docs/campaigns/2026-08-surface-repair-ledger.md` closed AND merged;
+row 2's PR #1362 in its final CI run with the in-file ledger closure
+aboard.
 
 ## LIVE THREADS — first actions after compaction
 
