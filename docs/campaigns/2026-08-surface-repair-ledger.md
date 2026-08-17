@@ -133,7 +133,7 @@ a stale doc). Re-baseline the A/B on the real-gating class
   shape; the routines `data.read packet_config` byte-identical test now
   carries a null `baud` through the whole path.
 - 3 — mode-advice docs contradict each other — closed 2026-08-16, row-3 PR
-  (umbrella tuxlink-4280b): doc 17 reconciled to docs 15/16 (VARA generally
+  #1358 (umbrella tuxlink-4280b): doc 17 reconciled to docs 15/16 (VARA generally
   more robust at low SNR; ham consensus + the bench oracle agree). Four
   spots carried the wrong claim, not two: the conditions-table row and the
   quick-lookup row the evidence names (P3), plus the decision-tree's
