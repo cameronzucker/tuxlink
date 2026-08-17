@@ -697,7 +697,7 @@ if (view === 'finder') {
       voacapMhz: frequencyKhz / 1000,
       relByHour: Array(24).fill(frequencyKhz < 10000 ? 0.82 : 0.51),
       snrByHour: Array(24).fill(12),
-      mufdayByHour: Array(24).fill(0.9),
+      mufdayFractionByHour: Array(24).fill(0.9),
     })),
   };
   RESPONSES.propagation_prefs_read = {

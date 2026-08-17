@@ -623,8 +623,12 @@ fn data_read_dry_run_shape(params: &Value) -> Value {
         "vara_config" => json!({
             "host": "127.0.0.1", "port": 8300, "bandwidth": 2300, "drive_level": 0
         }),
+        // TCP-shaped: host/port set, serial baud null. The monolith link config
+        // makes those mutually exclusive, so a dry-run must not show a state
+        // (all three set) that no real read can produce (ledger row 6, Codex
+        // adrev finding).
         "packet_config" => json!({
-            "kiss_host": "127.0.0.1", "kiss_port": 8001, "baud": 9600, "tx_delay": 300
+            "kiss_host": "127.0.0.1", "kiss_port": 8001, "baud": null, "tx_delay": 300
         }),
         "rig_config" => json!({
             "rig_hamlib_model": null, "rigctld_host": "127.0.0.1",
