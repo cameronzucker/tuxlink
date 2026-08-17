@@ -3903,6 +3903,65 @@ mod tests {
         );
     }
 
+    /// Row 10, success half driven through the REAL open seam (Codex round:
+    /// a helper-only test stays green if the Ok-arm write is removed). The
+    /// readiness gate fails OPEN and VaraFm replaces it with the T_MIN
+    /// settle, so a bare accepting listener pair drives
+    /// `vara_open_session_inner` to a genuine Ok in ~600ms — no VARA
+    /// protocol needed. A seeded stale `false` must flip to `true` at the
+    /// connect.
+    #[test]
+    fn successful_open_overwrites_stale_unreachable_cache() {
+        use std::net::TcpListener;
+        use std::thread;
+        use std::time::Duration;
+
+        let cmd_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cmd_port = cmd_l.local_addr().unwrap().port();
+        let data_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let data_port = data_l.local_addr().unwrap().port();
+        // Acceptors hold their sockets long enough to outlive the open.
+        let cmd_handle = thread::spawn(move || {
+            let (_c, _) = cmd_l.accept().unwrap();
+            thread::sleep(Duration::from_secs(2));
+        });
+        let data_handle = thread::spawn(move || {
+            let (_c, _) = data_l.accept().unwrap();
+            thread::sleep(Duration::from_secs(2));
+        });
+
+        let session = Arc::new(VaraSession::new());
+        // Seed as a stale probe would have it: unreachable.
+        session.record_reachable_observation(false);
+
+        let ui_cfg = VaraUiConfig {
+            host: "127.0.0.1".into(),
+            cmd_port,
+            data_port,
+            bandwidth_hz: None,
+        };
+        vara_open_session_inner(
+            &session,
+            &ui_cfg,
+            None,
+            SessionIntent::Cms,
+            TransportKind::VaraFm,
+        )
+        .expect("open must succeed against accepting listeners (gate fails open)");
+
+        let cached = session.reachable_cache.lock().unwrap();
+        assert!(
+            matches!(*cached, Some((_, true))),
+            "a successful connect must overwrite the stale false, got {cached:?}"
+        );
+        drop(cached);
+
+        // Teardown so the acceptor threads join instead of leaking.
+        let _ = vara_stop_session_inner(&session);
+        cmd_handle.join().unwrap();
+        data_handle.join().unwrap();
+    }
+
     #[test]
     fn vara_open_session_double_start_rejected() {
         // Build a session that's already in "Open" state by hand (so we
