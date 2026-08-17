@@ -623,8 +623,12 @@ fn data_read_dry_run_shape(params: &Value) -> Value {
         "vara_config" => json!({
             "host": "127.0.0.1", "port": 8300, "bandwidth": 2300, "drive_level": 0
         }),
+        // TCP-shaped: host/port set, serial baud null. The monolith link config
+        // makes those mutually exclusive, so a dry-run must not show a state
+        // (all three set) that no real read can produce (ledger row 6, Codex
+        // adrev finding).
         "packet_config" => json!({
-            "kiss_host": "127.0.0.1", "kiss_port": 8001, "baud": 9600, "tx_delay": 300
+            "kiss_host": "127.0.0.1", "kiss_port": 8001, "baud": null, "tx_delay": 300
         }),
         "rig_config" => json!({
             "rig_hamlib_model": null, "rigctld_host": "127.0.0.1",
@@ -2328,10 +2332,13 @@ mod tests {
 
     #[tokio::test]
     async fn packet_config_source_equals_mcp_packet_config_get_output() {
+        // `baud: None` on purpose: a TCP KISS link has no serial baud, and the
+        // null must survive byte-identical through the routines data.read path
+        // (ledger row 6 — no 0-sentinel resurrection downstream).
         let dto = tuxlink_mcp_core::ports::PacketConfigDto {
-            kiss_host: "127.0.0.1".to_string(),
-            kiss_port: 8001,
-            baud: 9600,
+            kiss_host: Some("127.0.0.1".to_string()),
+            kiss_port: Some(8001),
+            baud: None,
             tx_delay: 300,
         };
         let mcp_output = serde_json::to_value(&dto).unwrap();

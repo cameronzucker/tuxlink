@@ -54,7 +54,7 @@ beforeEach(() => {
     if (cmd === 'propagation_predict_path')
       return {
         bearingDeg: 318, distanceKm: 77, ssn: 118, year: 2026, month: 6,
-        channels: [{ frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.86), snrByHour: Array(24).fill(12), mufdayByHour: Array(24).fill(0.9) }],
+        channels: [{ frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.86), snrByHour: Array(24).fill(12), mufdayFractionByHour: Array(24).fill(0.9) }],
       } as unknown as never;
     // tuxlink-5016: the panel now reads the favorites file to drive the ★ save
     // affordance. Return an empty file so the query RESOLVES (a bare undefined
@@ -169,7 +169,7 @@ describe('StationFinderPanel', () => {
       if (cmd === 'propagation_predict_path')
         return {
           bearingDeg: 318, distanceKm: 77, ssn: 118, year: 2026, month: 6,
-          channels: [{ frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.86), snrByHour: Array(24).fill(12), mufdayByHour: Array(24).fill(0.9) }],
+          channels: [{ frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.86), snrByHour: Array(24).fill(12), mufdayFractionByHour: Array(24).fill(0.9) }],
         } as unknown as never;
       return undefined as unknown as never;
     });
@@ -278,7 +278,7 @@ describe('StationFinderPanel', () => {
         if (cmd === 'propagation_predict_path')
           return {
             bearingDeg: 318, distanceKm: 77, ssn: 118, year: 2026, month: 6,
-            channels: [{ frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.86), snrByHour: Array(24).fill(12), mufdayByHour: Array(24).fill(0.9) }],
+            channels: [{ frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.86), snrByHour: Array(24).fill(12), mufdayFractionByHour: Array(24).fill(0.9) }],
           } as unknown as never;
         // The provider's hydrate: a stopped listener whose ringTail still holds
         // the decode (the listener recorded it, then went quiet or stopped).

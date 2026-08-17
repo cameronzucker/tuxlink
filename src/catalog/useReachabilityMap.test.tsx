@@ -31,7 +31,7 @@ describe('useReachabilityMap', () => {
       const rx = (args as { rxGrid: string }).rxGrid;
       const rel = rx === 'DM34oa' ? 0.86 : 0.12; // near=good, far=unlikely (red) on 40m
       return { bearingDeg: 0, distanceKm: 1, ssn: 118, year: 2026, month: 6,
-        channels: [{ frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(rel), snrByHour: Array(24).fill(5), mufdayByHour: Array(24).fill(0.5) }] } as unknown as never;
+        channels: [{ frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(rel), snrByHour: Array(24).fill(5), mufdayFractionByHour: Array(24).fill(0.5) }] } as unknown as never;
     });
     const { result } = renderHook(() => useReachabilityMap('DM43bp', stations, new Set<Band>(['40m']), 21), { wrapper: wrap() });
     await waitFor(() => expect(result.current.available).toBe(true));
@@ -70,7 +70,7 @@ describe('useReachabilityMap', () => {
       if (cmd !== 'propagation_predict_path') return undefined as unknown as never;
       calls += 1;
       return { bearingDeg: 0, distanceKm: 1, ssn: 118, year: 2026, month: 6,
-        channels: [{ frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.8), snrByHour: Array(24).fill(5), mufdayByHour: Array(24).fill(0.5) }] } as unknown as never;
+        channels: [{ frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.8), snrByHour: Array(24).fill(5), mufdayFractionByHour: Array(24).fill(0.5) }] } as unknown as never;
     });
     const { result, rerender } = renderHook(
       ({ rk }) => useReachabilityMap('DM43bp', stations, new Set<Band>(['40m']), 21, rk),
@@ -102,7 +102,7 @@ describe('useReachabilityMap', () => {
       await new Promise((r) => setTimeout(r, 5));
       inFlight -= 1;
       return { bearingDeg: 0, distanceKm: 1, ssn: 118, year: 2026, month: 6,
-        channels: [{ frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.8), snrByHour: Array(24).fill(5), mufdayByHour: Array(24).fill(0.5) }] } as unknown as never;
+        channels: [{ frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.8), snrByHour: Array(24).fill(5), mufdayFractionByHour: Array(24).fill(0.5) }] } as unknown as never;
     });
     const { result } = renderHook(() => useReachabilityMap('DM43bp', many, new Set<Band>(['40m']), 21), { wrapper: wrap() });
     await waitFor(() => expect(result.current.available).toBe(true));

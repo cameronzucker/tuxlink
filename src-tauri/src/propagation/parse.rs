@@ -98,7 +98,7 @@ pub fn parse_voacapx_out(
             voacap_mhz: voacap_mhz_display[i],
             rel_by_hour: rel_rows.iter().map(|r| r[i]).collect(),
             snr_by_hour: snr_rows.iter().map(|r| r[i]).collect(),
-            mufday_by_hour: mufday_rows.iter().map(|r| r[i]).collect(),
+            mufday_fraction_by_hour: mufday_rows.iter().map(|r| r[i]).collect(),
         })
         .collect();
 
@@ -341,11 +341,11 @@ mod tests {
                 ch.snr_by_hour.len()
             );
             assert_eq!(
-                ch.mufday_by_hour.len(),
+                ch.mufday_fraction_by_hour.len(),
                 24,
-                "freq {}: mufday_by_hour len {}",
+                "freq {}: mufday_fraction_by_hour len {}",
                 ch.frequency_khz,
-                ch.mufday_by_hour.len()
+                ch.mufday_fraction_by_hour.len()
             );
         }
     }
@@ -406,9 +406,9 @@ mod tests {
         );
         // channel[1] = 7103 kHz; hour-1 MUFday = 1.00
         assert!(
-            (p.channels[1].mufday_by_hour[0] - 1.00).abs() < 1e-4,
+            (p.channels[1].mufday_fraction_by_hour[0] - 1.00).abs() < 1e-4,
             "ch[1] hour-1 MUFday expected 1.00, got {}",
-            p.channels[1].mufday_by_hour[0]
+            p.channels[1].mufday_fraction_by_hour[0]
         );
     }
 

@@ -48,15 +48,15 @@ const prediction: PathPrediction = {
   year: 2026,
   month: 6,
   channels: [
-    { frequencyKhz: 3590, voacapMhz: 4, relByHour: Array(24).fill(0.74), snrByHour: Array(24).fill(10), mufdayByHour: Array(24).fill(0.9) },
-    { frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.86), snrByHour: Array(24).fill(15), mufdayByHour: Array(24).fill(1) },
+    { frequencyKhz: 3590, voacapMhz: 4, relByHour: Array(24).fill(0.74), snrByHour: Array(24).fill(10), mufdayFractionByHour: Array(24).fill(0.9) },
+    { frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.86), snrByHour: Array(24).fill(15), mufdayFractionByHour: Array(24).fill(1) },
     // 20m band-level VOACAP (matched by band, not per-channel).
-    { frequencyKhz: 14100, voacapMhz: 14, relByHour: Array(24).fill(0.9), snrByHour: Array(24).fill(18), mufdayByHour: Array(24).fill(1) },
+    { frequencyKhz: 14100, voacapMhz: 14, relByHour: Array(24).fill(0.9), snrByHour: Array(24).fill(18), mufdayFractionByHour: Array(24).fill(1) },
     // Per-channel reliability for the three 20m dials — vara highest, pactor lowest,
     // so pactor is deterministically the one behind the "+1" overflow.
-    { frequencyKhz: 14107, voacapMhz: 14, relByHour: Array(24).fill(0.9), snrByHour: Array(24).fill(18), mufdayByHour: Array(24).fill(1) },
-    { frequencyKhz: 14109, voacapMhz: 14, relByHour: Array(24).fill(0.8), snrByHour: Array(24).fill(16), mufdayByHour: Array(24).fill(1) },
-    { frequencyKhz: 14111, voacapMhz: 14, relByHour: Array(24).fill(0.5), snrByHour: Array(24).fill(10), mufdayByHour: Array(24).fill(1) },
+    { frequencyKhz: 14107, voacapMhz: 14, relByHour: Array(24).fill(0.9), snrByHour: Array(24).fill(18), mufdayFractionByHour: Array(24).fill(1) },
+    { frequencyKhz: 14109, voacapMhz: 14, relByHour: Array(24).fill(0.8), snrByHour: Array(24).fill(16), mufdayFractionByHour: Array(24).fill(1) },
+    { frequencyKhz: 14111, voacapMhz: 14, relByHour: Array(24).fill(0.5), snrByHour: Array(24).fill(10), mufdayFractionByHour: Array(24).fill(1) },
   ],
 };
 
@@ -241,7 +241,7 @@ describe('BandMatrix', () => {
     it('DOES render a VOACAP bar on the 60m row (channelized HF, still modeled)', () => {
       const withFifty: PathPrediction = {
         ...prediction,
-        channels: [...prediction.channels, { frequencyKhz: 5371.5, voacapMhz: 5, relByHour: Array(24).fill(0.6), snrByHour: Array(24).fill(9), mufdayByHour: Array(24).fill(0.8) }],
+        channels: [...prediction.channels, { frequencyKhz: 5371.5, voacapMhz: 5, relByHour: Array(24).fill(0.6), snrByHour: Array(24).fill(9), mufdayFractionByHour: Array(24).fill(0.8) }],
       };
       render(<BandMatrix station={station} prediction={withFifty} predictionStatus="ok" utcHour={21} />);
       const row = screen.getByTestId('bandmatrix-row-60m');

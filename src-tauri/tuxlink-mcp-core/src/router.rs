@@ -4039,7 +4039,7 @@ mod tests {
             "rel vector is 24-long (UTC 0..23)"
         );
         assert_eq!(ch.snr_by_hour.len(), 24, "snr vector is 24-long");
-        assert_eq!(ch.mufday_by_hour.len(), 24, "mufday vector is 24-long");
+        assert_eq!(ch.mufday_fraction_by_hour.len(), 24, "mufday vector is 24-long");
         assert!(
             !h.state.guard.is_tainted(),
             "predict_path must NOT taint the session (offline computation)"

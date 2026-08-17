@@ -82,8 +82,11 @@ pub struct ChannelReliability {
     pub rel_by_hour: Vec<f64>,
     /// 24 SNR values (dB), index = UTC hour 0..23 (F7: lets U3 rank by SNR margin).
     pub snr_by_hour: Vec<f64>,
-    /// 24 MUFday values (0.0-1.0), index = UTC hour 0..23 (F7: MUF-gating context).
-    pub mufday_by_hour: Vec<f64>,
+    /// 24 MUFday FRACTIONS (0.0-1.0: the fraction of days the dial is below
+    /// the predicted MUF), index = UTC hour 0..23 (F7: MUF-gating context).
+    /// The name carries the unit — ledger row 7: a bare "mufday" vector was
+    /// read as MHz on the agent wire.
+    pub mufday_fraction_by_hour: Vec<f64>,
 }
 
 /// Full prediction result for one path.
@@ -138,14 +141,16 @@ mod tests {
                 voacap_mhz: 7.10,
                 rel_by_hour: vec![0.21; 24],
                 snr_by_hour: vec![65.0; 24],
-                mufday_by_hour: vec![0.69; 24],
+                mufday_fraction_by_hour: vec![0.69; 24],
             }],
         };
         let json = serde_json::to_string(&p).unwrap();
         assert!(json.contains("\"bearingDeg\":301.65"));
         assert!(json.contains("\"distanceKm\":215.2"));
         assert!(json.contains("\"relByHour\""));
-        assert!(json.contains("\"mufdayByHour\""));
+        // Ledger row 7: the wire name carries the unit — a bare "mufday"
+        // vector was read as MHz by a model and a judge.
+        assert!(json.contains("\"mufdayFractionByHour\""));
         assert!(json.contains("\"voacapMhz\":7.1"));
         // F1: the exact dial survives, not a rounded 7100.
         assert!(json.contains("\"frequencyKhz\":7103.0"));

@@ -10,7 +10,7 @@ describe('predictPath', () => {
   it('invokes propagation_predict_path with camelCase args and returns the prediction', async () => {
     const resp: PathPrediction = {
       bearingDeg: 318, distanceKm: 77, ssn: 118, year: 2026, month: 6,
-      channels: [{ frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.8), snrByHour: Array(24).fill(12), mufdayByHour: Array(24).fill(0.9) }],
+      channels: [{ frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.8), snrByHour: Array(24).fill(12), mufdayFractionByHour: Array(24).fill(0.9) }],
     };
     vi.mocked(invoke).mockResolvedValue(resp as unknown as never);
     const got = await predictPath('DM43bp', 'DM34oa', [7103, 14103]);

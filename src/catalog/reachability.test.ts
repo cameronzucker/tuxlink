@@ -42,9 +42,9 @@ describe('bestBandNow', () => {
     year: 2026,
     month: 6,
     channels: [
-      { frequencyKhz: 3590, voacapMhz: 4, relByHour: hours(0.74), snrByHour: hours(10), mufdayByHour: hours(0.9) },
-      { frequencyKhz: 7103, voacapMhz: 7, relByHour: hours(0.86), snrByHour: hours(15), mufdayByHour: hours(1) },
-      { frequencyKhz: 14103, voacapMhz: 14, relByHour: hours(0.19), snrByHour: hours(2), mufdayByHour: hours(0.3) },
+      { frequencyKhz: 3590, voacapMhz: 4, relByHour: hours(0.74), snrByHour: hours(10), mufdayFractionByHour: hours(0.9) },
+      { frequencyKhz: 7103, voacapMhz: 7, relByHour: hours(0.86), snrByHour: hours(15), mufdayFractionByHour: hours(1) },
+      { frequencyKhz: 14103, voacapMhz: 14, relByHour: hours(0.19), snrByHour: hours(2), mufdayFractionByHour: hours(0.3) },
     ],
   };
   it('returns the band with the highest reliability at the given UTC hour', () => {
@@ -52,7 +52,7 @@ describe('bestBandNow', () => {
   });
   it('returns null when no channel maps to a modelled HF band', () => {
     const vhfOnly: PathPrediction = { ...prediction, channels: [
-      { frequencyKhz: 145710, voacapMhz: 146, relByHour: hours(0.5), snrByHour: hours(5), mufdayByHour: hours(0.5) },
+      { frequencyKhz: 145710, voacapMhz: 146, relByHour: hours(0.5), snrByHour: hours(5), mufdayFractionByHour: hours(0.5) },
     ]};
     expect(bestBandNow(vhfOnly, 21)).toBeNull();
   });

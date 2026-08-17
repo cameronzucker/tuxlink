@@ -60,7 +60,7 @@ describe('groupChannelsByMode: includes vara-fm (Task 9)', () => {
 
 describe('channelReliability', () => {
   const prediction: PathPrediction = { bearingDeg: 0, distanceKm: 1, ssn: 118, year: 2026, month: 6,
-    channels: [{ frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.86), snrByHour: Array(24).fill(12), mufdayByHour: Array(24).fill(0.9) }] };
+    channels: [{ frequencyKhz: 7103, voacapMhz: 7, relByHour: Array(24).fill(0.86), snrByHour: Array(24).fill(12), mufdayFractionByHour: Array(24).fill(0.9) }] };
   it('returns rel + tier for an HF channel present in the prediction', () => {
     expect(channelReliability(channels[0], prediction, 21)).toEqual({ rel: 0.86, tier: 'good' });
   });
