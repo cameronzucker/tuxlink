@@ -42,10 +42,6 @@ evidence; this page carries the STATE). Rules:
    than row 4 did (raw String errors through the egress layer, not
    UiError), so this row is its own PR with a small typed-precondition
    design. Closes when: mapped to a precondition/invalid-state class.
-8. **find_stations hides its goal requirement** — `intent:"recommend"`
-   requires `goal`; the description doesn't say so; every first call
-   fails. Closes when: the description states it (corpus regen gate).
-   (Tripwire test pending.)
 10. **VARA reachability is a stale cache** — `vara_status.reachable` is a
     TTL-cached bare TCP probe that said true while `vara_open_session` got
     connection-refused in the same session. Closes when: cache invalidated
@@ -153,3 +149,13 @@ a stale doc). Re-baseline the A/B on the real-gating class
   frequency". Rename landed in `path_prediction_serializes_camel_case` as
   the row predicted. Tool descriptions untouched — the corpus regen gate
   stays with row 8.
+- 8 — find_stations hides its goal requirement — closed 2026-08-16, row-8
+  PR #1361 (umbrella tuxlink-4280b): the description now states up front that
+  `intent:"recommend"` REQUIRES `goal`, with the same concrete example
+  `intent_help` teaches on failure. New regression test
+  `find_stations_description_discloses_goal_requirement_for_recommend`
+  pins the disclosure (the row's pending tripwire lands as this ordinary
+  coverage). Corpus regenerated on R2 per the gate — one row changed.
+  ADR 0030 note: the tuxlink-tools threshold entry was calibrated against
+  the prior corpus content; recalibration is recorded on tuxlink-4280b as
+  owed at classifier wiring time (the classifier is not live yet).
