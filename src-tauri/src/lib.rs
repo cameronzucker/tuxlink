@@ -1723,6 +1723,11 @@ pub fn run() {
         // same instance. Starts Stopped with no token (mint via the RADIO-1
         // modal flow).
         .manage(std::sync::Arc::new(crate::modem_status::ModemSession::new()))
+        // Ledger row 2 (tuxlink-wovan): shared last-B2f-session memory for the
+        // modem observation surface.
+        .manage(std::sync::Arc::new(
+            crate::modem_status::LastB2fSessionStore::default(),
+        ))
         // tuxlink-dfmf: VARA session state — holds the TCP transport handle
         // + a status snapshot. Mutex-protected so concurrent UI commands
         // (start/stop/status) serialize on the transport handle. Phase 2

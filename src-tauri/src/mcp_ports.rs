@@ -44,7 +44,8 @@ use tuxlink_mcp_core::ports::{
     EvidenceParamsDto, FindingDto, ValidateResultDto,
     FindingSeverityDto, FolderDto,
     Ft8AudioDeviceDto, Ft8HeardStationDto, Ft8Port, Ft8StatusDto, GatewayAntennaDto, GatewayDto,
-    GribRequestDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto, ModemStatusDto,
+    GribRequestDto, LastSessionSummaryDto, LogLineDto, LogPort, MailboxPort, MessageMetaDto,
+    ModemStatusDto, SELECTED_CONNECTION_NOTE,
     OutboxReadPort, OutputSpecDto, PacketConfigDto, PacketWriteDto, ParamSpecDto, ParsedMessageDto, PathPredictionDto,
     PeerChannelDto, PeerDto, PeerListDto, PlatformInfoDto, PortError, PositionStatusDto,
     PredictRequestDto, PredictionPort, PrinterDto, ProvisionPort, QsyCandidateDto, RigConfigDto,
@@ -324,6 +325,9 @@ pub(crate) fn derive_modem_status(
         running,
         selected,
         conflict,
+        // Attached by the trait impl (the app-state seam owns the store);
+        // pure derivation stays store-free so its tests need no AppHandle.
+        last_session: None,
     }
 }
 
@@ -435,9 +439,25 @@ impl StatusPort for MonolithStatusPort {
             .map(|s| SelectedConnectionDto {
                 session_type: s.session_type,
                 protocol: s.protocol,
+                // Ledger row 2: the caveat rides the wire (the zqo run
+                // watched a sticky selected read as "live").
+                note: SELECTED_CONNECTION_NOTE.to_string(),
             });
-        Ok(gather_modem_status(&modem, &vara, selected))
+        let mut dto = gather_modem_status(&modem, &vara, selected);
         // (`&modem`/`&vara` deref-coerce State<Arc<T>> → &T.)
+        // Ledger row 2: attach the last-session memory. Redaction happens
+        // HERE — the store keeps raw seam text, the wire never does.
+        let store = self
+            .app
+            .state::<Arc<crate::modem_status::LastB2fSessionStore>>();
+        dto.last_session = store.snapshot().map(|s| LastSessionSummaryDto {
+            transport: s.transport,
+            target: s.target,
+            outcome: if s.ok { "completed" } else { "failed" }.to_string(),
+            detail: s.detail.map(redact_err),
+            ended_at_ms: s.ended_at_ms,
+        });
+        Ok(dto)
     }
 
     async fn vara_status(&self) -> Result<VaraStatusDto, PortError> {
@@ -6539,6 +6559,7 @@ mod tests {
             Some(SelectedConnectionDto {
                 session_type: "cms".into(),
                 protocol: protocol.into(),
+                note: String::new(),
             })
         }
 

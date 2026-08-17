@@ -342,9 +342,15 @@ pub struct ModemStatusDto {
     #[serde(default)]
     pub running: Vec<RunningModemDto>,
     /// The operator's persisted selected connection (their target), independent
-    /// of what is live. Reported separately from `kind`/`running`.
+    /// of what is live. Reported separately from `kind`/`running`; its `note`
+    /// field carries the same caveat on the wire (ledger row 2).
     #[serde(default)]
     pub selected: Option<SelectedConnectionDto>,
+    /// The most recent completed/failed transient B2F session, when one has
+    /// happened since app start (ledger row 2 — the observation surface's
+    /// memory; sessions are transient and `kind`/`state` return to idle).
+    #[serde(default)]
+    pub last_session: Option<LastSessionSummaryDto>,
     /// True when more than one modem is running — a state convention forbids but
     /// the code does not enforce; surfaced honestly so the agent can react.
     #[serde(default)]
@@ -360,11 +366,49 @@ pub struct RunningModemDto {
     pub state: String,
 }
 
+/// On-wire teaching for [`SelectedConnectionDto::note`] (ledger row 2): the
+/// zqo run watched a model read a sticky `selected: vara-hf` as "VARA is
+/// active" after an ARDOP session — the doc-comment semantics never cross the
+/// wire, so the wire carries them itself (the `with_edit_protocol` precedent:
+/// teach ON the wire, not only in tool descriptions).
+pub const SELECTED_CONNECTION_NOTE: &str =
+    "the operator's persisted target, NOT what is live - consult `running` for live sessions";
+
 /// The operator's selected connection, mirrored from `Config.active_connection`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SelectedConnectionDto {
     pub session_type: String,
     pub protocol: String,
+    /// Always [`SELECTED_CONNECTION_NOTE`] — self-description the reader
+    /// actually sees. `#[serde(default)]` so older payloads still parse.
+    #[serde(default)]
+    pub note: String,
+}
+
+/// Summary of the most recent COMPLETED or FAILED OUTBOUND dial session
+/// (ledger row 2): sessions are transient by design and `modem_get_status`
+/// honestly reports idle afterward — this field is the memory of what just
+/// happened, so an agent that ran a session (or is diagnosing one) does not
+/// have to infer the outcome from an idle status. Scope: outbound dials
+/// (agent- or operator-initiated) on every dial transport. Inbound
+/// LISTENER exchanges are deliberately NOT recorded here — they already
+/// surface through the contact observation records, and double-reporting
+/// them would let an inbound call overwrite the memory of the dial the
+/// agent just ran.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LastSessionSummaryDto {
+    /// `"ardop"` / `"vara-hf"` / `"vara-fm"` / `"packet"` — the transport
+    /// that ran the dial.
+    pub transport: String,
+    /// The dialed target (gateway callsign), when the seam knew it.
+    pub target: Option<String>,
+    /// `"completed"` (the B2F exchange returned Ok) or `"failed"`.
+    pub outcome: String,
+    /// The failure detail for `"failed"` outcomes (redacted seam text);
+    /// absent on success.
+    pub detail: Option<String>,
+    /// When the session ended (unix ms).
+    pub ended_at_ms: u64,
 }
 
 /// Live VARA modem status.
@@ -2507,6 +2551,44 @@ mod authoring_disposition_tests {
         assert_eq!(j["kiss_host"], "127.0.0.1");
         assert_eq!(j["kiss_port"], 8001);
         assert_eq!(j["baud"], 1200);
+    }
+
+    /// Ledger row 2 (tuxlink-wovan): the modem-status wire carries its own
+    /// memory and its own caveats — `last_session` discloses what just
+    /// happened after the transient session returns the surface to idle, and
+    /// `selected.note` states on the wire that `selected` is the persisted
+    /// target, not a live link (a model read the sticky value as "active").
+    #[test]
+    fn modem_status_wire_carries_last_session_and_selected_note() {
+        let dto = ModemStatusDto {
+            kind: "idle".into(),
+            connected: false,
+            state: "idle".into(),
+            running: vec![],
+            selected: Some(SelectedConnectionDto {
+                session_type: "radio".into(),
+                protocol: "vara-hf".into(),
+                note: SELECTED_CONNECTION_NOTE.to_string(),
+            }),
+            conflict: false,
+            last_session: Some(LastSessionSummaryDto {
+                transport: "ardop".into(),
+                target: Some("W6XYZ".into()),
+                outcome: "completed".into(),
+                detail: None,
+                ended_at_ms: 1_755_400_000_000,
+            }),
+        };
+        let j = serde_json::to_value(&dto).unwrap();
+        assert_eq!(j["last_session"]["transport"], "ardop");
+        assert_eq!(j["last_session"]["outcome"], "completed");
+        assert_eq!(j["last_session"]["target"], "W6XYZ");
+        assert!(j["last_session"]["detail"].is_null());
+        // The note must actually teach: name the live-vs-persisted split and
+        // point at `running`.
+        let note = j["selected"]["note"].as_str().unwrap();
+        assert!(note.contains("NOT what is live"), "note teaches: {note}");
+        assert!(note.contains("running"), "note points at running: {note}");
     }
 
     #[test]
