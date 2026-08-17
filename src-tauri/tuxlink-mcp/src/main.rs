@@ -145,17 +145,28 @@ mod tests {
     use tokio::net::UnixListener;
 
     fn unique_sock_path() -> std::path::PathBuf {
+        // Structural uniqueness via a per-process counter — the previous
+        // clock-only nonce collided on a coarse-clock arm64 CI runner (two
+        // tests read the same timestamp; the first test's socket FILE
+        // lingers after close, so the second bind failed AddrInUse; run
+        // 31995019336). The counter makes intra-process paths unique by
+        // construction; the timestamp stays for cross-run readability.
+        static SOCK_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let mut p = std::env::temp_dir();
         let nonce = format!(
-            "tuxlink-mcp-test-{}-{}.sock",
+            "tuxlink-mcp-test-{}-{}-{}.sock",
             process::id(),
-            // Nanosecond clock for intra-process uniqueness across tests.
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())
-                .unwrap_or(0)
+                .unwrap_or(0),
+            SOCK_SEQ.fetch_add(1, std::sync::atomic::Ordering::SeqCst),
         );
         p.push(nonce);
+        // Belt-and-suspenders for a recycled pid meeting a leftover file
+        // from a crashed prior run: a UDS bind fails AddrInUse on an
+        // existing path even when nothing listens.
+        let _ = std::fs::remove_file(&p);
         p
     }
 
