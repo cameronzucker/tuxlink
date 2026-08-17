@@ -21,17 +21,18 @@ flowchart TD
     C -->|Yes| Packet["Use Packet"]
     C -->|No| D["Try Packet anyway<br/>or fall back to HF"]
     B -->|No| E["Do you have VARA<br/>installed + working?"]
-    E -->|Yes| F["Are conditions clean?<br/>(high SNR,<br/>clean waterfall)"]
+    E -->|Yes| F["Is your VARA tier<br/>tested for this RMS?"]
     F -->|Yes| VARA["Use VARA HF"]
-    F -->|No| G["Is your VARA tier<br/>tested for this RMS?"]
-    G -->|Yes| VARA
-    G -->|No| ARDOP["Use ARDOP<br/>(more forgiving fallback)"]
+    F -->|No| ARDOP["Use ARDOP<br/>(the known-good fallback)"]
     E -->|No| ARDOP
 ```
 
 Plain English: Telnet if internet works and you want internet. Packet for
-short local VHF traffic. VARA HF if conditions are good and you have it
-running. ARDOP for everything else on HF.
+short local VHF traffic. VARA HF whenever you have it installed and
+working — it is faster on a clean channel and generally more robust at
+low SNR (see the [VARA deep dive](16-vara-hf-deep-dive.md)). ARDOP when
+VARA is not an option: not installed, no x86-64/Wine, an untested VARA
+tier on the target RMS, or closed-source is a dealbreaker.
 
 ## Input axis 1: band conditions
 
@@ -42,8 +43,8 @@ the season, the band — drives the call.
 | Conditions | Implication |
 |---|---|
 | Clean band, high SNR, gateway 1000 km away | VARA wins on throughput |
-| Marginal band, deep fades, low SNR | ARDOP's narrow modes outperform VARA's narrow modes at the very low end |
-| Spotty mobile / portable operation | ARDOP's adaptive bandwidth helps; VARA also adapts but is less forgiving on rapid changes |
+| Marginal band, deep fades, low SNR | VARA tends to hold the edge at low SNR too (see the [ARDOP deep dive](15-ardop-deep-dive.md)'s comparison table); ARDOP is the fallback when VARA is unavailable or its tier is unproven on the target RMS |
+| Spotty mobile / portable operation | Both modes adapt bandwidth as conditions change; expect renegotiations and slower effective throughput under rapid QSB |
 | Local VHF | Packet wins (FM is robust against weak signals) |
 
 ## Input axis 2: message size
@@ -116,7 +117,7 @@ or **ARDOP** for HF reach.
 | Fastest send right now, conditions don't matter | Telnet |
 | Local emcomm net, small messages | Packet |
 | Long-distance HF, you have VARA + clean conditions | VARA HF |
-| Long-distance HF, marginal conditions | ARDOP |
+| Long-distance HF, marginal conditions | VARA HF (ARDOP if VARA is unavailable or its tier is unproven on this RMS) |
 | You don't know what's working today | Catalog request via Telnet to fresh the list, then ARDOP at 500 Hz to a regional RMS |
 | All license tiers on this radio | Packet over VHF FM (Technician-accessible) |
 | Closed-source modem is a no-go | ARDOP (the open answer) |
