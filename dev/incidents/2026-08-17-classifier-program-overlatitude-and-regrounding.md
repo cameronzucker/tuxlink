@@ -204,11 +204,22 @@ BRF structure — a literal spec/plan pair — to fall back on is what makes
 the falling-apart "difficult or impossible to recover, since it requires
 full re-grounding against… the whole repo, basically."
 
-That is exactly what the record shows. Inside each session, the loop was
-sound: measured, adversarially reviewed, CI-gated. But the program's
-state crossed a dozen compaction/handoff boundaries as **session notes —
-a lossy compression written by the outgoing context for the incoming
-one**. Each incoming session inherited notes as if they were
+That is exactly what the record shows — with one correction the
+adversarial fact-check of this document forced, and the record is more
+honest for it: inside each session, execution was *disciplined* —
+measured, adversarially reviewed, CI-gated — but disciplined is not
+sound. The bench fixture's divergences from production were built and
+trusted **inside those same windows**, and every one was found
+reactively (the retraction header in FINDINGS-THREEWAY; FLOOR-AUTOPSY's
+conclusion that the model's true floor "cannot be stated from this
+data"). So the episode carries two distinct failures, not one:
+**instrument validity failed in-window** — the loop's own gates never
+systematically checked the fixture against production — and **state
+fidelity failed across windows**. The program's state crossed a dozen
+compaction/handoff boundaries as **session notes — a lossy compression
+written by the outgoing context for the incoming one** — and those
+crossings then propagated the invalidated conclusions as if they still
+stood. Each incoming session inherited notes as if they were
 authorization; the evidence base degraded (the retraction) faster than
 the notes describing it did; and the decision briefs grew less readable
 exactly as the decisions grew more consequential, because each
@@ -220,6 +231,13 @@ document IS the full re-grounding against the whole repo that the
 missing spec would have made unnecessary.
 
 ## The structure going forward (operator resolution, 2026-08-16)
+
+Provenance: the operator delivered this ruling, and the context-boundary
+diagnosis above, in the 2026-08-16/17 session (spruce-birch-dune) —
+**this document is the primary record of both**, per the same
+verbatim-intent convention the handoffs and bd design records use; a
+queryable `bd remember` entry mirrors it for retrieval. No earlier
+tracked artifact carries it, which is correct: it was ruled tonight.
 
 Verbatim intent: *"I gave you, the very capable agent, too much latitude
 while we had good early results with the recursive test → iterate → test
