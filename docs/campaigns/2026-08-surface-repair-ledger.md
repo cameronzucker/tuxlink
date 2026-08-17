@@ -22,20 +22,9 @@ evidence; this page carries the STATE). Rules:
 
 ## Fix now — orthogonal to the refactor
 
-2. **Modem status is amnesiac (fork SETTLED 2026-08-14, operator-approved
-   comparison test)** — the retained zqo fixture teardown reports settled
-   it without a new run: the ARDOP gateway logged a real completed
-   secure-login B2F session (one message moved), so the action tools were
-   TRUTHFUL; sessions are transient and `modem_get_status` honestly
-   reports idle afterward while disclosing nothing about what just
-   happened (and `selected` misleads by sticking on vara-hf). VARA half:
-   no false-success proven (open ≠ dial; the B2F attempts were
-   taint-denied) — the open-ok vs status-closed contradiction is app-layer
-   only. Fix: a last-session summary on the observation surface + the
-   `selected` affordance + VARA open/status coherence unit tests (which
-   also answer the remaining open-ok question). Caveat carried: whether a
-   bare `ardop_connect` ok leaves a gateway-visible link is pinned by
-   those tests, not yet by evidence. Closes when: that fix merges.
+*(empty — every fix-now row is closed; see Closed below. The campaign's
+mechanical phase is COMPLETE as of 2026-08-16/17.)*
+
 ## Written off — absorbed by the compiler (DO NOT fix; do not re-file)
 
 11. **Branch/goto wiring hazards** (inverted-arm landmine, fall-through,
@@ -168,3 +157,17 @@ a stale doc). Re-baseline the A/B on the real-gating class
   a probe generation guard keeps a slow probe from overwriting a newer
   open outcome. Success half proven through the REAL open seam (the
   readiness gate fails open, so bare listeners drive a genuine Ok).
+- 2 — modem status is amnesiac — closed 2026-08-17, row-2 PR #1362
+  (bd tuxlink-wovan): `modem_get_status.last_session` remembers the most
+  recent OUTBOUND dial outcome (ARDOP + VARA + packet completion
+  chokepoints, panicked-task path included; inbound listener exchanges
+  deliberately excluded — they surface via contact observations, and
+  recording them would let an inbound call overwrite the memory of the
+  dial the agent just ran). `selected.note` carries the
+  persisted-target-not-live caveat ON the wire (with_edit_protocol
+  precedent; corpus-neutral, no description change). VARA open/status
+  coherence test pins open-ok ⇒ status Open ⇒ stop ⇒ Closed and records
+  the settled open ≠ dial semantics — the app-layer answer to the row's
+  carried caveat. The Elmer battery harness manages the new store (the
+  state()-before-manage() panic class its comments already warn about).
+  THE LAST FIX-NOW ROW: the campaign's mechanical phase is complete.
