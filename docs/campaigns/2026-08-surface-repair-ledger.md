@@ -36,12 +36,6 @@ evidence; this page carries the STATE). Rules:
    also answer the remaining open-ok question). Caveat carried: whether a
    bare `ardop_connect` ok leaves a gateway-visible link is pinned by
    those tests, not yet by evidence. Closes when: that fix merges.
-5. **Precondition failures wear the internal-error code** — "VARA session
-   not open", "audio devices not configured", "rig I/O refused" all
-   surface as `-32603 internal error`. These cross a DIFFERENT boundary
-   than row 4 did (raw String errors through the egress layer, not
-   UiError), so this row is its own PR with a small typed-precondition
-   design. Closes when: mapped to a precondition/invalid-state class.
 8. **find_stations hides its goal requirement** — `intent:"recommend"`
    requires `goal`; the description doesn't say so; every first call
    fails. Closes when: the description states it (corpus regen gate).
@@ -153,3 +147,14 @@ a stale doc). Re-baseline the A/B on the real-gating class
   frequency". Rename landed in `path_prediction_serializes_camel_case` as
   the row predicted. Tool descriptions untouched — the corpus regen gate
   stays with row 8.
+- 5 — precondition failures wear the internal-error code — closed
+  2026-08-16, row-5 PR #1359 (umbrella tuxlink-4280b): new
+  `EgressPortError::Precondition` ("precondition not met (your call was
+  fine; fix the named state, then retry): <seam detail>") with a
+  marker classifier at the egress seams; UiError-typed seams classify
+  NotConfigured/Unavailable directly while Transport marker-gates (a
+  blanket promotion would mislabel real network faults — Codex round).
+  Carrier deliberately stays internal_error per the write-tier
+  Unavailable anti-guess-loop rationale; the class lives in the message
+  the agent reads. Classifier inventory + router wire shape pinned by
+  tests against the real seam strings.
