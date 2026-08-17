@@ -4,6 +4,33 @@ SAME SESSION CONTINUES after this anchor: keep the moniker
 **spruce-birch-dune**, do not re-pick. This is a mid-session compaction
 anchor (operator-directed), not a session end.
 
+## FINAL AMENDMENT (pre-merge; supersedes the live-thread lists below)
+
+Everything below this block resolved before the operator ran compaction:
+
+- **The campaign is fully merged and closed**: #1362 landed, tuxlink-wovan
+  closed, wovan worktree disposed (transcript preserved), the ledger's
+  Fix-now section is empty on main.
+- **Bonus find: a latent CI flake on main, fixed and merged as PR #1364.**
+  This anchor's own docs-only run flaked red on
+  `tuxlink_mcp tests::pump_round_trips_through_socket_echo` (AddrInUse):
+  the test helper's "unique" UDS paths rested on a clock read alone; a
+  coarse-clock arm64 runner gave two tests the same timestamp and the
+  first test's lingering socket FILE killed the second bind. Fix: a
+  per-process atomic counter in the nonce + unlink-before-return. Codex
+  round: clean. The docs-only provenance is what proved it unrelated to
+  any diff.
+- **This anchor merged with the fix back-merged in**, its host worktree
+  (`bd-tuxlink-efk3k-classifier-arch`) re-parked detached on origin/main,
+  its branch deleted.
+- **NO live threads remain.** Post-compaction there is nothing in flight:
+  no open PRs from this session, no undisposed worktrees, no running
+  tasks on R2. The next work is whatever the operator directs —
+  Weekend Epic stage 4 (classifier wiring; GATED on the threshold-recal
+  debt) and stage 5 (content triage) are the queued defaults; stage 6
+  (IR spike) is operator-gated. The operator queue and bench relay
+  (ledger rows 16-21) remain his.
+
 ## Headline state
 
 **AMENDED before this anchor's own merge: #1362 MERGED on green (head
