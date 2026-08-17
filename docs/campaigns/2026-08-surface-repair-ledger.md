@@ -128,7 +128,7 @@ a stale doc). Re-baseline the A/B on the real-gating class
   advisories, completion sentence stops calling it unrepairable); new
   classify test pins the membership.
 - 6 — zero-sentinels read as absence — closed 2026-08-16, wire-shape batch
-  PR (umbrella tuxlink-4280b): mcp-core `PacketConfigDto` host/port/baud
+  PR #1357 (umbrella tuxlink-4280b): mcp-core `PacketConfigDto` host/port/baud
   are `Option`, unset passes through as explicit null from the monolith DTO
   (the sentinels were manufactured at the mapping); keys stay present so
   the config-read field inventory is stable. New regression test
@@ -136,7 +136,7 @@ a stale doc). Re-baseline the A/B on the real-gating class
   shape; the routines `data.read packet_config` byte-identical test now
   carries a null `baud` through the whole path.
 - 7 — unlabeled fraction on the propagation wire — closed 2026-08-16, same
-  PR: `mufday_by_hour`/`mufdayByHour` renamed to
+  PR (#1357): `mufday_by_hour`/`mufdayByHour` renamed to
   `mufday_fraction_by_hour`/`mufdayFractionByHour` on BOTH wires (mcp-core
   DTO and the camelCase UI shape) so the name carries the unit; doc
   comments state "fraction of days below the predicted MUF, not a
