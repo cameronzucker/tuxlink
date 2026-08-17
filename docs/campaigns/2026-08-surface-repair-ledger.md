@@ -36,11 +36,6 @@ evidence; this page carries the STATE). Rules:
    also answer the remaining open-ok question). Caveat carried: whether a
    bare `ardop_connect` ok leaves a gateway-visible link is pinned by
    those tests, not yet by evidence. Closes when: that fix merges.
-10. **VARA reachability is a stale cache** — `vara_status.reachable` is a
-    TTL-cached bare TCP probe that said true while `vara_open_session` got
-    connection-refused in the same session. Closes when: cache invalidated
-    on open-failure (or probe made live for status).
-
 ## Written off — absorbed by the compiler (DO NOT fix; do not re-file)
 
 11. **Branch/goto wiring hazards** (inverted-arm landmine, fall-through,
@@ -164,3 +159,12 @@ a stale doc). Re-baseline the A/B on the real-gating class
   Unavailable anti-guess-loop rationale; the class lives in the message
   the agent reads. Classifier inventory + router wire shape pinned by
   tests against the real seam strings.
+- 10 — VARA reachability is a stale cache — closed 2026-08-16, row-10 PR
+  #1360 (umbrella tuxlink-4280b): both `vara_open_session` connect
+  outcomes overwrite the reachability TTL cache — a real socket result
+  outranks any bare probe. Codex-round hardening: only a CMD-stage
+  connect failure caches false (new `connect_staged` tags the stage; a
+  data-port lag on a WINE restart no longer misreports the cmd port), and
+  a probe generation guard keeps a slow probe from overwriting a newer
+  open outcome. Success half proven through the REAL open seam (the
+  readiness gate fails open, so bare listeners drive a genuine Ok).
