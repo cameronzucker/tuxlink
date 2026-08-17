@@ -2056,7 +2056,10 @@ pub async fn modem_ardop_b2f_exchange(
         finish_b2f_exchange(&session, transport, close_gen_snapshot, outcome)
     })
     .await
-    .map_err(|e| format!("b2f task panicked: {e}"))?;
+    // Ledger row 2 (Codex round): a panicked blocking task is STILL a
+    // session the agent watched end — fold the JoinError into the failed
+    // outcome instead of `?`-returning past the record block below.
+    .unwrap_or_else(|e| Err(format!("b2f task panicked: {e}")));
     // tuxlink-nnjz: surface a send/receive failure in the session log instead of
     // an inline panel element. Err still propagates (the panel clears its
     // exchanging spinner + records the gateway `failed` attempt). (`inspect_err`

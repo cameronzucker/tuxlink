@@ -385,15 +385,20 @@ pub struct SelectedConnectionDto {
     pub note: String,
 }
 
-/// Summary of the most recent COMPLETED or FAILED transient B2F session
+/// Summary of the most recent COMPLETED or FAILED OUTBOUND dial session
 /// (ledger row 2): sessions are transient by design and `modem_get_status`
 /// honestly reports idle afterward — this field is the memory of what just
 /// happened, so an agent that ran a session (or is diagnosing one) does not
-/// have to infer the outcome from an idle status.
+/// have to infer the outcome from an idle status. Scope: outbound dials
+/// (agent- or operator-initiated) on every dial transport. Inbound
+/// LISTENER exchanges are deliberately NOT recorded here — they already
+/// surface through the contact observation records, and double-reporting
+/// them would let an inbound call overwrite the memory of the dial the
+/// agent just ran.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LastSessionSummaryDto {
     /// `"ardop"` / `"vara-hf"` / `"vara-fm"` / `"packet"` — the transport
-    /// that ran the session.
+    /// that ran the dial.
     pub transport: String,
     /// The dialed target (gateway callsign), when the seam knew it.
     pub target: Option<String>,

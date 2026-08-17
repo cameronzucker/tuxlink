@@ -5067,7 +5067,7 @@ pub async fn packet_connect(
         LogLevel::Info,
         format!("Connecting to {call} over packet…"),
     );
-    match backend.connect(transport, None).await {
+    let result: Result<(), UiError> = match backend.connect(transport, None).await {
         Ok(_session) => {
             emit_session_line(
                 &app,
@@ -5095,7 +5095,20 @@ pub async fn packet_connect(
             );
             Err(e.into())
         }
-    }
+    };
+    // Ledger row 2 (tuxlink-wovan): packet dials are on the agent egress
+    // surface too — record the outcome (both branches) so
+    // `modem_get_status.last_session` covers every outbound dial transport
+    // (Codex round on this PR).
+    let store = app.state::<std::sync::Arc<crate::modem_status::LastB2fSessionStore>>();
+    store.record(crate::modem_status::LastB2fSession {
+        transport: "packet".to_string(),
+        target: Some(call.clone()),
+        ok: result.is_ok(),
+        detail: result.as_ref().err().map(|e| format!("{e:?}")),
+        ended_at_ms: crate::modem_status::unix_now_ms(),
+    });
+    result
 }
 
 /// Arm the station to answer an inbound packet call (Listen role). Builds the

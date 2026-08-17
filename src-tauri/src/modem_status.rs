@@ -297,14 +297,18 @@ impl ModemStatus {
 /// token + the live `ModemTransport` handle (when a connect has succeeded).
 /// `Arc<ModemSession>` is stored in Tauri state and shared between command
 /// handlers and the broadcaster.
-/// Ledger row 2 (tuxlink-wovan): the most recent completed/failed transient
-/// B2F session. Sessions are transient by design — `reset_to_stopped` (ARDOP)
-/// / `finish_vara_b2f_exchange` (VARA) return the status surface to idle
-/// after every exchange — so this store is the observation surface's memory
-/// of what just happened. Written at the two b2f-exchange outcome points;
-/// read by the MCP `modem_get_status` gather (and, byte-identically, the
-/// routines `data.read modem_status` source, which delegates to the same
-/// seam). One app-managed instance shared by both modems: "most recent" is
+/// Ledger row 2 (tuxlink-wovan): the most recent completed/failed OUTBOUND
+/// dial session. Sessions are transient by design — `reset_to_stopped`
+/// (ARDOP) / `finish_vara_b2f_exchange` (VARA) return the status surface to
+/// idle after every exchange — so this store is the observation surface's
+/// memory of what just happened. Written at the outbound dial completion
+/// points (ARDOP + VARA b2f exchanges, packet_connect); inbound LISTENER
+/// exchanges are deliberately excluded (they surface via contact
+/// observations, and recording them here would let an inbound call
+/// overwrite the memory of the dial the agent just ran). Read by the MCP
+/// `modem_get_status` gather (and, byte-identically, the routines
+/// `data.read modem_status` source, which delegates to the same seam). One
+/// app-managed instance shared across transports: "most recent" is
 /// deliberately cross-modem.
 #[derive(Debug, Default)]
 pub struct LastB2fSessionStore(Mutex<Option<LastB2fSession>>);
