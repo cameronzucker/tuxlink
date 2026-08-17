@@ -164,8 +164,8 @@ is the right tool for short messages, fast turnaround, and local networks.
 |---|---|
 | Long-range emcomm (>100 miles) | ARDOP or VARA HF |
 | Large attachments | VARA HF (or skip RF entirely with Telnet) |
-| Spotty conditions, no nearby VHF gateway | ARDOP on HF |
-| Operating from a mountain or backpack with no VHF coverage | ARDOP (more robust at low SNR) |
+| Spotty conditions, no nearby VHF gateway | VARA HF if installed, else ARDOP |
+| Operating from a mountain or backpack with no VHF coverage | HF data — VARA HF if installed (generally more robust at low SNR; see [Choosing the right mode](17-choosing-the-right-mode.md)), else ARDOP |
 
 ## Dire Wolf gotchas
 

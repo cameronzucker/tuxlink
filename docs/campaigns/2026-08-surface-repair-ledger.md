@@ -133,11 +133,15 @@ a stale doc). Re-baseline the A/B on the real-gating class
   shape; the routines `data.read packet_config` byte-identical test now
   carries a null `baud` through the whole path.
 - 3 — mode-advice docs contradict each other — closed 2026-08-16, row-3 PR
-  #1358 (umbrella tuxlink-4280b): doc 17 reconciled to docs 15/16 (VARA generally
-  more robust at low SNR; ham consensus + the bench oracle agree). Four
-  spots carried the wrong claim, not two: the conditions-table row and the
-  quick-lookup row the evidence names (P3), plus the decision-tree's
-  "more forgiving fallback" label and the plain-English summary. ARDOP's
+  #1358 (umbrella tuxlink-4280b): docs 17 AND 14 reconciled to docs 15/16
+  (VARA generally more robust at low SNR; ham consensus + the bench oracle
+  agree). Five spots carried the explicit claim, not two: doc 17's
+  conditions-table row and quick-lookup row (the P3 pair), its
+  decision-tree "more forgiving fallback" label and plain-English summary,
+  and doc 14's backpack row (Codex round). Two siblings also fixed: doc
+  14's implicit "spotty → ARDOP" row, and doc 17's UNSOURCED
+  ARDOP-more-forgiving-on-rapid-QSB comparative, softened to
+  non-comparative (neither direction is sourced in docs 15/16). ARDOP's
   remaining recommendation grounds are the true ones: not installed, no
   x86-64/Wine, untested VARA tier on the target RMS, open-source
   requirement.

@@ -44,7 +44,7 @@ the season, the band — drives the call.
 |---|---|
 | Clean band, high SNR, gateway 1000 km away | VARA wins on throughput |
 | Marginal band, deep fades, low SNR | VARA tends to hold the edge at low SNR too (see the [ARDOP deep dive](15-ardop-deep-dive.md)'s comparison table); ARDOP is the fallback when VARA is unavailable or its tier is unproven on the target RMS |
-| Spotty mobile / portable operation | ARDOP's adaptive bandwidth helps; VARA also adapts but is less forgiving on rapid changes |
+| Spotty mobile / portable operation | Both modes adapt bandwidth as conditions change; expect renegotiations and slower effective throughput under rapid QSB |
 | Local VHF | Packet wins (FM is robust against weak signals) |
 
 ## Input axis 2: message size
