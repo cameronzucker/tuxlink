@@ -150,7 +150,7 @@ a stale doc). Re-baseline the A/B on the real-gating class
   the row predicted. Tool descriptions untouched — the corpus regen gate
   stays with row 8.
 - 8 — find_stations hides its goal requirement — closed 2026-08-16, row-8
-  PR (umbrella tuxlink-4280b): the description now states up front that
+  PR #1361 (umbrella tuxlink-4280b): the description now states up front that
   `intent:"recommend"` REQUIRES `goal`, with the same concrete example
   `intent_help` teaches on failure. New regression test
   `find_stations_description_discloses_goal_requirement_for_recommend`
