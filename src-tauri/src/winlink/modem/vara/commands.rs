@@ -214,6 +214,13 @@ pub struct VaraSession {
     /// VARA's single-App acceptor. Deliberately OUTSIDE `inner` so the probe
     /// never has to take the session lock to read/refresh the cache.
     reachable_cache: Mutex<Option<(std::time::Instant, bool)>>,
+    /// Write-generation for [`Self::reachable_cache`] (ledger row 10, Codex
+    /// round): bumped by every cache write. A probe captures it BEFORE its
+    /// unlocked socket touch and commits only if unchanged — otherwise a
+    /// slow probe would overwrite a NEWER real open outcome with its older
+    /// observation under a fresh timestamp, recreating the exact stale-true
+    /// disagreement row 10 fixes.
+    reachable_gen: AtomicU64,
     /// The `RadioArbiter` `Interactive`-hold `seq` currently registered on
     /// behalf of THIS session's occupancy, if any (plan 2 Task 5c fix
     /// round — M1). Written by `vara_open_session` on a successful acquire;
@@ -336,6 +343,7 @@ impl VaraSession {
             transport_return_rx: Mutex::new(Some(return_rx)),
             close_generation: AtomicU64::new(0),
             reachable_cache: Mutex::new(None),
+            reachable_gen: AtomicU64::new(0),
             interactive_seq: Mutex::new(None),
         }
     }
@@ -386,11 +394,49 @@ impl VaraSession {
                 }
             }
         }
+        // Capture the write-generation BEFORE the unlocked socket touch so a
+        // real open outcome landing mid-probe wins over this older read.
+        let began_gen = self.reachable_gen.load(Ordering::SeqCst);
         let val = super::transport::cmd_port_reachable(host, cmd_port, timeout);
-        if let Ok(mut cache) = self.reachable_cache.lock() {
-            *cache = Some((std::time::Instant::now(), val));
+        if self.commit_probe_observation(began_gen, val) {
+            return Some(val);
+        }
+        // A newer authoritative write landed while this probe was on the
+        // socket — serve THAT instead of the probe's older observation.
+        if let Ok(cache) = self.reachable_cache.lock() {
+            if let Some((_, newer)) = *cache {
+                return Some(newer);
+            }
         }
         Some(val)
+    }
+
+    /// Ledger row 10: record a REAL socket outcome into the reachability
+    /// cache. The open path calls this on connect outcomes so a live
+    /// result overrides a ≤TTL-old bare probe — the zqo run watched
+    /// `vara_status.reachable` say true while `vara_open_session` got
+    /// connection-refused in the same session, because the failed open
+    /// left the stale probe value in place.
+    fn record_reachable_observation(&self, val: bool) {
+        if let Ok(mut cache) = self.reachable_cache.lock() {
+            *cache = Some((std::time::Instant::now(), val));
+            self.reachable_gen.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// Commit a probe's observation iff no newer write landed since
+    /// `began_gen` was captured (row 10, Codex round). Returns whether the
+    /// probe's value was written. Held to the same lock the writes use, so
+    /// the check-and-write is atomic against `record_reachable_observation`.
+    fn commit_probe_observation(&self, began_gen: u64, val: bool) -> bool {
+        if let Ok(mut cache) = self.reachable_cache.lock() {
+            if self.reachable_gen.load(Ordering::SeqCst) == began_gen {
+                *cache = Some((std::time::Instant::now(), val));
+                self.reachable_gen.fetch_add(1, Ordering::SeqCst);
+                return true;
+            }
+        }
+        false
     }
 
     /// tuxlink-iww9r: run `f` while HOLDING the session inner mutex, iff no
@@ -1844,9 +1890,14 @@ pub fn vara_open_session_inner(
     };
 
     let transport_cfg = build_transport_config(ui_cfg);
-    let mut transport = match VaraTransport::connect(transport_cfg) {
-        Ok(t) => t,
-        Err(e) => {
+    let mut transport = match VaraTransport::connect_staged(transport_cfg) {
+        Ok(t) => {
+            // Row 10: a real successful connect is fresher ground truth than
+            // any bare probe — refresh the reachability cache with it.
+            session.record_reachable_observation(true);
+            t
+        }
+        Err((stage, e)) => {
             // Record the error, surface to caller, leave transport=None so
             // the next start attempt can retry.
             guard.status = VaraStatus {
@@ -1860,6 +1911,16 @@ pub fn vara_open_session_inner(
                 active_intent: None,
                 active_transport_kind: None,
             };
+            // Row 10: a CMD-stage failure IS a cmd-port reachability
+            // observation — overwrite the TTL cache so a `vara_status` read
+            // in the same breath reports false instead of a ≤3s-stale
+            // probe's true. A DATA-stage failure is NOT: the cmd port had
+            // already accepted (WINE restarts lag the data port), and
+            // caching false there would violate the probe's cmd-port-only
+            // contract (Codex round).
+            if stage == super::transport::ConnectStage::Cmd {
+                session.record_reachable_observation(false);
+            }
             return Err(format!("TCP connect failed: {e}"));
         }
     };
@@ -3825,6 +3886,193 @@ mod tests {
             snap.active_transport_kind, None,
             "transport_kind must not leak on failed open"
         );
+    }
+
+    /// Ledger row 10 (CLOSED): a failed open OVERWRITES the reachability TTL
+    /// cache with false — `vara_status.reachable` must not keep reporting a
+    /// ≤3s-stale probe's true after `vara_open_session` just got
+    /// connection-refused in the same session.
+    #[test]
+    fn failed_open_overwrites_stale_reachable_cache() {
+        let session = Arc::new(VaraSession::new());
+        // Seed the cache as a fresh bare probe would have: reachable=true.
+        session.record_reachable_observation(true);
+
+        let ui_cfg = VaraUiConfig {
+            host: "127.0.0.1".into(),
+            cmd_port: 1, // root-only port: connect fails fast, no listener race
+            data_port: 2,
+            bandwidth_hz: None,
+        };
+        vara_open_session_inner(
+            &session,
+            &ui_cfg,
+            None,
+            SessionIntent::Cms,
+            TransportKind::VaraHf,
+        )
+        .unwrap_err();
+
+        // The probe must now serve the open's real outcome from the fresh
+        // cache entry. State is Error (not Open/Connecting), so the probe
+        // takes the cache path; the entry is fresh, so no socket is touched.
+        assert_eq!(
+            session.probe_reachable("127.0.0.1", 1, std::time::Duration::from_millis(50)),
+            Some(false),
+            "a failed open must invalidate the cached true"
+        );
+        let cached = session.reachable_cache.lock().unwrap();
+        assert!(
+            matches!(*cached, Some((_, false))),
+            "cache must hold the open's observation, got {cached:?}"
+        );
+    }
+
+    /// Row 10 symmetric half: the cache write from a real observation is
+    /// served by `probe_reachable` WITHOUT touching a socket. Nothing
+    /// listens at the probed port, so a socket touch would return false —
+    /// getting true proves the fresh cache entry short-circuited it.
+    #[test]
+    fn fresh_real_observation_short_circuits_the_probe() {
+        let session = Arc::new(VaraSession::new());
+        session.record_reachable_observation(true);
+        assert_eq!(
+            session.probe_reachable("127.0.0.1", 1, std::time::Duration::from_millis(50)),
+            Some(true),
+            "fresh cache entry must be served without a socket touch"
+        );
+    }
+
+    /// Row 10 (Codex round): a DATA-stage connect failure is NOT a cmd-port
+    /// observation — the cmd port had already accepted (the WINE-restart
+    /// data-lag case the probe's contract documents). The cache must keep
+    /// its prior value.
+    #[test]
+    fn data_stage_failure_does_not_cache_cmd_unreachable() {
+        use std::net::TcpListener;
+        use std::thread;
+        use std::time::Duration;
+
+        let cmd_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cmd_port = cmd_l.local_addr().unwrap().port();
+        let cmd_handle = thread::spawn(move || {
+            let (_c, _) = cmd_l.accept().unwrap();
+            thread::sleep(Duration::from_millis(500));
+        });
+
+        let session = Arc::new(VaraSession::new());
+        session.record_reachable_observation(true);
+
+        let ui_cfg = VaraUiConfig {
+            host: "127.0.0.1".into(),
+            cmd_port,
+            data_port: 1, // root-only port: the DATA stage fails
+            bandwidth_hz: None,
+        };
+        let err = vara_open_session_inner(
+            &session,
+            &ui_cfg,
+            None,
+            SessionIntent::Cms,
+            TransportKind::VaraHf,
+        )
+        .unwrap_err();
+        assert!(err.contains("TCP connect failed"), "got: {err}");
+
+        let cached = session.reachable_cache.lock().unwrap();
+        assert!(
+            matches!(*cached, Some((_, true))),
+            "a data-stage failure must NOT flip cmd reachability, got {cached:?}"
+        );
+        drop(cached);
+        cmd_handle.join().unwrap();
+    }
+
+    /// Row 10 (Codex round): a probe that began before a real open outcome
+    /// landed must NOT overwrite it — the generation guard rejects the
+    /// older observation, atomically against the writes.
+    #[test]
+    fn stale_probe_commit_loses_to_newer_open_outcome() {
+        let session = Arc::new(VaraSession::new());
+
+        // Probe captures the generation, then goes to the socket…
+        let began_gen = session.reachable_gen.load(std::sync::atomic::Ordering::SeqCst);
+        // …meanwhile a real open outcome lands (connection refused → false).
+        session.record_reachable_observation(false);
+        // The probe returns with its OLDER "true" and tries to commit.
+        assert!(
+            !session.commit_probe_observation(began_gen, true),
+            "a stale probe commit must be rejected"
+        );
+        let cached = session.reachable_cache.lock().unwrap();
+        assert!(
+            matches!(*cached, Some((_, false))),
+            "the open's newer outcome must survive, got {cached:?}"
+        );
+        drop(cached);
+
+        // And a probe with a CURRENT generation still commits.
+        let fresh_gen = session.reachable_gen.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(session.commit_probe_observation(fresh_gen, true));
+    }
+
+    /// Row 10, success half driven through the REAL open seam (Codex round:
+    /// a helper-only test stays green if the Ok-arm write is removed). The
+    /// readiness gate fails OPEN and VaraFm replaces it with the T_MIN
+    /// settle, so a bare accepting listener pair drives
+    /// `vara_open_session_inner` to a genuine Ok in ~600ms — no VARA
+    /// protocol needed. A seeded stale `false` must flip to `true` at the
+    /// connect.
+    #[test]
+    fn successful_open_overwrites_stale_unreachable_cache() {
+        use std::net::TcpListener;
+        use std::thread;
+        use std::time::Duration;
+
+        let cmd_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cmd_port = cmd_l.local_addr().unwrap().port();
+        let data_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let data_port = data_l.local_addr().unwrap().port();
+        // Acceptors hold their sockets long enough to outlive the open.
+        let cmd_handle = thread::spawn(move || {
+            let (_c, _) = cmd_l.accept().unwrap();
+            thread::sleep(Duration::from_secs(2));
+        });
+        let data_handle = thread::spawn(move || {
+            let (_c, _) = data_l.accept().unwrap();
+            thread::sleep(Duration::from_secs(2));
+        });
+
+        let session = Arc::new(VaraSession::new());
+        // Seed as a stale probe would have it: unreachable.
+        session.record_reachable_observation(false);
+
+        let ui_cfg = VaraUiConfig {
+            host: "127.0.0.1".into(),
+            cmd_port,
+            data_port,
+            bandwidth_hz: None,
+        };
+        vara_open_session_inner(
+            &session,
+            &ui_cfg,
+            None,
+            SessionIntent::Cms,
+            TransportKind::VaraFm,
+        )
+        .expect("open must succeed against accepting listeners (gate fails open)");
+
+        let cached = session.reachable_cache.lock().unwrap();
+        assert!(
+            matches!(*cached, Some((_, true))),
+            "a successful connect must overwrite the stale false, got {cached:?}"
+        );
+        drop(cached);
+
+        // Teardown so the acceptor threads join instead of leaking.
+        let _ = vara_stop_session_inner(&session);
+        cmd_handle.join().unwrap();
+        data_handle.join().unwrap();
     }
 
     #[test]

@@ -77,11 +77,29 @@ pub struct VaraTransport {
     data_stream: TcpStream,
 }
 
+/// Which stage of [`VaraTransport::connect_staged`] failed. `Cmd` failures
+/// are evidence about the cmd port (the reachability the probe caches);
+/// `Data` failures are not — the cmd port had already accepted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectStage {
+    Cmd,
+    Data,
+}
+
 impl VaraTransport {
     /// Open the cmd + data socket pair and return the transport. Does
     /// NOT issue any VARA commands — caller is responsible for the
     /// `MYCALL` + `BW` + `LISTEN` initialization sequence.
     pub fn connect(cfg: VaraConfig) -> io::Result<Self> {
+        Self::connect_staged(cfg).map_err(|(_, e)| e)
+    }
+
+    /// [`connect`](Self::connect) with the failing STAGE tagged. The open
+    /// path caches cmd-port reachability from real outcomes (ledger row
+    /// 10), and only a CMD-stage failure is evidence of cmd-port
+    /// unreachability — 8300 can accept while 8301 lags on a WINE restart
+    /// (see [`cmd_port_reachable`]'s contract).
+    pub fn connect_staged(cfg: VaraConfig) -> Result<Self, (ConnectStage, io::Error)> {
         tracing::info!(
             target: "tuxlink::winlink::modem::vara",
             host = %cfg.host,
@@ -90,33 +108,47 @@ impl VaraTransport {
             "VARA transport connecting",
         );
         let cmd_addr = (cfg.host.as_str(), cfg.cmd_port)
-            .to_socket_addrs()?
+            .to_socket_addrs()
+            .map_err(|e| (ConnectStage::Cmd, e))?
             .next()
             .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("no addresses for {}:{}", cfg.host, cfg.cmd_port),
+                (
+                    ConnectStage::Cmd,
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("no addresses for {}:{}", cfg.host, cfg.cmd_port),
+                    ),
                 )
             })?;
         let data_addr = (cfg.host.as_str(), cfg.data_port)
-            .to_socket_addrs()?
+            .to_socket_addrs()
+            .map_err(|e| (ConnectStage::Data, e))?
             .next()
             .ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("no addresses for {}:{}", cfg.host, cfg.data_port),
+                (
+                    ConnectStage::Data,
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("no addresses for {}:{}", cfg.host, cfg.data_port),
+                    ),
                 )
             })?;
 
-        let cmd_stream = TcpStream::connect_timeout(&cmd_addr, cfg.connect_timeout)?;
-        cmd_stream.set_read_timeout(cfg.read_timeout)?;
-        let cmd_writer = cmd_stream.try_clone()?;
+        let cmd_stream = TcpStream::connect_timeout(&cmd_addr, cfg.connect_timeout)
+            .map_err(|e| (ConnectStage::Cmd, e))?;
+        cmd_stream
+            .set_read_timeout(cfg.read_timeout)
+            .map_err(|e| (ConnectStage::Cmd, e))?;
+        let cmd_writer = cmd_stream.try_clone().map_err(|e| (ConnectStage::Cmd, e))?;
         let cmd_reader = LineReader::new(cmd_stream);
 
-        let data_stream = TcpStream::connect_timeout(&data_addr, cfg.connect_timeout)?;
+        let data_stream = TcpStream::connect_timeout(&data_addr, cfg.connect_timeout)
+            .map_err(|e| (ConnectStage::Data, e))?;
         // SO_RCVTIMEO lives on the socket, not the fd, so this also governs
         // every `try_clone` handed to the B2F exchange (writer + reader).
-        data_stream.set_read_timeout(cfg.data_read_timeout)?;
+        data_stream
+            .set_read_timeout(cfg.data_read_timeout)
+            .map_err(|e| (ConnectStage::Data, e))?;
 
         tracing::info!(
             target: "tuxlink::winlink::modem::vara",
