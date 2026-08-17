@@ -36,19 +36,6 @@ evidence; this page carries the STATE). Rules:
    also answer the remaining open-ok question). Caveat carried: whether a
    bare `ardop_connect` ok leaves a gateway-visible link is pinned by
    those tests, not yet by evidence. Closes when: that fix merges.
-3. **Mode-advice docs contradict each other** — user-guide doc 16 says
-   VARA is more robust at low SNR; doc 17 says ARDOP is, twice. Doc 16 is
-   right. Closes when: doc 17 reconciled.
-5. **Precondition failures wear the internal-error code** — "VARA session
-   not open", "audio devices not configured", "rig I/O refused" all
-   surface as `-32603 internal error`. These cross a DIFFERENT boundary
-   than row 4 did (raw String errors through the egress layer, not
-   UiError), so this row is its own PR with a small typed-precondition
-   design. Closes when: mapped to a precondition/invalid-state class.
-8. **find_stations hides its goal requirement** — `intent:"recommend"`
-   requires `goal`; the description doesn't say so; every first call
-   fails. Closes when: the description states it (corpus regen gate).
-   (Tripwire test pending.)
 10. **VARA reachability is a stale cache** — `vara_status.reachable` is a
     TTL-cached bare TCP probe that said true while `vara_open_session` got
     connection-refused in the same session. Closes when: cache invalidated
@@ -135,6 +122,19 @@ a stale doc). Re-baseline the A/B on the real-gating class
   `packet_config_unset_fields_serialize_as_null_not_sentinels` pins the
   shape; the routines `data.read packet_config` byte-identical test now
   carries a null `baud` through the whole path.
+- 3 — mode-advice docs contradict each other — closed 2026-08-16, row-3 PR
+  #1358 (umbrella tuxlink-4280b): docs 17 AND 14 reconciled to docs 15/16
+  (VARA generally more robust at low SNR; ham consensus + the bench oracle
+  agree). Five spots carried the explicit claim, not two: doc 17's
+  conditions-table row and quick-lookup row (the P3 pair), its
+  decision-tree "more forgiving fallback" label and plain-English summary,
+  and doc 14's backpack row (Codex round). Two siblings also fixed: doc
+  14's implicit "spotty → ARDOP" row, and doc 17's UNSOURCED
+  ARDOP-more-forgiving-on-rapid-QSB comparative, softened to
+  non-comparative (neither direction is sourced in docs 15/16). ARDOP's
+  remaining recommendation grounds are the true ones: not installed, no
+  x86-64/Wine, untested VARA tier on the target RMS, open-source
+  requirement.
 - 7 — unlabeled fraction on the propagation wire — closed 2026-08-16, same
   PR (#1357): `mufday_by_hour`/`mufdayByHour` renamed to
   `mufday_fraction_by_hour`/`mufdayFractionByHour` on BOTH wires (mcp-core
@@ -143,3 +143,24 @@ a stale doc). Re-baseline the A/B on the real-gating class
   frequency". Rename landed in `path_prediction_serializes_camel_case` as
   the row predicted. Tool descriptions untouched — the corpus regen gate
   stays with row 8.
+- 8 — find_stations hides its goal requirement — closed 2026-08-16, row-8
+  PR #1361 (umbrella tuxlink-4280b): the description now states up front that
+  `intent:"recommend"` REQUIRES `goal`, with the same concrete example
+  `intent_help` teaches on failure. New regression test
+  `find_stations_description_discloses_goal_requirement_for_recommend`
+  pins the disclosure (the row's pending tripwire lands as this ordinary
+  coverage). Corpus regenerated on R2 per the gate — one row changed.
+  ADR 0030 note: the tuxlink-tools threshold entry was calibrated against
+  the prior corpus content; recalibration is recorded on tuxlink-4280b as
+  owed at classifier wiring time (the classifier is not live yet).
+- 5 — precondition failures wear the internal-error code — closed
+  2026-08-16, row-5 PR #1359 (umbrella tuxlink-4280b): new
+  `EgressPortError::Precondition` ("precondition not met (your call was
+  fine; fix the named state, then retry): <seam detail>") with a
+  marker classifier at the egress seams; UiError-typed seams classify
+  NotConfigured/Unavailable directly while Transport marker-gates (a
+  blanket promotion would mislabel real network faults — Codex round).
+  Carrier deliberately stays internal_error per the write-tier
+  Unavailable anti-guess-loop rationale; the class lives in the message
+  the agent reads. Classifier inventory + router wire shape pinned by
+  tests against the real seam strings.

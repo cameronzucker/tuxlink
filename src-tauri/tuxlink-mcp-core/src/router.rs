@@ -62,6 +62,15 @@ fn egress_err(e: EgressPortError) -> ErrorData {
             ),
             None,
         ),
+        // The full Display line ("precondition not met (your call was fine;
+        // fix the named state, then retry): …"). Carried as internal_error
+        // for the same reason WritePortError::Unavailable is (see write_err):
+        // invalid_request teaches the agent to REWRITE a call that has
+        // nothing wrong with it (the tuxlink-0rc3h guess-loop). The class
+        // lives in the message, which is what the agent actually reads —
+        // ledger row 5's defect was the bare "internal error: <state>" that
+        // read as a product bug.
+        e @ EgressPortError::Precondition(_) => ErrorData::internal_error(e.to_string(), None),
         EgressPortError::Failed(reason) => ErrorData::internal_error(reason, None),
     }
 }
@@ -781,7 +790,7 @@ impl TuxlinkMcp {
 
     #[tool(
         name = "find_stations",
-        description = "Find Winlink RMS gateways by stating your INTENT (the tool selects and bounds the answer; it never dumps the whole catalog). Set `intent` to one of: `recommend` (which gateway should I connect to? - a ranked shortlist with one selected connection each), `explore` (narrow a broad space - returns facet counts + suggested filters, not rows, until the set is small), `lookup` (exact callsign(s)), `aggregate` (server-side counts by band/mode/distance/etc. over the whole matched set), or `export` (write the full set to a user file OUTSIDE this conversation). Constraints go NESTED under the `filters` object (e.g. `{\"intent\": \"explore\", \"filters\": {\"bands\": [\"40m\"], \"modes\": [\"vara-hf\"]}}`) - never as top-level arguments; your grid, the time, and connection history are supplied by the app. A broad `explore` returns a `refinement-required` result: zero rows, the exact total, facet counts, and `suggested_refinements` each carrying a ready-to-send `next_call` - send that `next_call.arguments` object VERBATIM as your next call (its `filters` are already fully merged; do not repeat an unchanged call, it returns the same answer). If you already know what you want, `recommend` with `filters` + a `goal` skips the refinement loop entirely. Omit `snapshot_id` on a first call (never pass the string \"null\"). Public directory data, cached. Read-only; does not transmit."
+        description = "Find Winlink RMS gateways by stating your INTENT (the tool selects and bounds the answer; it never dumps the whole catalog). Set `intent` to one of: `recommend` (which gateway should I connect to? - a ranked shortlist with one selected connection each; REQUIRES a `goal` object naming the decision, e.g. `{\"kind\": \"connect-now\", \"objective\": \"estimated-success\"}` - a recommend call without `goal` is rejected), `explore` (narrow a broad space - returns facet counts + suggested filters, not rows, until the set is small), `lookup` (exact callsign(s)), `aggregate` (server-side counts by band/mode/distance/etc. over the whole matched set), or `export` (write the full set to a user file OUTSIDE this conversation). Constraints go NESTED under the `filters` object (e.g. `{\"intent\": \"explore\", \"filters\": {\"bands\": [\"40m\"], \"modes\": [\"vara-hf\"]}}`) - never as top-level arguments; your grid, the time, and connection history are supplied by the app. A broad `explore` returns a `refinement-required` result: zero rows, the exact total, facet counts, and `suggested_refinements` each carrying a ready-to-send `next_call` - send that `next_call.arguments` object VERBATIM as your next call (its `filters` are already fully merged; do not repeat an unchanged call, it returns the same answer). If you already know what you want, `recommend` with `filters` + its required `goal` skips the refinement loop entirely. Omit `snapshot_id` on a first call (never pass the string \"null\"). Public directory data, cached. Read-only; does not transmit."
     )]
     pub async fn find_stations(
         &self,
@@ -3011,6 +3020,33 @@ mod tests {
         );
     }
 
+    /// Ledger row 5 (CLOSED): a precondition refusal must self-describe on
+    /// the wire — the class, the "your call was fine" attribution, and the
+    /// seam's teaching detail all in the message the agent reads. It must
+    /// NOT read as a Denial (the client classifier keys on "not
+    /// authorized") and it deliberately keeps the internal_error carrier
+    /// (invalid_request would teach rewriting a fine call — the
+    /// tuxlink-0rc3h guess-loop; see write_err's Unavailable rationale).
+    #[test]
+    fn egress_err_precondition_self_describes_and_is_not_a_denial() {
+        let e = egress_err(EgressPortError::Precondition(
+            "ARDOP session not open. Open one first: call ardop_connect".to_string(),
+        ));
+        assert!(e.message.starts_with("precondition not met"));
+        assert!(e.message.contains("your call was fine"));
+        assert!(e.message.contains("call ardop_connect"));
+        assert!(
+            !e.message.contains("not authorized"),
+            "a precondition is not an authorization denial: {}",
+            e.message
+        );
+        assert_eq!(
+            e.code,
+            rmcp::model::ErrorCode::INTERNAL_ERROR,
+            "carrier stays internal_error per the anti-guess-loop rationale"
+        );
+    }
+
     #[test]
     fn egress_err_keeps_denial_classifier_tokens() {
         // The runner feeds this back to the model; it must stay a Denial (the
@@ -3367,6 +3403,32 @@ mod tests {
     }
 
     // --- Routines (spec §13 + edit-verb spec D1): the 20-tool MCP surface, no consent-grant ---
+
+    /// Ledger row 8 (CLOSED): `find_stations` must DISCLOSE up front that
+    /// `intent:"recommend"` requires `goal` — the requirement was enforced
+    /// but undocumented, so every first recommend call failed (zqo read
+    /// P13). The corrective error path (`intent_help`) already teaches the
+    /// full contract on failure; this pins the up-front disclosure so the
+    /// first call can succeed.
+    #[test]
+    fn find_stations_description_discloses_goal_requirement_for_recommend() {
+        let desc = TuxlinkMcp::tool_router()
+            .list_all()
+            .into_iter()
+            .find(|t| t.name == "find_stations")
+            .expect("find_stations is registered")
+            .description
+            .expect("find_stations has a description")
+            .to_string();
+        assert!(
+            desc.contains("REQUIRES a `goal`"),
+            "description must state the recommend->goal requirement up front: {desc}"
+        );
+        assert!(
+            desc.contains("connect-now"),
+            "description must carry a concrete goal example: {desc}"
+        );
+    }
 
     /// The tool-surface corpus (ch3e9 groundwork; operator-approved design
     /// 2026-08-10). One registry-generated artifact with three consumers:
