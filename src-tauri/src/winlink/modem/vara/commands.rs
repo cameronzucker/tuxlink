@@ -393,6 +393,18 @@ impl VaraSession {
         Some(val)
     }
 
+    /// Ledger row 10: record a REAL socket outcome into the reachability
+    /// cache. The open path calls this on both connect outcomes so a live
+    /// result overrides a ≤TTL-old bare probe — the zqo run watched
+    /// `vara_status.reachable` say true while `vara_open_session` got
+    /// connection-refused in the same session, because the failed open
+    /// left the stale probe value in place.
+    fn record_reachable_observation(&self, val: bool) {
+        if let Ok(mut cache) = self.reachable_cache.lock() {
+            *cache = Some((std::time::Instant::now(), val));
+        }
+    }
+
     /// tuxlink-iww9r: run `f` while HOLDING the session inner mutex, iff no
     /// session is `Open`/`Connecting`. The VARA.ini config apply wraps its
     /// stop+edit window in this so a concurrent `vara_open_session` (which
@@ -1845,7 +1857,12 @@ pub fn vara_open_session_inner(
 
     let transport_cfg = build_transport_config(ui_cfg);
     let mut transport = match VaraTransport::connect(transport_cfg) {
-        Ok(t) => t,
+        Ok(t) => {
+            // Row 10: a real successful connect is fresher ground truth than
+            // any bare probe — refresh the reachability cache with it.
+            session.record_reachable_observation(true);
+            t
+        }
         Err(e) => {
             // Record the error, surface to caller, leave transport=None so
             // the next start attempt can retry.
@@ -1860,6 +1877,10 @@ pub fn vara_open_session_inner(
                 active_intent: None,
                 active_transport_kind: None,
             };
+            // Row 10: the failed open IS a reachability observation.
+            // Overwrite the TTL cache so a `vara_status` read in the same
+            // breath reports false instead of a ≤3s-stale probe's true.
+            session.record_reachable_observation(false);
             return Err(format!("TCP connect failed: {e}"));
         }
     };
@@ -3824,6 +3845,61 @@ mod tests {
         assert_eq!(
             snap.active_transport_kind, None,
             "transport_kind must not leak on failed open"
+        );
+    }
+
+    /// Ledger row 10 (CLOSED): a failed open OVERWRITES the reachability TTL
+    /// cache with false — `vara_status.reachable` must not keep reporting a
+    /// ≤3s-stale probe's true after `vara_open_session` just got
+    /// connection-refused in the same session.
+    #[test]
+    fn failed_open_overwrites_stale_reachable_cache() {
+        let session = Arc::new(VaraSession::new());
+        // Seed the cache as a fresh bare probe would have: reachable=true.
+        session.record_reachable_observation(true);
+
+        let ui_cfg = VaraUiConfig {
+            host: "127.0.0.1".into(),
+            cmd_port: 1, // root-only port: connect fails fast, no listener race
+            data_port: 2,
+            bandwidth_hz: None,
+        };
+        vara_open_session_inner(
+            &session,
+            &ui_cfg,
+            None,
+            SessionIntent::Cms,
+            TransportKind::VaraHf,
+        )
+        .unwrap_err();
+
+        // The probe must now serve the open's real outcome from the fresh
+        // cache entry. State is Error (not Open/Connecting), so the probe
+        // takes the cache path; the entry is fresh, so no socket is touched.
+        assert_eq!(
+            session.probe_reachable("127.0.0.1", 1, std::time::Duration::from_millis(50)),
+            Some(false),
+            "a failed open must invalidate the cached true"
+        );
+        let cached = session.reachable_cache.lock().unwrap();
+        assert!(
+            matches!(*cached, Some((_, false))),
+            "cache must hold the open's observation, got {cached:?}"
+        );
+    }
+
+    /// Row 10 symmetric half: the cache write from a real observation is
+    /// served by `probe_reachable` WITHOUT touching a socket. Nothing
+    /// listens at the probed port, so a socket touch would return false —
+    /// getting true proves the fresh cache entry short-circuited it.
+    #[test]
+    fn fresh_real_observation_short_circuits_the_probe() {
+        let session = Arc::new(VaraSession::new());
+        session.record_reachable_observation(true);
+        assert_eq!(
+            session.probe_reachable("127.0.0.1", 1, std::time::Duration::from_millis(50)),
+            Some(true),
+            "fresh cache entry must be served without a socket touch"
         );
     }
 
