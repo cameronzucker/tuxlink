@@ -62,6 +62,15 @@ fn egress_err(e: EgressPortError) -> ErrorData {
             ),
             None,
         ),
+        // The full Display line ("precondition not met (your call was fine;
+        // fix the named state, then retry): …"). Carried as internal_error
+        // for the same reason WritePortError::Unavailable is (see write_err):
+        // invalid_request teaches the agent to REWRITE a call that has
+        // nothing wrong with it (the tuxlink-0rc3h guess-loop). The class
+        // lives in the message, which is what the agent actually reads —
+        // ledger row 5's defect was the bare "internal error: <state>" that
+        // read as a product bug.
+        e @ EgressPortError::Precondition(_) => ErrorData::internal_error(e.to_string(), None),
         EgressPortError::Failed(reason) => ErrorData::internal_error(reason, None),
     }
 }
@@ -3008,6 +3017,33 @@ mod tests {
         assert_eq!(
             with_edit_protocol(serde_json::json!("scalar")),
             serde_json::json!("scalar")
+        );
+    }
+
+    /// Ledger row 5 (CLOSED): a precondition refusal must self-describe on
+    /// the wire — the class, the "your call was fine" attribution, and the
+    /// seam's teaching detail all in the message the agent reads. It must
+    /// NOT read as a Denial (the client classifier keys on "not
+    /// authorized") and it deliberately keeps the internal_error carrier
+    /// (invalid_request would teach rewriting a fine call — the
+    /// tuxlink-0rc3h guess-loop; see write_err's Unavailable rationale).
+    #[test]
+    fn egress_err_precondition_self_describes_and_is_not_a_denial() {
+        let e = egress_err(EgressPortError::Precondition(
+            "ARDOP session not open. Open one first: call ardop_connect".to_string(),
+        ));
+        assert!(e.message.starts_with("precondition not met"));
+        assert!(e.message.contains("your call was fine"));
+        assert!(e.message.contains("call ardop_connect"));
+        assert!(
+            !e.message.contains("not authorized"),
+            "a precondition is not an authorization denial: {}",
+            e.message
+        );
+        assert_eq!(
+            e.code,
+            rmcp::model::ErrorCode::INTERNAL_ERROR,
+            "carrier stays internal_error per the anti-guess-loop rationale"
         );
     }
 

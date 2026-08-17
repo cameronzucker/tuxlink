@@ -1175,6 +1175,15 @@ pub enum EgressPortError {
     /// `EgressDenied` reason (e.g. "send authority is not armed").
     #[error("egress denied: {0}")]
     Denied(String),
+    /// The call was well-formed and authorized, but a required STATE
+    /// precondition does not hold — session not open, devices not
+    /// configured, modem busy. The message names the state (and usually the
+    /// repairing call); the fix is a DIFFERENT call or a wait, never a
+    /// rewrite of this one. Surfaced with this prefix so the reader stops
+    /// misattributing precondition refusals to product-internal bugs
+    /// (surface-repair ledger row 5 / zqo read P6).
+    #[error("precondition not met (your call was fine; fix the named state, then retry): {0}")]
+    Precondition(String),
     /// The egress was authorized but the operation itself failed.
     #[error("egress failed: {0}")]
     Failed(String),

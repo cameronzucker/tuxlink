@@ -109,6 +109,50 @@ fn classify_write_err(e: crate::ui_commands::UiError) -> WritePortError {
     }
 }
 
+/// Ledger row 5 (zqo read P6): classify a raw modem/backend seam error String
+/// crossing the EGRESS boundary into `Precondition` vs `Failed`, so
+/// state-precondition refusals stop wearing a bare "internal error" face.
+///
+/// The markers are the KNOWN precondition message shapes the modem seams emit
+/// (modem_commands.rs / modem_status.rs / vara/commands.rs return
+/// `Result<_, String>`; there is no typed error to match on at this seam):
+/// "…not configured" (ARDOP audio devices, rig control, operator callsign),
+/// "session not open" (ARDOP + VARA), the VARA busy/occupancy family. A new
+/// precondition-shaped message in those seams adds its marker HERE, in the
+/// same change — the classifier test pins the current inventory.
+fn classify_egress_str(e: String) -> EgressPortError {
+    const PRECONDITION_MARKERS: &[&str] = &[
+        "not configured",
+        "session not open",
+        "modem busy",
+        "already started",
+        "already in flight",
+    ];
+    let lower = e.to_lowercase();
+    if PRECONDITION_MARKERS.iter().any(|m| lower.contains(m)) {
+        EgressPortError::Precondition(redact_err(e))
+    } else {
+        EgressPortError::Failed(redact_err(e))
+    }
+}
+
+/// UiError-typed egress seams (cms_connect, packet_connect): the typed
+/// variants classify directly — `NotConfigured` / `Unavailable` / `Transport`
+/// are the same state-not-input family `classify_write_err` pools under
+/// `Unavailable` on the write tier; the egress tier surfaces them as
+/// `Precondition`. Everything else falls through the String classifier so a
+/// precondition message inside a Debug-formatted variant is still caught.
+fn classify_egress_ui_err(e: crate::ui_commands::UiError) -> EgressPortError {
+    use crate::ui_commands::UiError;
+    match e {
+        UiError::NotConfigured(detail) => EgressPortError::Precondition(redact_err(detail)),
+        UiError::Unavailable { reason } | UiError::Transport { reason } => {
+            EgressPortError::Precondition(redact_err(reason))
+        }
+        other => classify_egress_str(format!("{other:?}")),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // VARA engine dispatch [R5-1].
 // ---------------------------------------------------------------------------
@@ -1326,7 +1370,7 @@ impl EgressPort for MonolithEgressPort {
                     app.state::<crate::winlink::inbound_selection::SelectionRegistry>(),
                 )
                 .await
-                .map_err(|e| EgressPortError::Failed(redact_err(format!("{e:?}"))))
+                .map_err(classify_egress_ui_err)
             },
         )
         .await
@@ -1347,7 +1391,7 @@ impl EgressPort for MonolithEgressPort {
                 // no Display → format with {e:?}.
                 crate::wizard::verify_cms_connection_impl(app.clone())
                     .await
-                    .map_err(|e| EgressPortError::Failed(redact_err(format!("{e:?}"))))
+                    .map_err(|e| classify_egress_str(format!("{e:?}")))
             },
         )
         .await
@@ -1373,7 +1417,7 @@ impl EgressPort for MonolithEgressPort {
                 // default (HF) — the command converts center → USB dial before
                 // the CAT tune, then drops (releases the serial).
                 crate::modem_commands::ardop_tune_rig(freq_hz, None)
-                    .map_err(|e| EgressPortError::Failed(redact_err(e)))
+                    .map_err(classify_egress_str)
             },
         )
         .await
@@ -1409,7 +1453,7 @@ impl EgressPort for MonolithEgressPort {
                     qsy,
                 )
                 .await
-                .map_err(|e| EgressPortError::Failed(redact_err(e)))
+                .map_err(classify_egress_str)
             },
         )
         .await
@@ -1443,7 +1487,7 @@ impl EgressPort for MonolithEgressPort {
                     crate::winlink::listener::transport::TransportKind::Ardop,
                 )
                 .await
-                .map_err(|e| EgressPortError::Failed(redact_err(e)))
+                .map_err(classify_egress_str)
             },
         )
         .await
@@ -1493,7 +1537,7 @@ impl EgressPort for MonolithEgressPort {
                     None,
                 )
                 .await
-                .map_err(|e| EgressPortError::Failed(redact_err(e)))
+                .map_err(classify_egress_str)
             },
         )
         .await
@@ -1535,7 +1579,7 @@ impl EgressPort for MonolithEgressPort {
                 )
                 .await
                 .map(|_status| ())
-                .map_err(|e| EgressPortError::Failed(redact_err(e)))
+                .map_err(classify_egress_str)
             },
         )
         .await
@@ -1567,7 +1611,7 @@ impl EgressPort for MonolithEgressPort {
                     None,
                 )
                 .await
-                .map_err(|e| EgressPortError::Failed(redact_err(format!("{e:?}"))))
+                .map_err(classify_egress_ui_err)
             },
         )
         .await
@@ -4195,6 +4239,10 @@ pub(crate) async fn approval_gated_flush(
     // Step 3 — dispatch the whole-outbox flush through the egress gate.
     egress_port.cms_connect().await.map_err(|e| match e {
         EgressPortError::Denied(msg) => FlushError::Denied(msg),
+        // FlushError's vocabulary predates the precondition class (row 5);
+        // carry the full Display line so the state-not-input classification
+        // survives into the routines boundary without widening FlushError.
+        e @ EgressPortError::Precondition(_) => FlushError::Failed(e.to_string()),
         EgressPortError::Failed(msg) => FlushError::Failed(msg),
     })
 }
@@ -5454,6 +5502,74 @@ mod tests {
         any_freq_in_bands, curate_gateway, curate_peer, is_plausible_callsign, khz_to_band,
         map_edit_op, resolve_save_def, sanitize_channel, sort_gateways_by_distance,
     };
+
+    /// Ledger row 5 (CLOSED, zqo read P6): the REAL precondition strings the
+    /// modem seams emit classify as `Precondition`, so they stop surfacing as
+    /// a bare "internal error"; genuinely-operational failures stay `Failed`.
+    /// Each precondition literal below is copied from its emitting site — a
+    /// message reworded there must keep (or re-add) a marker here.
+    #[test]
+    fn egress_classifier_splits_preconditions_from_operational_failures() {
+        use super::classify_egress_str;
+        use tuxlink_mcp_core::ports::EgressPortError;
+
+        let preconditions = [
+            // modem_commands.rs — ARDOP start/connect paths
+            "ARDOP audio devices not configured. Set them first: call ardop_set_audio_devices",
+            "ARDOP session not open. Open one first: call ardop_connect, or press Connect",
+            // modem_commands.rs:2601 — rig tune path (P6's "rig I/O refused")
+            "rig control not configured — set the rig model + CAT serial",
+            // modem_commands.rs:1685 — callsign gate
+            "Operator callsign not configured — complete the wizard before connecting",
+            // vara/commands.rs take-transport + open paths
+            "session not open",
+            "modem busy — inbound exchange in progress",
+            "outbound exchange already in flight",
+            "VARA session already started — call vara_close_session first",
+        ];
+        for msg in preconditions {
+            assert!(
+                matches!(
+                    classify_egress_str(msg.to_string()),
+                    EgressPortError::Precondition(_)
+                ),
+                "expected Precondition for: {msg}"
+            );
+        }
+
+        let operational = [
+            "TCP connect failed: Connection refused (os error 111)",
+            "VARA rejected CONNECT (WRONG)",
+            "VARA cmd port unresponsive; hard-closed",
+            "listener consumer task exited; session needs Close + reopen",
+        ];
+        for msg in operational {
+            assert!(
+                matches!(
+                    classify_egress_str(msg.to_string()),
+                    EgressPortError::Failed(_)
+                ),
+                "expected Failed for: {msg}"
+            );
+        }
+    }
+
+    /// The UiError-typed egress seams (cms_connect / packet_connect): the
+    /// state-not-input variants classify as `Precondition`; others fall
+    /// through the String classifier.
+    #[test]
+    fn egress_ui_err_classifier_maps_state_variants_to_precondition() {
+        use super::classify_egress_ui_err;
+        use tuxlink_mcp_core::ports::EgressPortError;
+
+        let not_configured = crate::ui_commands::UiError::NotConfigured(
+            "no CMS transport configured".to_string(),
+        );
+        assert!(matches!(
+            classify_egress_ui_err(not_configured),
+            EgressPortError::Precondition(_)
+        ));
+    }
 
     /// tuxlink-grc1j: with `PointAtPending` managed but NO window to ack (the
     /// battery harness's windowless environment, which now manages exactly this
