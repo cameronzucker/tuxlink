@@ -36,9 +36,6 @@ evidence; this page carries the STATE). Rules:
    also answer the remaining open-ok question). Caveat carried: whether a
    bare `ardop_connect` ok leaves a gateway-visible link is pinned by
    those tests, not yet by evidence. Closes when: that fix merges.
-3. **Mode-advice docs contradict each other** — user-guide doc 16 says
-   VARA is more robust at low SNR; doc 17 says ARDOP is, twice. Doc 16 is
-   right. Closes when: doc 17 reconciled.
 5. **Precondition failures wear the internal-error code** — "VARA session
    not open", "audio devices not configured", "rig I/O refused" all
    surface as `-32603 internal error`. These cross a DIFFERENT boundary
@@ -135,6 +132,15 @@ a stale doc). Re-baseline the A/B on the real-gating class
   `packet_config_unset_fields_serialize_as_null_not_sentinels` pins the
   shape; the routines `data.read packet_config` byte-identical test now
   carries a null `baud` through the whole path.
+- 3 — mode-advice docs contradict each other — closed 2026-08-16, row-3 PR
+  (umbrella tuxlink-4280b): doc 17 reconciled to docs 15/16 (VARA generally
+  more robust at low SNR; ham consensus + the bench oracle agree). Four
+  spots carried the wrong claim, not two: the conditions-table row and the
+  quick-lookup row the evidence names (P3), plus the decision-tree's
+  "more forgiving fallback" label and the plain-English summary. ARDOP's
+  remaining recommendation grounds are the true ones: not installed, no
+  x86-64/Wine, untested VARA tier on the target RMS, open-source
+  requirement.
 - 7 — unlabeled fraction on the propagation wire — closed 2026-08-16, same
   PR (#1357): `mufday_by_hour`/`mufdayByHour` renamed to
   `mufday_fraction_by_hour`/`mufdayFractionByHour` on BOTH wires (mcp-core
