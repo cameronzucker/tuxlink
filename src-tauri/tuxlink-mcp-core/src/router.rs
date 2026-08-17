@@ -3368,18 +3368,6 @@ mod tests {
 
     // --- Routines (spec §13 + edit-verb spec D1): the 20-tool MCP surface, no consent-grant ---
 
-    /// The tool-surface corpus (ch3e9 groundwork; operator-approved design
-    /// 2026-08-10). One registry-generated artifact with three consumers:
-    /// the request classifier's tool corpus, the tool-inventory surface,
-    /// and the first-party docs. Runtime enumeration (`list_all`) is the
-    /// source — descriptions come back unescaped, unlike source parsing.
-    ///
-    /// Regenerate: `TUXLINK_REGEN_TOOL_SURFACE=1 cargo test -p
-    /// tuxlink-mcp-core tool_surface_corpus` (on a host that builds — R2 or
-    /// CI-class). Without the env var the test verifies the committed asset
-    /// byte-for-byte: registry drift without regeneration fails here, and a
-    /// regenerated corpus means downstream threshold recalibration
-    /// (ADR 0030 threshold-rot rule).
     /// Ledger row 8 (CLOSED): `find_stations` must DISCLOSE up front that
     /// `intent:"recommend"` requires `goal` — the requirement was enforced
     /// but undocumented, so every first recommend call failed (zqo read
@@ -3406,6 +3394,18 @@ mod tests {
         );
     }
 
+    /// The tool-surface corpus (ch3e9 groundwork; operator-approved design
+    /// 2026-08-10). One registry-generated artifact with three consumers:
+    /// the request classifier's tool corpus, the tool-inventory surface,
+    /// and the first-party docs. Runtime enumeration (`list_all`) is the
+    /// source — descriptions come back unescaped, unlike source parsing.
+    ///
+    /// Regenerate: `TUXLINK_REGEN_TOOL_SURFACE=1 cargo test -p
+    /// tuxlink-mcp-core tool_surface_corpus` (on a host that builds — R2 or
+    /// CI-class). Without the env var the test verifies the committed asset
+    /// byte-for-byte: registry drift without regeneration fails here, and a
+    /// regenerated corpus means downstream threshold recalibration
+    /// (ADR 0030 threshold-rot rule).
     #[test]
     fn tool_surface_corpus_matches_registry() {
         let mut tools: Vec<(String, String)> = TuxlinkMcp::tool_router()
