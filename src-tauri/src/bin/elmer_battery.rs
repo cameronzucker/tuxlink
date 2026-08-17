@@ -1188,6 +1188,12 @@ fn real_main() -> Result<(), String> {
     app.manage(tuxlink_lib::app_backend::BackendState::new());
     app.manage(Arc::new(tuxlink_lib::session_log::SessionLogState::unbounded()));
     app.manage(Arc::new(tuxlink_lib::modem_status::ModemSession::new()));
+    // Ledger row 2 (tuxlink-wovan): `MonolithStatusPort::modem_status` now
+    // fetches this unconditionally — an unmanaged store would panic the cell
+    // (the exact state()-before-manage() class noted below).
+    app.manage(Arc::new(
+        tuxlink_lib::modem_status::LastB2fSessionStore::default(),
+    ));
     // Listen/APRS states: fetched by MonolithAbortPort::ardop_disconnect
     // (mcp_ports.rs ~:1566) on the cancel path — the stage-P2 fable cell
     // panicked a worker thread here (state() before manage()). Managed as

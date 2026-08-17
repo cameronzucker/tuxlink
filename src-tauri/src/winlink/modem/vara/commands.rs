@@ -2719,6 +2719,18 @@ pub async fn modem_vara_b2f_exchange(
         ),
     }
 
+    // Ledger row 2 (tuxlink-wovan): record the outcome (both branches) so
+    // `modem_get_status.last_session` can disclose what just happened after
+    // the session surface returns to idle.
+    let store = app.state::<std::sync::Arc<crate::modem_status::LastB2fSessionStore>>();
+    store.record(crate::modem_status::LastB2fSession {
+        transport: transport_kind.as_str().to_string(),
+        target: Some(target_clean.clone()),
+        ok: result.is_ok(),
+        detail: result.as_ref().err().cloned(),
+        ended_at_ms: crate::modem_status::unix_now_ms(),
+    });
+
     result
 }
 
@@ -3844,6 +3856,67 @@ mod tests {
         // Second call is a no-op that also returns Closed.
         let s2 = vara_stop_session_inner(&session).unwrap();
         assert_eq!(s2.state, VaraState::Closed);
+    }
+
+    /// Ledger row 2 (tuxlink-wovan): VARA open/status COHERENCE. The zqo
+    /// fixture teardown showed an app-layer open-ok vs status-closed
+    /// contradiction candidate; this pins the honest contract: a successful
+    /// `vara_open_session_inner` leaves `snapshot()` reporting Open with the
+    /// bound endpoint, and a stop returns it to Closed. NOTE the semantics
+    /// this test also documents (the fork's settled reading): Open means
+    /// sockets to the LOCAL modem app are up — it is NOT evidence of an RF
+    /// link to any gateway (open ≠ dial). The readiness gate fails OPEN and
+    /// VaraFm replaces it with the T_MIN settle, so bare accepting listeners
+    /// drive a genuine Ok.
+    #[test]
+    fn open_ok_is_coherent_with_status_open_and_close_restores_closed() {
+        use std::net::TcpListener;
+        use std::thread;
+        use std::time::Duration;
+
+        let cmd_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let cmd_port = cmd_l.local_addr().unwrap().port();
+        let data_l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let data_port = data_l.local_addr().unwrap().port();
+        let cmd_handle = thread::spawn(move || {
+            let (_c, _) = cmd_l.accept().unwrap();
+            thread::sleep(Duration::from_secs(2));
+        });
+        let data_handle = thread::spawn(move || {
+            let (_c, _) = data_l.accept().unwrap();
+            thread::sleep(Duration::from_secs(2));
+        });
+
+        let session = Arc::new(VaraSession::new());
+        let ui_cfg = VaraUiConfig {
+            host: "127.0.0.1".into(),
+            cmd_port,
+            data_port,
+            bandwidth_hz: None,
+        };
+        let status = vara_open_session_inner(
+            &session,
+            &ui_cfg,
+            None,
+            SessionIntent::Cms,
+            TransportKind::VaraFm,
+        )
+        .expect("open must succeed against accepting listeners");
+
+        // The RETURNED status and the SNAPSHOT agree: Open, bound endpoint.
+        assert_eq!(status.state, VaraState::Open);
+        let snap = session.snapshot();
+        assert_eq!(snap.state, VaraState::Open, "open-ok must mean status Open");
+        assert_eq!(snap.bound_host.as_deref(), Some("127.0.0.1"));
+        assert_eq!(snap.bound_cmd_port, Some(cmd_port));
+
+        // Stop restores Closed — the full round trip is coherent.
+        let stopped = vara_stop_session_inner(&session).expect("stop succeeds");
+        assert_eq!(stopped.state, VaraState::Closed);
+        assert_eq!(session.snapshot().state, VaraState::Closed);
+
+        cmd_handle.join().unwrap();
+        data_handle.join().unwrap();
     }
 
     #[test]
