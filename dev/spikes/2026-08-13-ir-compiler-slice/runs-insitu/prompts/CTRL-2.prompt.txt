@@ -1,0 +1,1 @@
+Every 20 minutes between 06:00 and 09:00, try @station-set:wa-gateways on 40m then 80m in that order; on success log which station and band; on failure log that no gateway was reached and end failed with reason 'no gateway'.

@@ -1,0 +1,4 @@
+d3zwe: connecting to MCP socket /run/user/1000/tuxlink-ir/insitu.sock
+d3zwe: connected — 95 tools available
+  → tool routines_list {}
+d3zwe-exit=0

@@ -1,0 +1,60 @@
+# Candidate B — plain-text routine language, the whole contract on one page
+
+**Status: DISPOSABLE draft for the alternatives instrument (tuxlink-qqmys).
+Peer of the ratified five-construct one-pager; same judgment-artifact rule:
+if it stops fitting on one page, that is a finding.**
+
+The model states the whole routine as plain text in the grammar below,
+restating it entirely on every edit — "change X" means "here is the routine
+again, with X different." Structure is indentation and nothing else. A
+deterministic compiler we own parses this into the real `RoutineDef`; the
+existing validator and executor run the result unchanged.
+
+## The grammar (all of it)
+
+```text
+routine <name> [every <interval>] [window <HH:MM>-<HH:MM>]
+connect <station-set-ref> on <band>[, <band>...]
+  on success:
+    log "<text; $band / $station name the connect's outputs>"
+  on failure:
+    log "<text>"
+    end failed "<reason>"
+```
+
+- `every` omitted = manual-only; `window` omitted = any time.
+- Bands are fallback order, as written.
+- `on success:` / `on failure:` blocks contain indented lines; indentation
+  IS the structure. There are no ids, no jumps, no other line forms.
+
+Example:
+
+```text
+routine nearest-40m-dial every 15m window 07:00-08:00
+connect @station-set:or-gateways on 40m, 80m
+  on success:
+    log "Connected on $band to $station"
+  on failure:
+    log "No gateway reached on any band"
+    end failed "no gateway"
+```
+
+## The rules (all of them)
+
+- **Blocks are indentation; lines are the five forms above.** Anything the
+  grammar cannot say is left out — an unrecognized line is a named,
+  positioned refusal, never a guess.
+- **Whole-routine emission, always.** Edits are restatements.
+- **Lenient in spelling, strict in meaning.** The compiler absorbs harmless
+  variation ("every 20 minutes" for "every 20m") but never invents lines,
+  identifiers, or control flow.
+- **Every compile echoes** the plain-language readback of what was built.
+- **Consent is untouched.** No line form can express transmit mode,
+  acknowledgments, or authority.
+
+## What this candidate deliberately leaves out
+
+Retry, delay, branch-on-value comparisons, beacons, sub-routines,
+forms/compose, multi-track. Each is a later line form IF the premise
+survives. The premise under test: a small model that failed step-surgery
+can state one of these correctly in constrained text.

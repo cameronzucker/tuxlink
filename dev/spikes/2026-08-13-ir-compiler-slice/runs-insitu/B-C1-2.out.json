@@ -1,0 +1,1 @@
+{"kind":"completed","text":"routine wa-gateways-dial every 20m window 06:00-09:00\nconnect @station-set:wa-gateways on 40m, 80m\n  on success:\n    log \"Reached $station on $band\"\n  on failure:\n    log \"No gateway reached\"\n    end failed \"no gateway\""}

@@ -1,0 +1,1 @@
+{"kind":"completed","text":"{\"template\":\"scheduled-connect-with-fallback\",\"slots\":{\"name\":\"or-gateway-check\",\"every\":\"15m\",\"window\":null,\"stations\":\"@station-set:or-gateways\",\"bands\":[\"40m\",\"80m\"],\"success_log\":\"Connected on $band to $station\",\"failure_log\":\"No gateway reached\",\"fail_reason\":\"no gateway\"}}"}

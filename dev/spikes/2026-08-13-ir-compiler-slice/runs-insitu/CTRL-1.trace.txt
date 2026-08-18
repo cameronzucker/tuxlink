@@ -1,0 +1,31 @@
+d3zwe: connecting to MCP socket /run/user/1000/tuxlink-ir/insitu.sock
+d3zwe: connected — 95 tools available
+  → tool routines_actions_list {"section":"actions"}
+  → tool routines_actions_list {"section":"trigger_kinds"}
+  → tool docs_search {"query":"routine schedule trigger recurring every 20 minutes"}
+  → tool docs_search {"query":"routines trigger schedule cron interval"}
+  → tool routines_list {}
+  → tool routines_get {"name":"morning-check-in"}
+  → tool find_stations {"callsigns":["@station-set:wa-gateways"],"intent":"lookup"}
+  → tool docs_search {"query":"routines branch control step"}
+  → tool routines_actions_list {"section":"definition_template"}
+  → tool routines_actions_list {"section":"controls"}
+  → tool routines_dry_run {"name":"morning-check-in"}
+  → tool routines_get {"name":"morning-check-in"}
+  → tool routines_save {"def":{"routine":"gateway-check-40-80","schema_version":1,"tracks":[{"name":"t","steps":[{"action":"local.log","id":"s1","params":{"message":"Trying gateway on 40m"}},{"action":"radio.connect","id":"s2","params":{"stations":["W1AW"]}},{"control":"branch","else":["s5"],"id":"s3","on":"s2.connected","then":["s4"]},{"action":"local.log","id":"s4","params":{"message":"Success: W1AW on 40m"}},{"action":"local.log","id":"s5","params":{"message":"40m failed, trying 80m"}},{"action":"local.log","id":"s6","params":{"message":"Trying gateway on 80m"}},{"action":"radio.connect","id":"s7","params":{"stations":["W1AW"]}},{"control":"branch","else":["s10"],"id":"s8","on":"s7.connected","then":["s9"]},{"action":"local.log","id":"s9","params":{"message":"Success: W1AW on 80m"}},{"action":"local.log","id":"s10","params":{"message":"No gateway reached"}},{"control":"end","id":"e1","params":{"reason":"no gateway"}}]}],"transmit_mode":"attended","triggers":[{"every":"20m","type":"schedule"}]}}
+  → tool server_info {}
+  → tool config_get_rig {}
+  → tool rig_tune {"freq_hz":7104000}
+  → tool catalog_list {}
+  → tool routines_trigger_set {"routine":"gateway-check-40-80","triggers":[{"every":"20m","type":"schedule"}]}
+  → tool routines_list {}
+  → tool routines_rename {"new_name":"gateway-check-40-80","routine":"morning-check-in"}
+  → tool routines_trigger_set {"routine":"gateway-check-40-80","triggers":[{"every":"20m","type":"schedule"}]}
+  → tool routines_get {"name":"gateway-check-40-80"}
+  → tool routines_save {"def":{"routine":"gateway-check-40-80","schema_version":1,"tracks":[{"name":"t","steps":[{"action":"local.log","id":"s1","params":{"message":"Trying gateway on 40m"}},{"action":"radio.connect","id":"s2","params":{"stations":["W1AW"]}},{"control":"branch","else":["s5"],"id":"s3","on":"s2.connected","then":["s4"]},{"action":"local.log","id":"s4","params":{"message":"Success: W1AW on 40m"}},{"action":"local.log","id":"s5","params":{"message":"40m failed, trying 80m"}},{"action":"local.log","id":"s6","params":{"message":"Trying gateway on 80m"}},{"action":"radio.connect","id":"s7","params":{"stations":["W1AW"]}},{"control":"branch","else":["s10"],"id":"s8","on":"s7.connected","then":["s9"]},{"action":"local.log","id":"s9","params":{"message":"Success: W1AW on 80m"}},{"action":"local.log","id":"s10","params":{"message":"No gateway reached"}},{"control":"end","id":"e1","params":{"reason":"no gateway"}}]}],"transmit_mode":"attended","triggers":[{"every":"20m","type":"schedule"},{"type":"manual"}]}}
+  → tool routines_list {}
+  → tool routines_get {"name":"morning-check-in"}
+  → tool routines_save {"def":{"routine":"gateway-check-40-80","schema_version":1,"tracks":[{"name":"t","steps":[{"action":"local.log","id":"s1","params":{"message":"Trying gateway on 40m"}},{"action":"radio.connect","id":"s2","params":{"stations":["W1AW"]}},{"control":"branch","else":["s5"],"id":"s3","on":"s2.connected","then":["s4"]},{"action":"local.log","id":"s4","params":{"message":"Success: W1AW on 40m"}},{"action":"local.log","id":"s5","params":{"message":"40m failed, trying 80m"}},{"action":"local.log","id":"s6","params":{"message":"Trying gateway on 80m"}},{"action":"radio.connect","id":"s7","params":{"stations":["W1AW"]}},{"control":"branch","else":["s10"],"id":"s8","on":"s7.connected","then":["s9"]},{"action":"local.log","id":"s9","params":{"message":"Success: W1AW on 80m"}},{"action":"local.log","id":"s10","params":{"message":"No gateway reached"}},{"control":"end","id":"e1","params":{"reason":"no gateway"}}]}],"transmit_mode":"attended","triggers":[{"every":"20m","type":"schedule"},{"type":"manual"}]}}
+  → tool routines_step_update {"expected_revision":"seed-rev-1","patch":{"params":{"band":"40m","message":"Trying @station-set:wa-gateways on 40m"}},"routine":"morning-check-in","step_id":"s1"}
+  → tool routines_get {"name":"morning-check-in"}
+d3zwe-exit=0

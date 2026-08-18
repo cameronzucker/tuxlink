@@ -1,0 +1,1 @@
+{"kind":"completed","text":"{\"routine\":\"wa-morning-check\",\"every\":\"20m\",\"do\":[{\"connect\":{\"stations\":\"@station-set:wa-gateways\",\"bands\":[\"40m\",\"80m\"]},\"on_success\":[{\"log\":\"Reached $station on $band\"}],\"on_failure\":[{\"log\":\"No gateway was reached\"},{\"end\":{\"failed\":true,\"reason\":\"all bands exhausted\"}}]}]}"}

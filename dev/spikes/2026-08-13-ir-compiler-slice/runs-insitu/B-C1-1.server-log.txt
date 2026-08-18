@@ -1,0 +1,2 @@
+tuxlink vtestserver listening on /run/user/1000/tuxlink-ir/insitu.sock (armed=false, tainted=false)
+received Ctrl-C; shutting down and unlinking /run/user/1000/tuxlink-ir/insitu.sock

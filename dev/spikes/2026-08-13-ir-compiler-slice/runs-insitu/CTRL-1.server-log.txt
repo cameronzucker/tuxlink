@@ -1,0 +1,3 @@
+tuxlink vtestserver listening on /run/user/1000/tuxlink-ir/insitu.sock (armed=false, tainted=false)
+egress-audit op=rig_tune allowed=false reason=Some("send authority is not armed")
+received Ctrl-C; shutting down and unlinking /run/user/1000/tuxlink-ir/insitu.sock

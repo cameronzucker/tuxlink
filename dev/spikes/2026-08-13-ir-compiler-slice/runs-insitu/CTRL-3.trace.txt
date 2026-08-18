@@ -1,0 +1,63 @@
+d3zwe: connecting to MCP socket /run/user/1000/tuxlink-ir/insitu.sock
+d3zwe: connected — 95 tools available
+  → tool routines_actions_list {"section":"actions"}
+  → tool routines_actions_list {"section":"trigger_kinds"}
+  → tool routines_list {}
+  → tool routines_get {"name":"morning-check-in"}
+  → tool docs_search {"query":"routine trigger schedule every time window 06:00 09:00"}
+  → tool routines_actions_list {"action":"radio.connect"}
+  → tool find_stations {"filters":{"callsign_prefix":"wa-gateways"},"intent":"explore"}
+  → tool docs_search {"query":"routine branch condition on step connected radio.connect output"}
+  → tool find_peers {}
+  → tool catalog_list {}
+  → tool routines_dry_run {"args_json":"{}","name":"morning-check-in"}
+  → tool routines_get {"name":"morning-check-in"}
+  → tool routines_save {"def":{"routine":"gateway-poll","schema_version":1,"tracks":[{"name":"t","steps":[{"action":"local.log","id":"s1","params":{"message":"start poll"}},{"action":"radio.connect","id":"s2","params":{"stations":["@station-set:wa-gateways"]}}]}],"transmit_mode":"attended","triggers":[{"every":"20m","start":"06:00","stop":"09:00","type":"schedule"},{"type":"manual"}]}}
+  → tool routines_list {}
+  → tool docs_search {"query":"branch then else condition control step variable"}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"local.log","id":"s2","params":{"message":"poll 40m"}},"track":"t"}
+  → tool find_stations {"filters":{"callsign_prefix":"wa"},"intent":"explore"}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"radio.connect","id":"s3","params":{"stations":["@station-set:wa-gateways"]}},"track":"t"}
+  → tool routines_trigger_set {"routine":"morning-check-in","triggers":[{"every":"20m","start":"06:00","stop":"09:00","type":"schedule"},{"type":"manual"}]}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"local.log","id":"s4","params":{"message":"reached gateway on 40m"},"track":"t"}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"local.log","id":"s5","params":{"message":"try 80m"},"track":"t"}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"radio.connect","id":"s6","params":{"stations":["@station-set:wa-gateways"]}},"track":"t"}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"local.log","id":"s7","params":{"message":"reached gateway on 80m"},"track":"t"}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"local.log","id":"s8","params":{"message":"no gateway reached"},"track":"t"}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"control":"end","id":"e2","params":{"reason":"no gateway"},"track":"t"}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"control":"branch","else":["s5","s6","s7","s8","e2"],"id":"b1","on":"s3.connected","then":["s4"]},"track":"t"}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"control":"branch","else":["s8","e2"],"id":"b2","on":"s6.connected","then":["s7"]},"track":"t"}
+  → tool routines_step_update {"patch":{"params":{"message":"try 40m @station-set:wa-gateways"}},"routine":"morning-check-in","step_id":"s2"}
+  → tool routines_step_update {"patch":{"params":{"message":"try 80m @station-set:wa-gateways"}},"routine":"morning-check-in","step_id":"s5"}
+  → tool routines_step_update {"patch":{"params":{"message":"connected @station-set:wa-gateways on 40m"}},"routine":"morning-check-in","step_id":"s4"}
+  → tool routines_step_update {"patch":{"params":{"message":"connected @station-set:wa-gateways on 80m"}},"routine":"morning-check-in","step_id":"s7"}
+  → tool routines_step_update {"patch":{"params":{"message":"no gateway reached — end failed"}},"routine":"morning-check-in","step_id":"s8"}
+  → tool routines_step_update {"patch":{"params":{"message":"poll 40m @station-set:wa-gateways","stations":["@station-set:wa-gateways"]}},"routine":"morning-check-in","step_id":"s3"}
+  → tool routines_step_update {"patch":{"params":{"message":"poll 80m @station-set:wa-gateways","stations":["@station-set:wa-gateways"]}},"routine":"morning-check-in","step_id":"s6"}
+  → tool routines_get {"name":"morning-check-in"}
+  → tool routines_step_remove {"routine":"morning-check-in","step_id":"s1"}
+  → tool routines_step_remove {"routine":"morning-check-in","step_id":"e1"}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"local.log","id":"s_start","params":{"message":"start 40m/80m gateway poll"},"track":"t"}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"radio.connect","id":"s3","params":{"stations":["@station-set:wa-gateways"]},"track":"t"}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"control":"branch","else":["s5","s6","s7","s8","e2"],"id":"branch_40","on":"s3.connected","then":["s4"],"track":"t"}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"local.log","id":"s4","params":{"message":"connected @station-set:wa-gateways on 40m"},"track":"t"}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"local.log","id":"s5","params":{"message":"try 80m"},"track":"t"}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"radio.connect","id":"s6","params":{"stations":["@station-set:wa-gateways"]},"track":"t"}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"control":"branch","else":["s8","e2"],"id":"branch_80","on":"s6.connected","then":["s7"],"track":"t"}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"local.log","id":"s7","params":{"message":"connected @station-set:wa-gateways on 80m"},"track":"t"}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"local.log","id":"s8","params":{"message":"no gateway reached"},"track":"t"}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"control":"end","id":"e2","params":{"reason":"no gateway"},"track":"t"}}
+  → tool routines_step_update {"patch":{"params":{"message":"try 40m @station-set:wa-gateways","stations":["@station-set:wa-gateways"]}},"routine":"morning-check-in","step_id":"s3"}
+  → tool routines_step_update {"patch":{"params":{"message":"try 80m @station-set:wa-gateways","stations":["@station-set:wa-gateways"]}},"routine":"morning-check-in","step_id":"s6"}
+  → tool routines_trigger_set {"routine":"morning-check-in","triggers":[{"every":"20m","start":"06:00","stop":"09:00","type":"schedule"},{"type":"manual"}]}
+  → tool routines_step_update {"patch":{"params":{"message":"start gateway poll","stations":["@station-set:wa-gateways"]}},"routine":"morning-check-in","step_id":"s_start"}
+  → tool routines_step_remove {"routine":"morning-check-in","step_id":"s_start"}
+  → tool routines_step_update {"patch":{"params":{"message":"try 40m @station-set:wa-gateways"}},"routine":"morning-check-in","step_id":"s3"}
+  → tool routines_step_update {"patch":{"params":{"message":"try 80m @station-set:wa-gateways"}},"routine":"morning-check-in","step_id":"s6"}
+  → tool routines_get {"name":"morning-check-in"}
+  → tool routines_rename {"new_name":"gateway-poll","routine":"morning-check-in"}
+  → tool routines_get {"name":"gateway-poll"}
+  → tool routines_list {}
+  → tool routines_step_update {"patch":{"params":{"message":"try 40m","stations":["@station-set:wa-gateways"]}},"routine":"morning-check-in","step_id":"s3"}
+  → tool routines_validate {"name":"morning-check-in"}
+d3zwe-exit=0

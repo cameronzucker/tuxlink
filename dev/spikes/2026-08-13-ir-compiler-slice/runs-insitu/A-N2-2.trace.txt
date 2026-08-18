@@ -1,0 +1,8 @@
+d3zwe: connecting to MCP socket /run/user/1000/tuxlink-ir/insitu.sock
+d3zwe: connected — 95 tools available
+  → tool server_info {}
+  → tool routines_list {}
+  → tool docs_search {"query":"spike IR routine contract syntax constructs"}
+  → tool routines_actions_list {"section":"actions"}
+  → tool routines_get {"name":"morning-check-in"}
+d3zwe-exit=0

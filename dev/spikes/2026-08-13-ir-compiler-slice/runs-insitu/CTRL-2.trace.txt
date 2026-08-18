@@ -1,0 +1,71 @@
+d3zwe: connecting to MCP socket /run/user/1000/tuxlink-ir/insitu.sock
+d3zwe: connected — 95 tools available
+  → tool routines_actions_list {"section":"actions"}
+  → tool routines_actions_list {"section":"trigger_kinds"}
+  → tool docs_search {"query":"routine schedule trigger every 20 minutes time window"}
+  → tool routines_get {"name":"template"}
+  → tool routines_list {}
+  → tool routines_get {"name":"morning-check-in"}
+  → tool docs_search {"query":"routines definition template branch condition local.log radio.connect"}
+  → tool routines_actions_list {"section":"definition_template"}
+  → tool find_stations {"filters":{"bands":["40m","80m"]},"intent":"explore"}
+  → tool config_read {}
+  → tool docs_search {"query":"routine branch on connected success failure"}
+  → tool server_info {}
+  → tool find_stations {"callsigns":["WA-GATEWAYS"],"intent":"lookup"}
+  → tool routines_save {"def":{"routine":"gateway-poll-40-80","schema_version":1,"tracks":[{"name":"t","steps":[{"action":"radio.connect","id":"c40","params":{"stations":["@station-set:wa-gateways"],"tune_band":"40m"}},{"control":"branch","else":["f40"],"id":"b40","on":"c40.connected","then":["l40"]},{"action":"local.log","id":"l40","params":{"message":"connected to @station-set:wa-gateways on 40m"}},{"action":"local.log","id":"f40","params":{"message":"no gateway reached"}},{"control":"end","id":"e40","on":"f40","reason":"no gateway"},{"action":"radio.connect","id":"c80","params":{"stations":["@station-set:wa-gateways"],"tune_band":"80m"}},{"control":"branch","else":["f80"],"id":"b80","on":"c80.connected","then":["l80"]},{"action":"local.log","id":"l80","params":{"message":"connected to @station-set:wa-gateways on 80m"}},{"action":"local.log","id":"f80","params":{"message":"no gateway reached"}},{"control":"end","id":"e80","on":"f80","reason":"no gateway"}]}],"transmit_mode":"attended","triggers":[{"end":"09:00","every":"20m","start":"06:00","type":"schedule"},{"type":"manual"}]}}
+  → tool routines_actions_list {"section":"controls"}
+  → tool routines_step_update {"patch":{"params":{"message":"connected to @station-set:wa-gateways on 40m (band: 40m)"}},"routine":"gateway-poll-40-80","step_id":"l40"}
+  → tool routines_save {"def":{"routine":"gateway-poll-40-80","schema_version":1,"tracks":[{"name":"t","steps":[{"action":"radio.connect","id":"c40","params":{"stations":["@station-set:wa-gateways"],"tune_band":"40m"}},{"control":"branch","else":["f40"],"id":"b40","on":"c40.connected","then":["l40"]},{"action":"local.log","id":"l40","params":{"message":"connected to @station-set:wa-gateways, station=??, band=40m"}},{"action":"local.log","id":"f40","params":{"message":"no gateway reached (40m failed)"}},{"control":"end","id":"e40","on":"f40","reason":"no gateway"},{"action":"radio.connect","id":"c80","params":{"stations":["@station-set:wa-gateways"],"tune_band":"80m"}},{"control":"branch","else":["f80"],"id":"b80","on":"c80.connected","then":["l80"]},{"action":"local.log","id":"l80","params":{"message":"connected to @station-set:wa-gateways, station=??, band=80m"}},{"action":"local.log","id":"f80","params":{"message":"no gateway reached (80m failed)"}},{"control":"end","id":"e80","on":"f80","reason":"no gateway"}]}],"transmit_mode":"attended","triggers":[{"end":"09:00","every":"20m","start":"06:00","type":"schedule"},{"type":"manual"}]}}
+  → tool routines_get {"name":"gateway-poll-40-80"}
+  → tool routines_save {"def":{"routine":"gateway-poll-40-80","schema_version":1,"tracks":[{"name":"t","steps":[{"action":"radio.connect","id":"c40","params":{"stations":["@station-set:wa-gateways"],"tune_band":"40m"}},{"control":"branch","else":["f40"],"id":"b40","on":"c40.connected","then":["l40"]},{"action":"local.log","id":"l40","params":{"message":"gateway reached on 40m"}},{"action":"local.log","id":"f40","params":{"message":"no gateway reached"}},{"control":"end","id":"e40","on":"f40","reason":"no gateway"},{"action":"radio.connect","id":"c80","params":{"stations":["@station-set:wa-gateways"],"tune_band":"80m"}},{"control":"branch","else":["f80"],"id":"b80","on":"c80.connected","then":["l80"]},{"action":"local.log","id":"l80","params":{"message":"gateway reached on 80m"}},{"action":"local.log","id":"f80","params":{"message":"no gateway reached"}},{"control":"end","id":"e80","on":"f80","reason":"no gateway"}]}],"transmit_mode":"attended","triggers":[{"end":"09:00","every":"20m","start":"06:00","type":"schedule"},{"type":"manual"}]}}
+  → tool routines_list {}
+  → tool routines_enable {"name":"gateway-poll-40-80"}
+  → tool routines_get {"name":"gateway-poll-40-80"}
+  → tool routines_save {"def":{"routine":"gateway-poll-40-80","schema_version":1,"tracks":[{"name":"t","steps":[{"action":"radio.connect","id":"s1","params":{"stations":["@station-set:wa-gateways"],"tune_band":"40m"}},{"control":"branch","else":["s3"],"id":"s2","on":"s1.connected","then":["s4"]},{"action":"local.log","id":"s4","params":{"message":"gateway reached @station-set:wa-gateways on 40m"}},{"action":"local.log","id":"s3","params":{"message":"no gateway reached"}},{"control":"end","id":"s5","on":"s3","reason":"no gateway"},{"action":"radio.connect","id":"s6","params":{"stations":["@station-set:wa-gateways"],"tune_band":"80m"}},{"control":"branch","else":["s8"],"id":"s7","on":"s6.connected","then":["s9"]},{"action":"local.log","id":"s9","params":{"message":"gateway reached @station-set:wa-gateways on 80m"}},{"action":"local.log","id":"s8","params":{"message":"no gateway reached"}},{"control":"end","id":"s10","on":"s8","reason":"no gateway"}]}],"transmit_mode":"attended","triggers":[{"end":"09:00","every":"20m","start":"06:00","type":"schedule"},{"type":"manual"}]}}
+  → tool routines_get {"name":"morning-check-in"}
+  → tool routines_rename {"new_name":"gateway-poll-40-80","routine":"morning-check-in"}
+  → tool routines_get {"name":"gateway-poll-40-80"}
+  → tool routines_get {"name":"morning-check-in"}
+  → tool routines_save {"def":{"routine":"gateway-poll-40-80","schema_version":1,"tracks":[{"name":"t","steps":[{"action":"radio.connect","id":"s1","params":{"stations":["@station-set:wa-gateways"],"tune_band":"40m"}},{"control":"branch","else":["s3"],"id":"s2","on":"s1.connected","then":["s4"]},{"action":"local.log","id":"s4","params":{"message":"gateway reached @station-set:wa-gateways on 40m"}},{"action":"local.log","id":"s3","params":{"message":"no gateway reached"}},{"control":"end","id":"s5","on":"s3","reason":"no gateway"},{"action":"radio.connect","id":"s6","params":{"stations":["@station-set:wa-gateways"],"tune_band":"80m"}},{"control":"branch","else":["s8"],"id":"s7","on":"s6.connected","then":["s9"]},{"action":"local.log","id":"s9","params":{"message":"gateway reached @station-set:wa-gateways on 80m"}},{"action":"local.log","id":"s8","params":{"message":"no gateway reached"}},{"control":"end","id":"s10","on":"s8","reason":"no gateway"}]}],"transmit_mode":"attended","triggers":[{"end":"09:00","every":"20m","start":"06:00","type":"schedule"},{"type":"manual"}]}}
+  → tool routines_list {}
+  → tool routines_trigger_set {"routine":"morning-check-in","triggers":[{"end":"09:00","every":"20m","start":"06:00","type":"schedule"},{"type":"manual"}]}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"radio.connect","id":"c40","params":{"stations":["@station-set:wa-gateways"],"tune_band":"40m"}}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"control":"branch","else":["f40"],"id":"b40","on":"c40.connected","then":["l40"]}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"local.log","id":"l40","params":{"message":"gateway reached @station-set:wa-gateways on 40m"}}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"local.log","id":"f40","params":{"message":"no gateway reached"}}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"control":"end","id":"e40","on":"f40","reason":"no gateway"}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"radio.connect","id":"c80","params":{"stations":["@station-set:wa-gateways"],"tune_band":"80m"}}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"control":"branch","else":["f80"],"id":"b80","on":"c80.connected","then":["l80"]}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"local.log","id":"l80","params":{"message":"gateway reached @station-set:wa-gateways on 80m"}}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"local.log","id":"f80","params":{"message":"no gateway reached"}}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"control":"end","id":"e80","on":"f80","reason":"no gateway"}}
+  → tool routines_rename {"expected_revision":"rev-2","new_name":"gateway-poll-40-80","routine":"morning-check-in"}
+  → tool routines_get {"name":"morning-check-in"}
+  → tool routines_rename {"expected_revision":"seed-rev-1","new_name":"gateway-poll-40-80","routine":"morning-check-in"}
+  → tool routines_step_remove {"expected_revision":"seed-rev-2","routine":"gateway-poll-40-80","step_id":"s1"}
+  → tool routines_step_remove {"routine":"gateway-poll-40-80","step_id":"s1"}
+  → tool routines_get {"name":"gateway-poll-40-80"}
+  → tool routines_list {}
+  → tool routines_save {"def":{"routine":"gateway-poll-40-80","schema_version":1,"tracks":[{"name":"t","steps":[{"action":"radio.connect","id":"c40","params":{"stations":["@station-set:wa-gateways"],"tune_band":"40m"}},{"control":"branch","else":["f40"],"id":"b40","on":"c40.connected","then":["l40"]},{"action":"local.log","id":"l40","params":{"message":"gateway reached @station-set:wa-gateways on 40m"}},{"action":"local.log","id":"f40","params":{"message":"no gateway reached"}},{"control":"end","id":"e40","on":"f40","reason":"no gateway"},{"action":"radio.connect","id":"c80","params":{"stations":["@station-set:wa-gateways"],"tune_band":"80m"}},{"control":"branch","else":["f80"],"id":"b80","on":"c80.connected","then":["l80"]},{"action":"local.log","id":"l80","params":{"message":"gateway reached @station-set:wa-gateways on 80m"}},{"action":"local.log","id":"f80","params":{"message":"no gateway reached"}},{"control":"end","id":"e80","on":"f80","reason":"no gateway"}]}],"transmit_mode":"attended","triggers":[{"end":"09:00","every":"20m","start":"06:00","type":"schedule"},{"type":"manual"}]}}
+  → tool routines_get {"name":"morning-check-in"}
+  → tool routines_trigger_set {"routine":"morning-check-in","triggers":[{"end":"09:00","every":"20m","start":"06:00","type":"schedule"},{"type":"manual"}]}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"radio.connect","id":"c40","params":{"stations":["@station-set:wa-gateways"],"tune_band":"40m"}}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"control":"branch","else":["f40"],"id":"b40","on":"c40.connected","then":["l40"]}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"local.log","id":"l40","params":{"message":"gateway reached @station-set:wa-gateways on 40m"}}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"local.log","id":"f40","params":{"message":"no gateway reached"}}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"control":"end","id":"e40","on":"f40","reason":"no gateway"}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"radio.connect","id":"c80","params":{"stations":["@station-set:wa-gateways"],"tune_band":"80m"}}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"control":"branch","else":["f80"],"id":"b80","on":"c80.connected","then":["l80"]}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"local.log","id":"l80","params":{"message":"gateway reached @station-set:wa-gateways on 80m"}}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"local.log","id":"f80","params":{"message":"no gateway reached"}}}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"control":"end","id":"e80","on":"f80","reason":"no gateway"}}
+  → tool routines_rename {"expected_revision":"seed-rev-2","new_name":"gateway-poll-40-80","routine":"morning-check-in"}
+  → tool routines_rename {"new_name":"gateway-poll-40-80","routine":"morning-check-in"}
+  → tool routines_get {"name":"gateway-poll-40-80"}
+  → tool routines_list {}
+  → tool routines_step_remove {"routine":"morning-check-in","step_id":"s1"}
+  → tool routines_get {"name":"morning-check-in"}
+  → tool routines_trigger_set {"routine":"morning-check-in","triggers":[{"end":"09:00","every":"20m","start":"06:00","type":"schedule"},{"type":"manual"}]}
+  → tool routines_step_add {"routine":"morning-check-in","step":{"action":"radio.connect","id":"c40","params":{"stations":["@station-set:wa-gateways"],"tune_band":"40m"}}}
+d3zwe-exit=0

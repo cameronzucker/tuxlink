@@ -1,0 +1,65 @@
+# Candidate D — template + slots, the whole contract on one page
+
+**Status: DISPOSABLE draft for the alternatives instrument (tuxlink-qqmys).
+Peer of the ratified five-construct one-pager; same judgment-artifact rule:
+if it stops fitting on one page, that is a finding.**
+
+The model never writes structure — not nesting, not blocks, not steps. It
+chooses one template from the registry and states values for that template's
+slots, restating the WHOLE configuration on every edit — "change X" means
+"here is the template and all its slots again, with X different." A
+deterministic compiler we own expands template + slots into the real
+`RoutineDef`; the existing validator and executor run the result unchanged.
+
+## The registry (one template today; growth is a reviewed registry change)
+
+**`scheduled-connect-with-fallback`** — try stations from a set across bands
+in order, on a schedule; log the outcome either way; end failed honestly
+when nothing is reached.
+
+| slot | meaning |
+|---|---|
+| `name` | the routine's name |
+| `every` | interval like `"15m"`, or `null` for manual-only |
+| `window` | `"HH:MM-HH:MM"`, or `null` for any time |
+| `stations` | a station-set reference like `"@station-set:or-gateways"` |
+| `bands` | ordered list, fallback order, e.g. `["40m", "80m"]` |
+| `success_log` | text; `$band` / `$station` name the connect's outputs |
+| `failure_log` | text |
+| `fail_reason` | text for the honest failed end |
+
+Emission is ONE JSON object and nothing else:
+
+```json
+{ "template": "scheduled-connect-with-fallback",
+  "slots": { "name": "nearest-40m-dial", "every": "15m",
+             "window": "07:00-08:00",
+             "stations": "@station-set:or-gateways",
+             "bands": ["40m", "80m"],
+             "success_log": "Connected on $band to $station",
+             "failure_log": "No gateway reached on any band",
+             "fail_reason": "no gateway" } }
+```
+
+## The rules (all of them)
+
+- **Only defined slots exist.** A request needing anything no slot expresses
+  is partially inexpressible: fill what the slots can say, leave the rest
+  out. Inventing a slot is impossible to compile — a named refusal, never a
+  guess.
+- **Whole-configuration emission, always.** Edits are restatements of
+  template + every slot.
+- **The template carries the doctrine.** The failure arm is not optional:
+  its slots exist, so every routine states its honest failure behavior.
+- **Every compile echoes** the plain-language readback of what was built.
+  Silent interpretation is prohibited.
+- **Consent is untouched.** No template and no slot can express transmit
+  mode, acknowledgments, or authority.
+
+## What this candidate deliberately leaves out
+
+Retry, delay, branch-on-value, beacons, sub-routines, multi-track — no slot
+expresses them, and new capability arrives only as a NEW registry template:
+a deterministic, human-reviewed artifact, never model-invented. The premise
+under test: a small model that failed step-surgery can pick the right
+template and state its values correctly.
