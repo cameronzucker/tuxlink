@@ -8,7 +8,7 @@ description: Route a bounded, spec-complete, leaf-scope code task to the free lo
 Evidence base: graded evals (3/3) in
 `dev/evals/2026-08-09-inkling-pi-subagent-eval.md` and the real-P1 A/B in
 `dev/evals/2026-08-10-nyyr2-ab-inkling-vs-sonnet.md`. Summary: Inkling
-(`inkling-small-nvfp4`, 256K, Spark vLLM) completes bounded real tasks in
+(`inkling-small-nvfp4`; API model id `thinkingmachines/Inkling-Small-NVFP4`; 256K, Spark vLLM) completes bounded real tasks in
 25–90 min at zero token cost with ~zero touches — when and only when the
 parent pays the fixed cost of a spec-complete task file. Serving pace makes
 this a background lane, never a pairing partner.
@@ -22,7 +22,7 @@ or defer — never launch a 90-minute round at a dead endpoint.
 ```bash
 # 1. Catalog: the endpoint answers AND serves the expected model.
 curl -sS -m 8 https://inference.twin-bramble.ts.net/v1/models \
-  | jq -e '.data[].id | select(. == "inkling-small-nvfp4")' >/dev/null \
+  | jq -e '.data[].id | select(. == "thinkingmachines/Inkling-Small-NVFP4")' >/dev/null \
   || { echo "SERVING DOWN or wrong profile — do not dispatch"; }
 
 # 2. Generation: a real 1-token completion. A dead engine can still return
@@ -30,7 +30,7 @@ curl -sS -m 8 https://inference.twin-bramble.ts.net/v1/models \
 #    reasoning or content, and expect this to take seconds, not instantly.
 curl -sS -m 90 https://inference.twin-bramble.ts.net/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"inkling-small-nvfp4","messages":[{"role":"user","content":"Say OK"}],"max_tokens":16}' \
+  -d '{"model":"thinkingmachines/Inkling-Small-NVFP4","messages":[{"role":"user","content":"Say OK"}],"max_tokens":16}' \
   | jq -e '.choices[0].message | (.reasoning // .content // "") | length > 0' >/dev/null \
   || { echo "ENGINE NOT GENERATING — do not dispatch"; }
 ```
