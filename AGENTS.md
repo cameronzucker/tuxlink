@@ -108,13 +108,12 @@ Key routing rules:
 - Bugs, errors, "why is this broken", 500 errors → invoke investigate
 - Ship, deploy, push, create PR → invoke ship
 - QA, test the site, find bugs → invoke qa
-- Code review, check my diff → invoke review
+- Code review, check my diff → invoke code-review
 - Update docs after shipping → invoke document-release
 - Weekly retro → invoke retro
 - Design system, brand → invoke design-consultation
 - Visual audit, design polish → invoke design-review
 - Architecture review → invoke plan-eng-review
-- Save progress, checkpoint, resume → invoke checkpoint
 - Code quality, health check → invoke health
 - Bounded, spec-complete, leaf-scope code task with a mechanical test gate → invoke inkling-dispatch (free local subagent lane; serving pre-flight + eligibility checklist in `.claude/skills/inkling-dispatch/SKILL.md`) before spending frontier tokens
 - About to claim a feature is end-to-end shipped / done / complete, or mark a PR ready → invoke **wire-walk** (HARD GATE). Operator supplies the user flows greenfield (do NOT draft them); trace each to code (`file:line`); any broken primary flow = NOT shipped. Canonical + rationale: `.claude/skills/wire-walk/SKILL.md` and the CLAUDE.md "Wire-walk gate" section.

@@ -89,13 +89,12 @@ Key routing rules:
 - Bugs, errors, "why is this broken", 500 errors → invoke investigate
 - Ship, deploy, push, create PR → invoke ship
 - QA, test the site, find bugs → invoke qa
-- Code review, check my diff → invoke review
+- Code review, check my diff → invoke code-review
 - Update docs after shipping → invoke document-release
 - Weekly retro → invoke retro
 - Design system, brand → invoke design-consultation
 - Visual audit, design polish → invoke design-review
 - Architecture review → invoke plan-eng-review
-- Save progress, checkpoint, resume → invoke checkpoint
 - Code quality, health check → invoke health
 - Bounded, spec-complete, leaf-scope code task with a mechanical test gate → invoke inkling-dispatch (free local subagent lane) BEFORE spending frontier tokens; its Step-0 serving pre-flight and eligibility checklist decide, not vibes
 
@@ -157,7 +156,7 @@ The custom-prompt pattern is what worked for the `tuxlink-4ek` ARDOP UI adrev (2
 
 - **Authentication:** ChatGPT-mode, cached at `~/.codex/auth.json`. Already authenticated — no setup needed.
 - **Model policy — GPT-5.6 permitted ([ADR 0028](docs/adr/0028-lift-gpt-5-6-ban.md), supersedes the ADR 0023/0026 ban):** GPT-5.6 (e.g. `gpt-5.6-sol`, reachable via `npx --yes @openai/codex@latest exec -m gpt-5.6-sol …`) MAY be used for adversarial review and every other Tuxlink task; a GPT-5.6 adrev round satisfies the "at least one round via Codex" requirement. GPT-5.5 remains equally acceptable; GPT-5.6 variants (`sol`, `luna`) are now reachable on the ChatGPT plan too, so the original per-token cost caveat is retired — pick by task fit. Metered routing for any model is governed by §"Model spend — metered APIs are deny-by-default". No shadow/dual-run. Standing groundedness gates are unchanged — findings from any model are grounded against source before action. The ADR is canonical; this bullet is the pointer.
-- **When to use:** when a workflow (notably `superpowers:build-robust-features`) explicitly calls for "at least one round via Codex." Substitute Claude agents only when this is genuinely unavailable — it isn't unavailable here.
+- **When to use:** when a workflow (notably `build-robust-features`) explicitly calls for "at least one round via Codex." Substitute Claude agents only when this is genuinely unavailable — it isn't unavailable here.
 - **MCP-server mode:** `npx --yes @openai/codex mcp-server` — expose Codex as an MCP server if you want the main loop to call it like a tool.
 
 Write adversarial-review output to `dev/adversarial/<date>-<topic>-codex.md`. **This directory is `.gitignore`d** (per the 2026-05-17 "release-ready public repo" cleanliness call): raw codex/adversarial transcripts stay local-only as dev scratch. Summarize findings + dispositions in handoff docs, PR bodies, or pitfalls entries as appropriate; the raw transcripts are reference material, not project artifacts. If a future operator needs to consult an older review trace, they're on the original author's local disk; don't expect them in the public repo.
