@@ -232,6 +232,18 @@ forensics trail.
 
 **If you forget to set a moniker early in the session:** pick one now and apply it to all forward commits. Do not retroactively amend earlier commits (amending shared/recent commits is banned — see below).
 
+## Session conduct — standing operator directives (2026-08-18)
+
+Recorded verbatim from the operator; permanent, applies to every session and every agent:
+
+1. MERGE GATE: gh pr merge only after CI is GREEN on the PR's verified headSha.
+   Never --admin, never merge with checks pending. Docs-only PRs still wait for
+   their gate. "Merge on green" is a grant CONDITIONED on green, not a grant to merge.
+2. LOAD-BEARING CHANGES (hooks, .githooks, CI workflows, settings): operator
+   sign-off authorizes the change; it does NOT waive the gates. Full CI + a Codex
+   adversarial round BEFORE merge, every time.
+3. One git write per call; verify pwd+branch first; cwd resets are real.
+
 ## Git workflow — worktrees mandatory under bd-issue ownership (ADR 0008)
 
 When the `block-main-checkout-race.sh` hook denies a write op citing "another live session is active," create a worktree per the QUICK FIX in the deny message and re-run your op there. The hook's determination is authoritative; agents do not re-decide it via `get_tuxlink_sessions.py` or any other source. Worktrees are MANDATORY for write work when the hook says another live session is active. Read-only ops and `bd` commands stay free regardless.
