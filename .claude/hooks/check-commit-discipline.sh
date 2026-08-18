@@ -59,12 +59,19 @@ fi
 # parked on 'main' (tuxlink-kw1fd: every worktree commit was denied as a
 # direct-to-main commit, blocking the exact flow ADR 0008 mandates). Same
 # payload-cwd pattern as block-main-checkout-race.sh (codex D1 review).
-# If the command redirects git elsewhere via -C / --git-dir, fall back to
-# $REPO — conservative: identical verdict to the pre-fix behavior.
+# If the command redirects git elsewhere — the -C / --git-dir / --work-tree
+# flag forms, or GIT_DIR= / GIT_WORK_TREE= environment assignments anywhere
+# in the call (tuxlink-v7dju, Codex retro-review HIGH: the env forms redirect
+# the real operation while the payload cwd still looks like a worktree) —
+# fall back to $REPO, conservative: identical verdict to the pre-fix
+# behavior. Prose mentioning these tokens in a commit message trips the
+# fallback in the deny direction only; reword the message (same convention
+# as block-destructive-git.sh's heredoc guidance).
 payload_cwd=$(printf '%s' "$input" | jq -r '.cwd // ""')
 cwd_for_git="$REPO"
 if [[ -n "$payload_cwd" && -d "$payload_cwd" ]] \
-   && ! printf '%s' "$cmd" | grep -qE '\bgit[[:space:]]+(-C[[:space:]]|--git-dir(=|[[:space:]]))'; then
+   && ! printf '%s' "$cmd" | grep -qE '\bgit[[:space:]]+(-C[[:space:]]|--git-dir(=|[[:space:]])|--work-tree(=|[[:space:]]))' \
+   && ! printf '%s' "$cmd" | grep -qE '(^|[[:space:]&;|])(GIT_DIR|GIT_WORK_TREE)='; then
     resolved_cwd=$(cd "$payload_cwd" 2>/dev/null && pwd)
     if [[ "$resolved_cwd" == "$REPO" || "$resolved_cwd" == "$REPO"/* ]]; then
         cwd_for_git="$resolved_cwd"
