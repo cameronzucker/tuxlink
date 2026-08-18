@@ -64,14 +64,18 @@ fi
 # in the call (tuxlink-v7dju, Codex retro-review HIGH: the env forms redirect
 # the real operation while the payload cwd still looks like a worktree) —
 # fall back to $REPO, conservative: identical verdict to the pre-fix
-# behavior. Prose mentioning these tokens in a commit message trips the
-# fallback in the deny direction only; reword the message (same convention
-# as block-destructive-git.sh's heredoc guidance).
+# behavior. The env-token match is deliberately boundary-free (Codex round
+# 2: quoted `env "..."` and append-assign spellings evade any boundary
+# class; the bare token is the trigger). GIT_INDEX_FILE / GIT_COMMON_DIR /
+# core.worktree were empirically shown NOT to relocate the commit's branch
+# and are excluded. Prose mentioning these tokens in a commit message trips
+# the fallback in the deny direction only; reword the message (same
+# convention as block-destructive-git.sh's heredoc guidance).
 payload_cwd=$(printf '%s' "$input" | jq -r '.cwd // ""')
 cwd_for_git="$REPO"
 if [[ -n "$payload_cwd" && -d "$payload_cwd" ]] \
    && ! printf '%s' "$cmd" | grep -qE '\bgit[[:space:]]+(-C[[:space:]]|--git-dir(=|[[:space:]])|--work-tree(=|[[:space:]]))' \
-   && ! printf '%s' "$cmd" | grep -qE '(^|[[:space:]&;|])(GIT_DIR|GIT_WORK_TREE)='; then
+   && ! printf '%s' "$cmd" | grep -qE '(GIT_DIR|GIT_WORK_TREE)\+?='; then
     resolved_cwd=$(cd "$payload_cwd" 2>/dev/null && pwd)
     if [[ "$resolved_cwd" == "$REPO" || "$resolved_cwd" == "$REPO"/* ]]; then
         cwd_for_git="$resolved_cwd"
