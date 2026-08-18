@@ -12693,14 +12693,15 @@ hw:CARD=Device,DEV=0
     /// set→read→restore sequence. Without this gate, env-mutating tests in this
     /// binary race (tuxlink-j0ij precedent).
     ///
-    /// Uses `tokio::sync::Mutex` rather than `std::sync::Mutex` because the
-    /// callers are `#[tokio::test]` async functions that hold the guard across
-    /// `.await` points; std::sync::Mutex would block the worker thread when
-    /// contended (clippy::await_holding_lock), while tokio's Mutex yields to
-    /// the executor.
-    async fn position_set_source_env_lock() -> tokio::sync::MutexGuard<'static, ()> {
-        static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-        LOCK.lock().await
+    /// Delegates to the crate-shared guard's lock (tuxlink-a4i1m): this fn
+    /// was previously a LOCAL tokio Mutex — a second, disjoint exclusion, so
+    /// modem/ft8 tests using `test_env::lock_config_dir` could mutate and
+    /// restore TUXLINK_CONFIG_DIR mid-flight under these tests (the msrv
+    /// NotFound flake). One static per the test_env doctrine; these tests
+    /// keep their own set→read→restore sequence, the shared lock just makes
+    /// it exclusive against every other env-mutating test in the binary.
+    async fn position_set_source_env_lock() -> crate::modem_commands::test_env::EnvLockGuard {
+        crate::modem_commands::test_env::lock_shared_async().await
     }
 
     // Codex P0 #1 / spec §1.1: position_set_source('Gps') mirrors the arbiter

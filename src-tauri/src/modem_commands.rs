@@ -2641,22 +2641,43 @@ pub fn ardop_tune_rig(freq_hz: u64, sideband: Option<bool>) -> Result<(), String
 /// modules route through this; local copies are banned.
 #[cfg(test)]
 pub(crate) mod test_env {
-    use std::sync::{Mutex, MutexGuard};
+    // tokio::sync::Mutex (not std) so ASYNC env-mutating tests can hold the
+    // SAME exclusion across .await points (tuxlink-a4i1m: ui_commands' local
+    // tokio lock was a second, disjoint exclusion — a modem/ft8 test's guard
+    // drop could remove TUXLINK_CONFIG_DIR mid-flight under a ui_commands
+    // test, observed as the msrv NotFound flake). Sync #[test] callers use
+    // blocking_lock (panics inside a runtime — sync tests have none); async
+    // callers use lock_shared_async. No poisoning in tokio's Mutex, so the
+    // old poison-recovery path is gone by construction.
+    use tokio::sync::{Mutex, MutexGuard};
 
-    static LOCK: Mutex<()> = Mutex::new(());
+    static LOCK: Mutex<()> = Mutex::const_new(());
 
     pub(crate) struct ConfigDirGuard {
         _lock: MutexGuard<'static, ()>,
         prior: Option<std::ffi::OsString>,
     }
 
-    /// Point TUXLINK_CONFIG_DIR at `dir` for the guard's lifetime.
+    /// Point TUXLINK_CONFIG_DIR at `dir` for the guard's lifetime (sync tests).
     pub(crate) fn lock_config_dir(dir: &std::path::Path) -> ConfigDirGuard {
-        let lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let lock = LOCK.blocking_lock();
         let prior = std::env::var_os("TUXLINK_CONFIG_DIR");
         // SAFETY: LOCK serializes every env mutation in this test binary.
         unsafe { std::env::set_var("TUXLINK_CONFIG_DIR", dir) };
         ConfigDirGuard { _lock: lock, prior }
+    }
+
+    /// Same exclusion for ASYNC tests that manage the env var themselves
+    /// (ui_commands' position/favorites family): holds the lock, mutates
+    /// nothing, restores nothing.
+    pub(crate) struct EnvLockGuard {
+        _lock: MutexGuard<'static, ()>,
+    }
+
+    pub(crate) async fn lock_shared_async() -> EnvLockGuard {
+        EnvLockGuard {
+            _lock: LOCK.lock().await,
+        }
     }
 
     impl Drop for ConfigDirGuard {

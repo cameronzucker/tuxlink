@@ -5934,6 +5934,7 @@ mod native_read_state_tests {
     /// in the message the answerer receives: it must say N7CPZ (the session call),
     /// not W7AUX (the config call).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial_test::serial]
     async fn packet_connect_inner_base_call_is_session_not_config() {
         use crate::identity::{Callsign, IdentityHandle, SessionIdentity};
 
