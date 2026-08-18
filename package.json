@@ -28,12 +28,12 @@
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-shell": "^2.3.5",
     "color2k": "^2.0.4",
-    "dompurify": "^3.4.12",
+    "dompurify": "^3.4.13",
     "leaflet": "^1.9.4",
     "marked": "^15.0.12",
     "marked-extended-tables": "^2.0.1",
     "marked-footnote": "^1.4.0",
-    "mermaid": "^11.16.0",
+    "mermaid": "^11.16.1",
     "pbf": "^4.0.2",
     "pmtiles": "^4",
     "potpack": "^2.1.0",
@@ -67,7 +67,10 @@
       "esbuild"
     ],
     "overrides": {
-      "undici@<7.28.0": "^7.28.0",
+      "undici@<7.29.0": "^7.29.0",
+      "js-yaml@<4.3.1": "^4.3.1",
+      "postcss@<8.5.23": "^8.5.23",
+      "fast-uri@<3.1.5": "^3.1.5",
       "esbuild@>=0.27.3 <0.28.1": "^0.28.1",
       "@babel/core@<=7.29.0": "^7.29.6"
     }
