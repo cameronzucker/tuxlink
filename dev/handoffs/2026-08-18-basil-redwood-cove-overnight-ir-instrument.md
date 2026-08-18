@@ -29,7 +29,20 @@ dependabot rebase requested; #1310 (react group) had a pre-rebase amd64
 verify FAILURE and is rebasing — judge on fresh CI; #1277 (jsdom 30) has a
 CI failure — NOT merged, needs a look; #1309 was already closed (not ours).
 The stale "watch #1277/#1278/#1310" state supersedes the dependabot
-paragraph in the ledger below.
+paragraph in the ledger below. Late addition: #1278 (react-query) came back
+green after its rebase and was MERGED on the verified head. The failures on
+#1277 and #1310 are the SAME test —
+`ui_commands::tests::concurrent_config_set_grid_and_position_set_source_serialize`
+— failing on two independent fresh runs (amd64 verify + arm64 msrv), panic
+`NotFound` on the DEFAULT config path, i.e. `TUXLINK_CONFIG_DIR` was unset
+mid-test: a cross-module env-var race the #1371 shared-lock fix does not
+cover. Full diagnosis + mechanism map (three independent serialization
+domains that don't exclude each other) filed as **the config-dir
+serialization bug (tuxlink-8fy15, P1)** — fix deferred to operator-awake
+work per standing conduct (multi-module load-bearing test infra + a design
+choice). A rerun of #1310's failed job was dispatched as a third data
+point. One more morning flag: GitHub reports 1 moderate vulnerability
+still open on main (dependabot alert 15) after the sweep.
 
 SAME SESSION CONTINUES across a deliberate pre-overnight compaction (operator
 call: 65% context + overnight run = compact on committed artifacts, the
