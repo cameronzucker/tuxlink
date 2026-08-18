@@ -5,6 +5,30 @@ shipped, bug-hunt cycles, adversarial reviews). Keyed by date + topic.
 
 ---
 
+## 2026-08-18 — In-situ IR ladder instrument: pre-registered spec executed overnight, 33/33 runs (tuxlink-che1k)
+
+Session basil-redwood-cove (overnight, operator-directed, across a planned
+compaction with a re-entry gate). Built and ran the in-situ instrument the
+clean-room probes could not be: `tuxlink-mcp-testserver` (full 95-tool
+production router, real EgressGuard fresh per run) + `d3zwe` (unmodified
+production system prompt) + Inkling at serving defaults, 5 cells × 3
+candidate surfaces × 2 samples + 3 native-surface controls. Shakedown
+label; spike gates unchanged. Key discriminations: 1/30 sheet runs defected
+to `routines_save` after reconciling the sheet against the real executor
+schema (a clean-room-invisible failure class); controls reproduced the
+banked ladder pathology live (7/40/40 mutating calls, seed-routine renames,
+fabricated callsign, invented param); 18/18 edit+correction runs pristine
+with zero tool calls; refusal smuggling into artifact free-text once per
+surface under inexpressible pressure; no in-situ retry unrolling (contrast
+probe v3's 3/3). Canonical:
+`dev/spikes/2026-08-13-ir-compiler-slice/RESULTS-2026-08-18-insitu.md`
+(+ runner, grader, all raw captures committed). Also overnight: 10 PRs
+merged on green (3 session PRs + 7 dependabot rungs), 2 superseded
+dependabot PRs closed, 4 bd issues closed, 3 worktrees disposed per ADR
+0009.
+
+---
+
 ## 2026-07-18 — VARA.ini agent-config shipped whole: app glue + live R2 bounce validation + MCP tools (tuxlink-iww9r, PR #1156)
 
 Session isthmus-sage-owl, continuing fir-towhee-maple's increment 1 (the
