@@ -53,7 +53,24 @@ if ! printf '%s' "$cmd" | grep -qE 'Agent:[[:space:]]+[a-z0-9_-]+'; then
 fi
 
 # Check 3+4: branch protection
-branch=$(cd "$REPO" 2>/dev/null && git rev-parse --abbrev-ref HEAD 2>/dev/null) || branch=""
+# Resolve the branch from the PAYLOAD cwd — the checkout the commit actually
+# runs in — constrained under $REPO. The script's own location is always the
+# main checkout, which misjudged worktree commits once the main checkout
+# parked on 'main' (tuxlink-kw1fd: every worktree commit was denied as a
+# direct-to-main commit, blocking the exact flow ADR 0008 mandates). Same
+# payload-cwd pattern as block-main-checkout-race.sh (codex D1 review).
+# If the command redirects git elsewhere via -C / --git-dir, fall back to
+# $REPO — conservative: identical verdict to the pre-fix behavior.
+payload_cwd=$(printf '%s' "$input" | jq -r '.cwd // ""')
+cwd_for_git="$REPO"
+if [[ -n "$payload_cwd" && -d "$payload_cwd" ]] \
+   && ! printf '%s' "$cmd" | grep -qE '\bgit[[:space:]]+(-C[[:space:]]|--git-dir(=|[[:space:]]))'; then
+    resolved_cwd=$(cd "$payload_cwd" 2>/dev/null && pwd)
+    if [[ "$resolved_cwd" == "$REPO" || "$resolved_cwd" == "$REPO"/* ]]; then
+        cwd_for_git="$resolved_cwd"
+    fi
+fi
+branch=$(git -C "$cwd_for_git" rev-parse --abbrev-ref HEAD 2>/dev/null) || branch=""
 
 case "$branch" in
     main)
