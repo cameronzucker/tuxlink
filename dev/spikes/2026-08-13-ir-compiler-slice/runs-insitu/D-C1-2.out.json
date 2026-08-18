@@ -1,0 +1,1 @@
+{"kind":"completed","text":"{\"template\":\"scheduled-connect-with-fallback\",\"slots\":{\"name\":\"wa-dial\",\"every\":\"20m\",\"window\":\"06:00-09:00\",\"stations\":\"@station-set:wa-gateways\",\"bands\":[\"40m\",\"80m\"],\"success_log\":\"Reached $station on $band\",\"failure_log\":\"No gateway was reached\",\"fail_reason\":\"no gateway\"}}"}

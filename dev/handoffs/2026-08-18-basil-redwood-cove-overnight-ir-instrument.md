@@ -1,5 +1,36 @@
 # Overnight handoff + compaction re-entry gate — basil-redwood-cove, 2026-08-18 ~03:30 AZT
 
+## OVERNIGHT OUTCOME (added ~05:00 AZT, post-run — read this first)
+
+The re-entry gate was executed in full post-compaction (all reads; live state
+verified; one divergence recorded: ALTERNATIVES.md lived on the qqmys branch,
+not the spike dir — errata E7). The instrument ran to completion: **33/33
+runs, zero provider errors, zero timeouts.** Canonical results:
+`dev/spikes/2026-08-13-ir-compiler-slice/RESULTS-2026-08-18-insitu.md`
+(headline findings + mechanical-vs-eyeball table + errata + every emission
+verbatim), raw captures in `runs-insitu/`. Shakedown label holds; spike
+gates unchanged. Headlines: 1/30 sheet runs defected to `routines_save`
+(sheet-vs-real-executor competition — invisible in the clean room); controls
+reproduced the ladder pathology live (7/40/40 mutating calls, seed-routine
+renames, fabricated callsign); all 18 edit/correction runs were pristine
+with zero tool calls; refusal smuggling into artifact free-text appeared
+once per surface under inexpressible pressure; nobody unrolled the retry
+in situ (contrast probe v3's 3/3 — both sides of the flatness ruling now
+have operational evidence).
+
+Also completed overnight, all merged ON GREEN on verified headShas:
+#1372 (security sweep), #1373 (skill model-id fix), #1374 (IR evidence
+package), and dependabot #1269 #1271 #1272 #1274 #1276 (cargo patches),
+#1273 (radix minors), #1275 (jest-dom dev-major). Superseded dependabot
+#1312/#1313 closed with comments. bd issues izcq0/wnfkm/qqmys closed; their
+three worktrees disposed per ADR 0009 (clean inventories; node_modules
+only). Ladder remainder for morning: #1278 (react-query) conflicted →
+dependabot rebase requested; #1310 (react group) had a pre-rebase amd64
+verify FAILURE and is rebasing — judge on fresh CI; #1277 (jsdom 30) has a
+CI failure — NOT merged, needs a look; #1309 was already closed (not ours).
+The stale "watch #1277/#1278/#1310" state supersedes the dependabot
+paragraph in the ledger below.
+
 SAME SESSION CONTINUES across a deliberate pre-overnight compaction (operator
 call: 65% context + overnight run = compact on committed artifacts, the
 anti-drift structure from the 2026-08-17 incident review). Keep the moniker

@@ -1,0 +1,1 @@
+{"kind":"completed","text":"{\"routine\":\"or-gateway-check\",\"every\":\"15m\",\"do\":[{\"connect\":{\"stations\":\"@station-set:or-gateways\",\"bands\":[\"40m\",\"80m\"]},\"on_success\":[{\"log\":\"Connected on $band to $station\"}],\"on_failure\":[{\"log\":\"No gateway reached\"},{\"end\":{\"failed\":true,\"reason\":\"no gateway\"}}]}]}"}

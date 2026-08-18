@@ -1,0 +1,1 @@
+{"kind":"completed","text":"routine wa-morning-check every 20m\nconnect @station-set:wa-gateways on 40m, 80m\n  on success:\n    log \"Reached $station on $band\"\n  on failure:\n    log \"No gateway was reached\"\n    end failed \"all bands exhausted\""}

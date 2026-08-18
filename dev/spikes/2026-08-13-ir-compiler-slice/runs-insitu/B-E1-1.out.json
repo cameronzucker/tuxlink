@@ -1,0 +1,1 @@
+{"kind":"completed","text":"```text\nroutine or-gateway-check every 15m\nconnect @station-set:or-gateways on 40m, 80m\n  on success:\n    log \"Connected on $band to $station\"\n  on failure:\n    log \"No gateway reached\"\n    end failed \"no gateway\"\n```"}

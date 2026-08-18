@@ -1,0 +1,12 @@
+d3zwe: connecting to MCP socket /run/user/1000/tuxlink-ir/insitu.sock
+d3zwe: connected — 95 tools available
+  → tool routines_actions_list {"action":"local.log"}
+  → tool routines_actions_list {"section":"actions"}
+  → tool routines_list {}
+  → tool routines_get {"name":"morning-check-in"}
+  → tool docs_search {"query":"spike IR disposable draft whole-routine emission contract"}
+  → tool docs_search {"query":"routine definition contract syntax blocks nesting"}
+  → tool routines_actions_list {"section":"definition_template"}
+  → tool server_info {}
+  → tool routines_save {"def":{"routine":"spike-40m-80m-fallback","schema_version":1,"tracks":[{"name":"t","steps":[{"action":"local.log","id":"s1","on_radio_busy":"wait","params":{"message":"Attempting 40m / 80m fallback on @station-set:wa-gateways"}},{"action":"radio.connect","id":"s2","on_radio_busy":"wait","params":{"stations":["@station-set:wa-gateways"]}},{"action":"local.log","id":"s3","on_radio_busy":"wait","params":{"message":"Connected to gateway (band/station captured only if link reports them; $band/$station interpolation is not a real step parameter — see spike finding)"}},{"action":"local.log","id":"s4","on_radio_busy":"wait","params":{"message":"No gateway reached on any band"}}]}],"transmit_mode":"attended","triggers":[{"every":"20m","type":"schedule"}]}}
+d3zwe-exit=0
