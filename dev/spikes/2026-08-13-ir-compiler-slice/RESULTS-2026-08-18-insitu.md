@@ -8,6 +8,59 @@ operator's one-pager read and the ladder/regression-read gate stand. The
 pre-registered spec ([INSTRUMENT-2026-08-18-insitu.md](INSTRUMENT-2026-08-18-insitu.md))
 was committed BEFORE the first run; deviations are in Errata, loudly.
 
+> **AMENDED 2026-08-18 (operator fact-check, morning review).** Findings 1
+> and 6 are RECLASSIFIED and the canned-routines-port contamination is
+> promoted to a first-class instrument defect. Read §"Amendment" below
+> before the findings; the findings' original text is preserved unedited
+> for the record, with reclassification tags.
+
+## Amendment (2026-08-18, operator fact-check)
+
+The operator's review established that a declared assumption is not a
+validity argument — pre-registration guarantees provenance, not soundness.
+Three consequences:
+
+1. **Findings 1 and 6 are reclassified: fixture-drift demonstration, not
+   candidate evidence.** The fresh-author cells ran the IR sheets in an
+   environment lacking the compiler the sheets reference. The shipped shape
+   of the IR feature INCLUDES its compiler; no configuration without an
+   intake surface is "in situ" for the feature. A model's behavior toward
+   an instruction artifact that references absent infrastructure — obeying
+   it anyway, or defecting to the live tools — transfers to the wired
+   feature in NEITHER direction. The one legitimately comparative residue:
+   the drift was identical across arms, so the BETWEEN-SURFACE differentials
+   (tool-surface pull by sheet; the lone defection under the one-pager)
+   remain weak directional signal about the surfaces relative to each
+   other, nothing more.
+2. **Mock-response contamination is a first-class instrument defect, not a
+   footnote residue.** The canned routines port's RESPONSES fed back into
+   model reasoning: `routines_save` unconditionally echoed success as the
+   seed routine at its seed revision with zero findings (production's
+   validator would have refused the alien definition loudly), and the mock
+   catalog is far poorer than the real engine. Verified against
+   `tuxlink-routines` source after the review: `Trigger` carries an
+   optional `window` field, a run-scoped variable system with declared
+   step outputs exists (`$sN.<key>`), and band-list machinery is first
+   class — so the model's in-run "inexpressibility" conclusions (and the
+   control runs' schema beliefs) were mock artifacts, largely FALSE of the
+   real engine. Grading is unaffected (it consumed args and emissions
+   only); every behavioral NARRATIVE drawn from tool responses is
+   contaminated.
+3. **The gating conclusion.** Three instruments (probe v2, probe v3, this
+   run) failed toward the comparative-fitness question in the same
+   direction for the same structural reason: the question cannot be
+   answered before the feature's minimal shape exists. The valid
+   instrument is this lane PLUS a real intake tool and a non-canned
+   routines port — i.e., it lives inside the spike. There is no fourth
+   pre-build instrument to design.
+
+What survives this amendment intact: the lane's mechanical shakedown (the
+run infrastructure works), the emittability corroboration (29/30 artifact
+emissions under production prompt + tools), the edit/correction-cell
+cleanliness (18/18, zero tool calls — suggestive, least contaminated), the
+cross-surface refusal-smuggling observation (artifact-shape, moderately
+robust), and all raw captures as data.
+
 ## Provenance
 
 - Worktree `worktrees/bd-tuxlink-che1k-ir-insitu-instrument`, branch
@@ -35,8 +88,9 @@ was committed BEFORE the first run; deviations are in Errata, loudly.
 
 ## Headline findings (shakedown observations, not spike conclusions)
 
-**1. The shipped surface participates, and the sheet placement loses to it
-once.** Every A-surface fresh-author run explored the live tools before
+**1. [RECLASSIFIED 2026-08-18 — fixture-drift demonstration, not candidate
+evidence; see §Amendment] The shipped surface participates, and the sheet
+placement loses to it once.** Every A-surface fresh-author run explored the live tools before
 answering (5–9 calls: `routines_actions_list`, `routines_list`,
 `routines_get`, `docs_search`, `server_info`). One run of thirty —
 A-N1-1 — fully defected: it called `routines_save` (mutating), compared the
@@ -87,7 +141,9 @@ composition. Both behaviors are now observed under different conditions;
 the flatness ruling (open decision 1) has operational evidence on both
 sides.
 
-**6. The controls reproduce the banked ladder pathology, live.** The same
+**6. [RECLASSIFIED 2026-08-18 — degraded reproduction against canned
+responses, directional only; see §Amendment] The controls reproduce the
+banked ladder pathology, live.** The same
 ask with NO sheet produced native id/track editing sessions of 28, 68, and
 60 tool calls (7, 40, 40 mutating): full saves re-emitted repeatedly,
 step-surgery thrash, `routines_rename` executed AGAINST the seed routine
