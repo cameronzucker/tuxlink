@@ -277,7 +277,7 @@ Work is not complete until `git push` succeeds AND a session-end handoff documen
 3. Update issue tracker status (`bd close <id>` / `bd update <id>`).
 4. `git push`: mandatory; retry until it succeeds.
 5. Clean up stashes + ensure remote task branches are deleted.
-6. Write a session-end handoff at `dev/handoffs/<YYYY-MM-DD>-<short-slug>.md` enumerating branch + working-tree + worktree state per [ADR 0009](docs/adr/0009-worktree-disposal-ritual.md).
+6. Write a session-end handoff at `dev/handoffs/<YYYY-MM-DD>-<short-slug>.md` — a **thin pointer to full-fidelity anchors per [ADR 0031](docs/adr/0031-handoffs-are-thin-pointers-to-full-fidelity-anchors.md)** (specs/plans/ADRs/bd issues are the sources of truth; handoffs never carry state lacking an anchor), plus the worktree enumeration per [ADR 0009](docs/adr/0009-worktree-disposal-ritual.md).
 7. **Surface the operator's next-session starting prompt** as your final user-facing message: a ~10-line paste-ready code block with: one-sentence session summary, pointer to the handoff doc, critical-first-action / gate emphasis. Reduces session-change friction.
 
 See [CLAUDE.md §Session Completion](CLAUDE.md#session-completion) for full text + rationale.
