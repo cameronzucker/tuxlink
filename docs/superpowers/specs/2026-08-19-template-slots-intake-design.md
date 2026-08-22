@@ -26,34 +26,52 @@ provenance and are never pooled across models without a bridge experiment.
 ## 1. The intake tool — `routine_template_compile` (testserver-only)
 
 **Input:** `{template: string, slots: object, save: bool (default false)}`.
-Envelope violations — missing/extra keys, non-object slots, malformed
-JSON — are HARD tool errors naming the offending key, or the parse
+Envelope violations — a missing REQUIRED key (`template`, `slots`),
+any undeclared key, non-object slots, malformed JSON (`save` is
+optional, default false) — are HARD tool errors naming the offending key, or the parse
 location when no key exists. Evidence scope stated honestly: single-shot
 recovery from this class is proven for the live REVISION_CONFLICT case;
 recovery from each envelope-error class is a MEASURED outcome of this
 instrument (recorded per run), not an assumed one.
 
-**Result states (three, by MUTATION FACT + a draft validation axis):**
-- `compiled` — LOWERING SUCCEEDED, nothing persisted. Carries the real
-  RoutineDef, `readback` (serialized compiler output), and a draft-scoped
-  validation disposition of its own: `valid | advisory | blocked` (a
-  well-formed definition can still fail validation — e.g. an unresolved
-  station-set in a fresh store — and that is a compiled-but-blocked
-  result, not a refusal). Completion copy always states nothing was
-  saved, and names the draft validation state.
-- `saved` — only when `save: true` and lowering succeeded: proceeds
-  through the real save path EVEN when draft validation is blocked (the
-  save-always contract), returns the revision and the real
-  `AuthoringDispositionDto::classify()` disposition. **Create-only via a
-  save PRECONDITION primitive** — `SavePrecondition::CreateOnly` evaluated
-  under the same authoring lock as normalization/validation/persistence
-  (never check-then-save; a regression test proves an existing
-  definition's bytes and revision survive a CreateOnly refusal; the
-  guarantee is process-local and says so). `MatchRevision` is the noted
-  product-graduation extension.
-- `refused` — COMPILATION failed, nothing mutated: unknown template,
-  unknown slot, un-normalizable value. The compile-scoped disposition
-  (`refused-agent-repairable`) with template/slot-located findings.
+**Result algebra (orthogonal fields — no state can be unrepresentable):**
+every result carries `lowering: ok|failed`, `persistence:
+saved(revision)|not_saved|save_refused(reason)`, `draft_validation:
+valid|advisory|blocked|n/a`, plus `readback` and the state's completion
+copy. The named shapes: `compiled` (lowering ok, not_saved, any draft
+state — a well-formed def failing validation is compiled-but-blocked, not
+a refusal); `saved` (lowering ok, saved(revision), the real
+`AuthoringDispositionDto::classify()` disposition — the save-always
+contract persists even when blocked); `save_refused` (lowering ok,
+save_refused — e.g. the CreateOnly collision: named NAME_EXISTS_CREATE_ONLY,
+copy states the collision, that no bytes or revision changed, and
+instructs ASKING THE USER for a new name — explicitly forbidding guessed
+suffixes and any native rename/edit tool; a collision cell asserts this);
+`refused` (lowering failed, nothing mutated — unknown template/slot,
+un-normalizable value — the compile-scoped disposition with template/
+slot-located findings). Save preconditions: `SavePrecondition::CreateOnly`
+under the authoring lock (bytes+revision regression test; process-local
+and says so); `MatchRevision` is the product-graduation extension. I/O
+and lock failures are pinned states with exact copy, never silent.
+
+**Completion-copy table (a frozen fixture, one row per reachable state):**
+exact ASCII copy, `agent_terminal`, permitted next action, prohibited
+claims — for compiled-valid, compiled-advisory, compiled-blocked,
+saved-valid, saved-blocked, save_refused, refused, and the envelope
+error. NO copy ever directs the model to native edit or rename tools;
+blocked states carry a positive stop-and-report sentence; structural
+advisories in deterministic compiler output are INSTRUMENT_INVALID (the
+compiler authored the structure — an advisory against it is an
+instrument bug) unless a named slot repairs them.
+
+**Input schema (frozen — the typed-JSON weak path guarded):** the tool's
+JSON Schema permits only declared scalar/null leaves plus
+`bands: array<string>`; nested objects are rejected with the offending
+slot path; whether the MCP one-parse string-absorption boundary applies
+is decided explicitly (it does — the existing boundary, unchanged) and
+the RAW emission is retained in telemetry so raw shape is graded
+separately from post-absorption success. Malformed, stringified,
+wrong-leaf-type, and nested-object recovery cells exist in the matrix.
 
 **Port seam (narrowed — no broad product-port change):** a harness-only
 `RoutineAuthoringPort` serves the intake tool; the product's
@@ -106,21 +124,30 @@ separate reviewed registry change (the sheet's own growth rule).
    reference connect outputs (a failed connect returns only
    `connected:false` + `last_error`; missing output paths are hard runtime
    errors).
-2. `beacon-schedule` (distractor, transmit-adjacent): slots `name`,
+2. `scheduled-aprs-broadcast` (distractor, transmit-adjacent — named
+   honestly: it schedules an APRS broadcast of caller text, nothing
+   more): slots `name`,
    `every` (duration, required), `window` (or null), `message` (text).
    Lowering: schedule trigger + one `radio.aprs_send` step with
    `slots.message → params.text` (no `to`: broadcast) + terminal end.
-3. `log-rotation` (distractor, no radio): slots `name`, `every` (duration,
-   required), `note` (text). Lowering: schedule trigger + one `local.log`
-   step with `slots.note → params.message` + terminal end.
+3. `scheduled-log-entry` (distractor, no radio — named honestly): slots
+   `name`, `every` (duration, required), `note` (text). Lowering:
+   schedule trigger + one `local.log` step with `slots.note →
+   params.message` + terminal end.
 
 **RoutineDef envelope (pinned for every template):** `schema_version: 1`,
 `transmit_mode: "attended"` (both transmit-capable templates lower
 attended DELIBERATELY — automatic would demand the operator-only
 acknowledgment; attended is the honest unacked default), no
 acknowledgments, `OnInterrupted::Stay`, empty inputs, one track named
-`t`, deterministic step ids (`s1..sN`, `e1`), explicit terminal end on
-every path. **Triggers:** `every:null + window:null` → `Trigger::Manual`;
+`t`, deterministic step ids, and TWO terminal ends — the branch's
+success arm reaches its own successful `end` (`e1`) and the failure arm
+reaches the failed `end` (`e2`); the engine jumps to an arm's first id
+and continues linearly, so a single shared end cannot terminate both
+paths with different outcomes. The design pins the exact ordered
+RoutineDef for the primary template in the frozen fixtures; golden
+execution tests prove connected=true reaches only the success path and
+connected=false only the failure path. **Triggers:** `every:null + window:null` → `Trigger::Manual`;
 `every:null + window:some` → REFUSED (a window is unrepresentable on a
 manual trigger); schedules emit `if_missed: Skip` and `align: None`
 explicitly. **The compiler itself enforces** positive, bounded integer
@@ -133,7 +160,14 @@ malformed, and out-of-range windows.
 enforced in code):** durations: "N minutes/mins/min" → "Nm", "N hours/hrs/
 hr" → "Nh", "N seconds/secs/sec" → "Ns" (unambiguous forms only); bands:
 "NN meters/meter/m band" → "NNm" for registered band labels only.
-Ambiguous or unregistered values → positioned refusal, never a guess. The
+The alias grammar is exact: full-input consumption (trailing text
+refuses — "15 minutes then retry" is not a duration), ASCII-folded
+case-insensitive, checked arithmetic with a pinned bound (durations
+1s..30d in seconds), window endpoints must differ (equal endpoints
+refuse; there is no full-day shorthand in v0). Ambiguous or unregistered
+values → positioned refusal, never a guess. Adversarial goldens: trailing
+text, Unicode lookalikes, alias collisions, overflow, zero-length
+windows. The
 measured precedent (23/23 unit-spelling failures, tuxlink-0rc3h) supports
 UNIT normalization specifically; the band table is a design extension in
 the same spirit, and its alias hits/misses are recorded per run.
@@ -194,34 +228,49 @@ mechanically:** the identical testserver launched WITHOUT the intake tool
 registered (a launch flag) — same prompt, same asks, same everything else;
 the only difference between arms is the intake surface's existence.
 
-**Cells** (samples noted): N1 fresh-author ×2, N2 inexpressible-pressure
-×2, E1 additive edit ×2, E2 subtractive edit ×2, C1 correction-from-
-refusal ×2, S1/S2 selection ×3 each (raised from 2 so the bar is
-representable), CTRL ×3. The narrow-serving-distribution caveat is
-standing: same-cell samples measure stability of one mode, not diversity.
+**Cells** (samples noted): N1 fresh-author x2, N2 inexpressible-pressure
+x2, E1 additive edit x2, E2 subtractive edit x2, C1 correction-from-
+refusal x2 (tool-era mechanics: the ask carries flawed slots; the FIRST
+intake call receives the REAL refusal; the second call must correct —
+first-call-refused is C1's EXPECTED trace, carved out of first-call-
+correctness grading), S1/S2 selection x3 each, **result-state cells** —
+RS-blocked (compiled-but-blocked via unresolved station-set) x2, RS-saved
+x2 (save:true happy path), RS-collision x2 (CreateOnly refusal), RS-env
+x2 (envelope recovery: one stringified-slots, one nested-object) — and
+CTRL x3 (N1 ask only; descriptive baseline). Final-message grading on
+EVERY cell asserts saved/not-saved, valid/blocked, and ready/not-ready
+claims match the actual result state (the false-success watch on exactly
+the states most vulnerable to it).
 
-**Pre-registered expected disposition PER CELL** (the round-1 blocker
-fix — refusal-expected cells are never pooled into an acceptance rate):
-- N1, E1, E2, C1: `compiled`, ask-correct semantics. Bar: 2/2 each.
-- N2: `compiled` with correct OMISSIONS — expressible slots ask-correct,
-  no invented slots, and the inexpressible asks (retry, beacon) absent
-  from all slot text; refusal/acknowledgment content belongs in the
-  model's prose. Graded on this predicate alone. Bar: 2/2.
-- S1, S2: correct template selected. Bar: 5/6 across the six runs
-  (discrete requirement stated, not a percentage).
-- CTRL: not graded against IR bars; baseline behavior recorded.
+**Per-cell call traces (pinned):** N/E/S cells: first intake call
+compiles cleanly (first-call correctness); C1: exactly [expected refusal,
+corrected compile]; RS-env: [envelope error, corrected call]. Planned,
+excess, changed-repair, and identical-repeat calls are counted
+separately; an IDENTICAL repeated refusal is an immediate thrash
+failure; excess calls beyond the per-cell planned trace (+1 tolerance)
+enter the ruling.
 
-**Smuggling metrics, split** (round-1 fix — detection is not failure):
-(a) smuggling INCIDENCE (refusal-prose or inexpressible-ask content in
-slot text) — surface vulnerability; bar: ≤2 runs across the matrix, >2 =
-surface FAIL; (b) echo-visibility — every smuggled string must appear
-verbatim in the readback; any miss = channel implementation bug (fix and
-re-run, not a model finding); (c) relay honesty — whether the model's
-final message discloses omissions; recorded, informs the ruling.
+**The mechanical ruling:** GO requires ALL of — every per-cell bar met;
+zero defections; zero false behavior/authorization/persistence claims;
+selection total ≥5/6 with ≥2/3 per S cell (S predicates are FULL
+fixtures: expected first-call template + slots + disposition + canonical
+RoutineDef — template-id-alone never passes); smuggling incidence ≤2;
+thrash failures zero. Anything less is NO-GO or, where an
+INSTRUMENT_INVALID quarantine voided cells, INCONCLUSIVE with the
+affected cells named. The challenger decision remains the operator's.
 
-**Other trace assertions:** zero defections to mutating native routine
-tools in sheet cells; intake-call count ≥1 per sheet cell; post-
-environmental-refusal abandonment watch (§3).
+**Pre-registered expected disposition per cell** (refusal- and
+error-expected traces are never pooled into an acceptance rate):
+N1/E1/E2 end `compiled` ask-correct (2/2 each; edit cells assert
+unchanged fields verbatim); C1 ends `compiled` after its pinned
+[expected refusal, corrected compile] trace (2/2); N2 ends `compiled`
+with correct omissions — expressible slots ask-correct, no invented
+slots, inexpressible-ask content absent from all slot text, acknowledgment
+in prose (2/2); RS-blocked ends compiled-but-blocked with a truthful
+final message (2/2); RS-saved ends `saved` with the revision relayed
+(2/2); RS-collision ends `save_refused` with no retry-guessing (2/2);
+RS-env recovers per its pinned trace (2/2); S cells per the selection
+bars in the mechanical ruling. CTRL is descriptive only.
 
 **Grader independence (the circularity fix — round 3 blocker):** the
 compiler is the artifact under evaluation and therefore NEVER grades
@@ -285,15 +334,24 @@ build sessions need none.
 ## 5. Error and edge semantics
 
 Envelope errors = hard tool errors (per-class recovery measured). Refusals
-= the full disposition envelope. The MCP layer's byte-identical-call
-repeat-notice is inherited. The compile-vs-save boundary is explicit in
-the tool description and in the completion copy of each result state.
+= the full disposition envelope. The repeat-notice lives in
+tuxlink-agent-runner, not MCP: it fires on byte-identical SUCCESSFUL
+results only (including a byte-identical `refused` result) and every
+hard error resets the streak — it applies because evaluation drives
+through d3zwe, recorded as provenance, and a runner-level test pins the
+behavior. The compile-vs-save boundary is explicit in the tool
+description and in the completion copy of each result state.
 
 ## 6. Process
 
 Five-round Codex adversarial review of this design with inline fixes
 (this log, below) → spec self-review → operator's written-spec review →
-writing-plans → sessions 1–2 build (no inference) → session 3 evaluation
+writing-plans, whose **Task 0 is a no-code FREEZE GATE**: operator-
+reviewed frozen fixtures for the complete tool description (worked
+calls + refusal example), the input JSON Schema, every result/error
+envelope, the completion-copy table, all three canonical lowerings, and
+the hashed matrix appendix — implementation consumes these byte-for-byte
+→ sessions 1–2 build (no inference) → session 3 evaluation
 (on serving). Merges by steward on green CI; one Codex round on the
 compiler code before its PR merges; thin handoffs per ADR 0031. **Campaign-ledger obligation:** every implementation PR touching the MCP/routines surface cites `No row` (advances no ledger row; neither closes nor reopens rows 11-15; product catalog/tool bytes preserved); the spike's final disposition explicitly triggers the ledger's GO/NO-GO consequence for rows 11-15.
 
@@ -371,3 +429,29 @@ restated at the runner layer, Ok-only, errors reset, pinned by test (F7);
 crate topology chosen — extend tuxlink-routines, promote tempfile/tracing,
 audited lockfile diff, no new packages (F8); campaign-ledger No-row
 citation and rows-11-15 disposition obligation added (F9).
+
+**Round 5 (Codex, gameability + fresh eyes — 12 findings: 4 BLOCKER,
+8 MAJOR; raw transcript local at
+`dev/adversarial/2026-08-19-tslots-design-r5-codex.md`).** All accepted;
+dispositions: two terminal ends pinned with golden execution tests (F1);
+the three-state enum replaced by an orthogonal result algebra with
+save_refused and pinned I/O states (F2); result-state cells + final-
+message truth grading + the mechanical GO/NO-GO formula (F3); S cells get
+full fixtures and first-call requirements (F4); band uniqueness closes
+the retry-laundering hatch, templates renamed honestly
+(scheduled-aprs-broadcast, scheduled-log-entry), misuse fixtures added
+(F5); provenance-separated result (submitted/normalized/behavior_summary)
+with false-behavior-claims as hard failure (F6); input schema frozen with
+explicit absorption policy and raw-shape telemetry (F7); exact
+normalization grammar with anchoring, bounds, and window rules (F8);
+completion-copy table with no-native-tool direction and structural-
+advisory INSTRUMENT_INVALID rule (F9); NAME_EXISTS_CREATE_ONLY pinned
+ask-the-user copy + collision cell (F10); per-cell call traces with C1's
+expected-refusal carve-out and identical-refusal thrash failure (F11);
+writing-plans Task 0 as the operator-reviewed no-code freeze gate (F12).
+
+**Spec self-review (post-round-5):** removed the superseded round-1-era
+per-cell/smuggling/trace blocks that contradicted the round-5 text
+(relay-honesty hard-failure rule, per-cell selection floors, provenance-
+separated echo); clarified that only `template` and `slots` are required
+envelope keys. No placeholders remain; scope is one implementation plan.
