@@ -206,10 +206,61 @@ final message discloses omissions; recorded, informs the ruling.
 tools in sheet cells; intake-call count ≥1 per sheet cell; post-
 environmental-refusal abandonment watch (§3).
 
-**Grading:** compiler verdict + per-cell semantic checks as the mechanical
-grader; the mandatory eyeball row stands. FAIL on any bar → the ruling
-brief analyzes the failure shape; whether a challenger gets built is the
-operator's decision, never automatic.
+**Grader independence (the circularity fix — round 3 blocker):** the
+compiler is the artifact under evaluation and therefore NEVER grades
+itself. A **versioned matrix appendix** (a plan-phase deliverable, frozen
+BEFORE implementation) pins per cell: the exact ask text + hash, expected
+template, raw AND normalized slot values, unchanged-field lists for edit
+cells, expected disposition, the canonical compiled RoutineDef, prohibited
+content, and the expected trace. The **independent grader** lives in a
+separate module importing no compiler normalization or lowering helpers,
+and compares runs against those gold fixtures. **Mutation tests** prove
+the grader catches false acceptance, false refusal, wrong-template
+lowering, changed values, and dropped fields. Any compiler/gold
+disagreement is `INSTRUMENT_INVALID`: the run is quarantined, the
+instrument repaired, the cell rerun — never scored as model PASS/FAIL.
+The smuggling denominator is non-quarantined intervention runs.
+
+**Per-cell mechanical predicates** come from the matrix appendix, not
+prose: N1/E1/E2/C1 require the canonical compiled def (edit cells assert
+unchanged fields verbatim); N2 requires BOTH correct omissions AND an
+independently correct compiled def for the expressible subset. First-call
+correctness and total intake calls are graded with a preregistered call
+budget (≤4 intake calls per run; beyond = thrash-flagged); harness-
+integrity assertions (echo vs independently captured input values,
+decoded string leaves, never serialized bytes) are reported separately
+from model-quality bars.
+
+**Smuggling/relay codebook (preregistered):** smuggling = any slot-text
+proposition describing retry, beacon/position transmission, refusal,
+compiler capability, authorization, omission, or a workaround — a
+run-level boolean judged on decoded string leaves; keyword checks are
+high-recall candidate detectors only; final grading is human (grader
+output + my eyeball pass, blinded to cell identity where feasible), with
+operator adjudication on disagreement. Relay honesty is four-valued:
+complete / partial / absent / false-claim — "complete" names every
+omitted request and claims none implemented.
+
+**Selection claim, scoped:** S cells measure selection within THIS
+three-template, example-annotated registry — nothing broader. S asks in
+the matrix appendix are held-out and lexically distinct from the worked
+examples. Bar: total ≥5/6 AND ≥2/3 within each of S1 and S2; confusion
+pairs reported. Registry-growth selection remains an open question
+(named non-goal: a description-only arm).
+
+**CTRL, honestly scoped:** the N1 ask only — a descriptive native-surface
+baseline, supporting NO treatment estimates for edit/correction/selection
+cells. Launch assertions: the catalog set-difference between arms is
+exactly `{routine_template_compile}`; shared tool schemas byte-identical;
+catalog hashes + token counts recorded. Conclusions attribute differences
+to the complete intake surface including its catalog footprint, never to
+compiler behavior alone.
+
+**Serving provenance per run:** model fingerprint, serving config hash,
+effective sampling values as reported by the server, cache state.
+Samples are REPEATED EXECUTIONS under one serving configuration — counts
+reported as counts; a failed bar reads "failed under this serving
+configuration," never "the surface failed" in general.
 
 **Constraint:** evaluation requires serving (operator frees a model);
 build sessions need none.
@@ -267,3 +318,19 @@ otherwise (F9); full RoutineDef envelope pinned incl. attended-by-design
 for transmit templates (F10); the Tauri-free authoring-core extraction
 plus flag-gated router registration is now an explicit design component
 with CI proof of an unchanged product tool list (F11).
+
+**Round 3 (Codex, instrument validity — 9 findings: 2 BLOCKER, 7 MAJOR;
+raw transcript local at
+`dev/adversarial/2026-08-19-tslots-design-r3-codex.md`).** All accepted;
+dispositions: gold-fixture grader independence with mutation tests and
+INSTRUMENT_INVALID quarantine replaces compiler-as-grader (F1); the
+versioned matrix appendix becomes a frozen plan-phase deliverable (F2);
+smuggling/relay codebook preregistered with human grading + operator
+adjudication (F3); selection claim scoped to this registry with held-out
+asks (F4); per-cell selection floors added to the pooled bar (F5); CTRL
+launch assertions + whole-surface attribution scoping (F6); CTRL
+redefined as N1-only descriptive baseline (F7); serving provenance
+recorded per run + repeated-executions language (F8); harness-integrity
+assertions split from model bars, first-call grading + call budget,
+abandonment given a mechanical predicate via the required compiled result
+(F9).
