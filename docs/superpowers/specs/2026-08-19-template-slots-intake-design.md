@@ -4,7 +4,7 @@
 sections, amended through adversarial review (log at bottom). Evidence
 base: `dev/spikes/2026-08-13-ir-compiler-slice/ALTERNATIVES.md`, the
 amended `RESULTS-2026-08-18-insitu.md`, the refusal-response survey
-(`dev/scratch/2026-08-18-refusal-response-survey.md`), plus the
+(`dev/spikes/2026-08-13-ir-compiler-slice/REFUSAL-SURVEY-2026-08-18.md`), plus the
 specifically-cited eval and commit sources named inline.**
 
 ## Purpose and instrument scope
