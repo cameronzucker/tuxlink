@@ -33,22 +33,35 @@ recovery from this class is proven for the live REVISION_CONFLICT case;
 recovery from each envelope-error class is a MEASURED outcome of this
 instrument (recorded per run), not an assumed one.
 
-**Result states (three, explicit — no others):**
-- `compiled` — valid, NOT persisted. Carries `compiled` (the real
-  RoutineDef), `readback`, and a completion sentence that states plainly
-  that nothing was saved ("The definition is valid and compiled. It has
-  NOT been saved...").
-- `saved` — only when `save: true`: persists to the (temp-dir) store via
-  the real save path and carries `revision` plus a saved-state completion
-  sentence. Only this state may instruct the model to report persistence.
-- `refused` — the full existing disposition envelope (below).
+**Result states (three, explicit — states reflect MUTATION FACTS):**
+- `compiled` — valid or advisory-clean per the draft validator, NOT
+  persisted. Carries `compiled` (the real RoutineDef), `readback`
+  (serialized compiler output, never a store read), and a completion
+  sentence stating plainly that nothing was saved.
+- `saved` — only when `save: true`. **Create-only for the spike**: an
+  existing name is refused (the lost-update guard without carrying
+  `expected_revision`; the revision-precondition extension is noted for
+  product graduation). Uses the real save path — which by contract saves
+  regardless of validator findings — so `saved` means PERSISTED and may
+  carry a non-valid disposition (`blocked_by` + findings ride along); the
+  real `AuthoringDispositionDto::classify()` applies here, where its
+  save-centric states are true. Only `saved` results speak of persistence.
+- `refused` — NOTHING mutated. Compile-stage refusals (unknown template,
+  unknown slot, un-normalizable value, envelope-adjacent semantic errors)
+  use a COMPILE-SCOPED disposition: same dialect family as the existing
+  envelope, but with honest states — `refused-agent-repairable` (the agent
+  can fix the call; nothing was saved; no operator needed) — and findings
+  carrying `template`/`slot` locations (a CompileFindingDto mirroring
+  FindingDto's shape). Compile refusals are NEVER fed through the existing
+  `classify()`, whose states describe stored-routine authoring and would
+  misreport an unknown slot as needs-operator.
 
-This three-state contract resolves the compile-vs-save boundary: validation
-runs WITHOUT persistence by default (the real validator is invocable
-without save); persistence is explicit, transactional, and revision-
-bearing. The stale-summary protection claim is scoped accordingly: the
-result the model relays IS the authoritative state for that result's kind,
-and only `saved` results speak of saved state.
+**Port addition (shared crate, no product-tool change):**
+`RoutinesPort::validate_draft(def)` — unsaved-definition validation with
+the same consent normalization as the app's UI-only draft validator; the
+existing port only validates stored names, so the compiled state needs
+this seam. The product ROUTER's tool list is unchanged (CI's parity/
+tool-budget tests prove it).
 
 **Registry discovery:** the closed registry is enumerated in the tool
 description — template ids, one-line semantics, AND **one worked example
@@ -62,19 +75,17 @@ valid-set-rather-than-teach-by-rejection is the UNKNOWN_ACTION precedent
 (commit `cbefa047`). Both are precedents, not proof — selection quality is
 a primary measured outcome (S cells).
 
-**Refusal shape:** the FULL existing `AuthoringDispositionDto` envelope,
-reused from `tuxlink-mcp-core/src/ports.rs` — `state`
-(valid/invalid-agent-repairable/saved-needs-operator), `agent_terminal`,
-`blocked_by`, `acceptable_warnings`, `advisories`, `remedies[]` (actor-
-split, op-shaped, blocking-and-agent-fixable only), `completion` — plus
-`findings[]` (uniform name). Each finding: code, offending template id or
-slot name verbatim (position = the slot), the rule, fault attribution on
-environmental classes. Co-firing findings carry equal-strength anchors and
-cross-references, or are merged. No explanatory prose hints. No system-
-prompt additions. No model-side refusal fields. (ASCII-only completion
-copy is a standing operator constraint — the 2026-07-29 mojibake ruling
-recorded at the advisory-completion site in ports.rs — not a conclusion of
-this evidence package.)
+**Refusal shape summary:** save-path results reuse the full existing
+`AuthoringDispositionDto` envelope verbatim (its states are true there);
+compile-stage refusals use the compile-scoped disposition above. Both
+carry `findings[]` (uniform name); each finding: code, offending entity
+verbatim (template id or slot name; position = the slot), the rule, an
+op-shaped remedy only when blocking and agent-fixable, fault attribution
+on environmental classes. Co-firing findings: equal-strength anchors +
+cross-references, or merged. No explanatory prose hints. No system-prompt
+additions. No model-side refusal fields. (ASCII-only completion copy is
+the standing 2026-07-29 operator ruling recorded at the
+advisory-completion site in ports.rs.)
 
 ## 2. The compiler and registry
 
@@ -84,19 +95,40 @@ separate reviewed registry change (the sheet's own growth rule).
 
 1. `scheduled-connect-with-fallback` (primary): slots `name` (kebab-case
    string), `every` (duration or null), `window` ("HH:MM-HH:MM" or null),
-   `stations` (station-set ref string), `bands` (ordered band list),
-   `success_log` (text; may use $band/$station), `failure_log` (text),
-   `fail_reason` (text). Lowering: every/window → the engine's schedule
-   `Trigger` (window native); bands order → connect lowering; logs → log
-   steps referencing the connect step's declared outputs via COMPILER-
-   generated `$sN` refs; fail_reason → end control. Deterministic ids.
+   `stations` (station-set ref string), `bands` (ordered band list,
+   REQUIRED non-empty — an empty list selects packet dialing and returns a
+   null band, so `$band` would be unresolvable), `success_log`,
+   `failure_log`, `fail_reason`. **Lowering (pinned):** ONE `radio.connect`
+   step (`stations` + normalized `bands`; fallback order is the engine's:
+   station-major, then band order within each station) → a `branch` on
+   `$sN.connected` → `then`: the success log step (`$station`/`$band`
+   rewritten to `$sN.station`/`$sN.band`) → `else`: the failure log step
+   then the failed `end` with `fail_reason`. Failure-arm text must not
+   reference connect outputs (a failed connect returns only
+   `connected:false` + `last_error`; missing output paths are hard runtime
+   errors).
 2. `beacon-schedule` (distractor, transmit-adjacent): slots `name`,
    `every` (duration, required), `window` (or null), `message` (text).
-   Lowering: schedule trigger + one `radio.aprs_send` step with the
-   message; honest and minimal.
+   Lowering: schedule trigger + one `radio.aprs_send` step with
+   `slots.message → params.text` (no `to`: broadcast) + terminal end.
 3. `log-rotation` (distractor, no radio): slots `name`, `every` (duration,
    required), `note` (text). Lowering: schedule trigger + one `local.log`
-   step.
+   step with `slots.note → params.message` + terminal end.
+
+**RoutineDef envelope (pinned for every template):** `schema_version: 1`,
+`transmit_mode: "attended"` (both transmit-capable templates lower
+attended DELIBERATELY — automatic would demand the operator-only
+acknowledgment; attended is the honest unacked default), no
+acknowledgments, `OnInterrupted::Stay`, empty inputs, one track named
+`t`, deterministic step ids (`s1..sN`, `e1`), explicit terminal end on
+every path. **Triggers:** `every:null + window:null` → `Trigger::Manual`;
+`every:null + window:some` → REFUSED (a window is unrepresentable on a
+manual trigger); schedules emit `if_missed: Skip` and `align: None`
+explicitly. **The compiler itself enforces** positive, bounded integer
+durations and valid clock ranges — the engine's validator does not check
+interval syntax and the scheduler silently never fires on malformed or
+non-positive intervals; golden tests cover zero, negative, overflow,
+malformed, and out-of-range windows.
 
 **Normalization (finite, per-slot alias table — published in the design,
 enforced in code):** durations: "N minutes/mins/min" → "Nm", "N hours/hrs/
@@ -112,17 +144,31 @@ the same spirit, and its alias hits/misses are recorded per run.
 genuine validator findings ride the same disposition envelope — one
 refusal grammar end to end.
 
-## 3. The harness
+## 3. The harness — with the integration architecture stated
 
-Real routines port in the testserver (real registry catalog, real
-validator, temp-dir store). `routines_run` is NOT silently inert: it
-returns a structured environmental refusal with explicit fault attribution
-and availability copy — "execution is out of scope in this harness (not
-your call's fault); authoring, compiling, and saving remain available" —
-the deny-copy abandonment lesson (tuxlink-shopf) applied; a trace
-assertion watches for post-refusal abandonment. The intake tool registers
-in the testserver router only; product binary and parity manifest
-untouched.
+The real routines port cannot be dropped into the testserver as-is: the
+monolith's port impl needs a Tauri AppHandle, the action DESCRIPTORS live
+in the monolith, and the router's tool set is statically generated. The
+design therefore owns this architecture explicitly:
+
+1. **Extract a Tauri-free authoring core** (new small crate or an extension
+   of `tuxlink-routines`): the action descriptor specs (params/outputs for
+   `radio.connect`, `radio.aprs_send`, `local.log`, and the rest of the
+   catalog), a file-backed store usable against a temp dir, the
+   `ValidationContext` wiring, and `validate_draft`. The monolith's port
+   impl and the testserver both consume it — one source of truth, no
+   catalog drift.
+2. **Testserver wiring:** the testserver gains the routines-authoring dep
+   and serves the REAL catalog/validator/store through `RoutinesPort`.
+3. **The intake tool registers via a router constructor flag** (or
+   feature) enabled only by the testserver binary. The product binary's
+   tool list is UNCHANGED, proven by the existing CI parity-manifest and
+   tool-budget tests (an accidental product exposure fails `verify`).
+4. `routines_run` returns the structured environmental refusal with fault
+   attribution and availability copy ("execution is out of scope in this
+   harness (not your call's fault); authoring, compiling, and saving
+   remain available"); a trace assertion watches for post-refusal
+   abandonment.
 
 ## 4. The evaluation instrument
 
@@ -204,3 +250,20 @@ replace percentages, S samples raised to 3 (F14); smuggling metrics split
 into incidence/echo-visibility/relay-honesty (F15); model choice restated
 as operator policy (F16); ASCII-only sourced to the 2026-07-29 operator
 ruling (F17).
+
+**Round 2 (Codex, engine/lowering semantics vs source — 11 findings:
+4 BLOCKER, 6 MAJOR, 1 MINOR; raw transcript local at
+`dev/adversarial/2026-08-19-tslots-design-r2-codex.md`).** All accepted;
+dispositions: single connect step + explicit branch lowering with
+`$sN.*` refs, station-major fallback documented, non-empty bands required
+(F1, F2); `RoutinesPort::validate_draft` added as the unsaved-validation
+seam (F3); compile-scoped disposition replaces dishonest reuse of the
+save-centric state machine — round 1's full-reuse fix was overcorrected
+and is now split by mutation fact (F4, F5); save is create-only for the
+spike (F6); exact param mappings pinned (message→text, note→message)
+(F7); every:null+window refused, if_missed/align pinned (F8); compiler
+enforces duration/window validity — the scheduler silently never fires
+otherwise (F9); full RoutineDef envelope pinned incl. attended-by-design
+for transmit templates (F10); the Tauri-free authoring-core extraction
+plus flag-gated router registration is now an explicit design component
+with CI proof of an unchanged product tool list (F11).
