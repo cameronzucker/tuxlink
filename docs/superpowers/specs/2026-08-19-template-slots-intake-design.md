@@ -33,35 +33,34 @@ recovery from this class is proven for the live REVISION_CONFLICT case;
 recovery from each envelope-error class is a MEASURED outcome of this
 instrument (recorded per run), not an assumed one.
 
-**Result states (three, explicit — states reflect MUTATION FACTS):**
-- `compiled` — valid or advisory-clean per the draft validator, NOT
-  persisted. Carries `compiled` (the real RoutineDef), `readback`
-  (serialized compiler output, never a store read), and a completion
-  sentence stating plainly that nothing was saved.
-- `saved` — only when `save: true`. **Create-only for the spike**: an
-  existing name is refused (the lost-update guard without carrying
-  `expected_revision`; the revision-precondition extension is noted for
-  product graduation). Uses the real save path — which by contract saves
-  regardless of validator findings — so `saved` means PERSISTED and may
-  carry a non-valid disposition (`blocked_by` + findings ride along); the
-  real `AuthoringDispositionDto::classify()` applies here, where its
-  save-centric states are true. Only `saved` results speak of persistence.
-- `refused` — NOTHING mutated. Compile-stage refusals (unknown template,
-  unknown slot, un-normalizable value, envelope-adjacent semantic errors)
-  use a COMPILE-SCOPED disposition: same dialect family as the existing
-  envelope, but with honest states — `refused-agent-repairable` (the agent
-  can fix the call; nothing was saved; no operator needed) — and findings
-  carrying `template`/`slot` locations (a CompileFindingDto mirroring
-  FindingDto's shape). Compile refusals are NEVER fed through the existing
-  `classify()`, whose states describe stored-routine authoring and would
-  misreport an unknown slot as needs-operator.
+**Result states (three, by MUTATION FACT + a draft validation axis):**
+- `compiled` — LOWERING SUCCEEDED, nothing persisted. Carries the real
+  RoutineDef, `readback` (serialized compiler output), and a draft-scoped
+  validation disposition of its own: `valid | advisory | blocked` (a
+  well-formed definition can still fail validation — e.g. an unresolved
+  station-set in a fresh store — and that is a compiled-but-blocked
+  result, not a refusal). Completion copy always states nothing was
+  saved, and names the draft validation state.
+- `saved` — only when `save: true` and lowering succeeded: proceeds
+  through the real save path EVEN when draft validation is blocked (the
+  save-always contract), returns the revision and the real
+  `AuthoringDispositionDto::classify()` disposition. **Create-only via a
+  save PRECONDITION primitive** — `SavePrecondition::CreateOnly` evaluated
+  under the same authoring lock as normalization/validation/persistence
+  (never check-then-save; a regression test proves an existing
+  definition's bytes and revision survive a CreateOnly refusal; the
+  guarantee is process-local and says so). `MatchRevision` is the noted
+  product-graduation extension.
+- `refused` — COMPILATION failed, nothing mutated: unknown template,
+  unknown slot, un-normalizable value. The compile-scoped disposition
+  (`refused-agent-repairable`) with template/slot-located findings.
 
-**Port addition (shared crate, no product-tool change):**
-`RoutinesPort::validate_draft(def)` — unsaved-definition validation with
-the same consent normalization as the app's UI-only draft validator; the
-existing port only validates stored names, so the compiled state needs
-this seam. The product ROUTER's tool list is unchanged (CI's parity/
-tool-budget tests prove it).
+**Port seam (narrowed — no broad product-port change):** a harness-only
+`RoutineAuthoringPort` serves the intake tool; the product's
+`RoutinesPort` is untouched. Both are backed by the extracted authoring
+service (§3), so there is one implementation of parsing, normalization,
+validation, and save. (Supersedes the round-2 `validate_draft`-on-
+RoutinesPort disposition.)
 
 **Registry discovery:** the closed registry is enumerated in the tool
 description — template ids, one-line semantics, AND **one worked example
@@ -144,31 +143,49 @@ the same spirit, and its alias hits/misses are recorded per run.
 genuine validator findings ride the same disposition envelope — one
 refusal grammar end to end.
 
-## 3. The harness — with the integration architecture stated
+## 3. The harness — integration architecture (round-4 hardened)
 
-The real routines port cannot be dropped into the testserver as-is: the
-monolith's port impl needs a Tauri AppHandle, the action DESCRIPTORS live
-in the monolith, and the router's tool set is statically generated. The
-design therefore owns this architecture explicitly:
+**Crate topology (chosen):** extend `tuxlink-routines` — no new crate, no
+new third-party packages. `tempfile` and `tracing` are promoted from
+dev-dependencies where the moved code needs them (both already in the
+locked graph); `rust-version.workspace = true` inherited; the lockfile
+diff is audited and limited to local-package entries.
 
-1. **Extract a Tauri-free authoring core** (new small crate or an extension
-   of `tuxlink-routines`): the action descriptor specs (params/outputs for
-   `radio.connect`, `radio.aprs_send`, `local.log`, and the rest of the
-   catalog), a file-backed store usable against a temp dir, the
-   `ValidationContext` wiring, and `validate_draft`. The monolith's port
-   impl and the testserver both consume it — one source of truth, no
-   catalog drift.
-2. **Testserver wiring:** the testserver gains the routines-authoring dep
-   and serves the REAL catalog/validator/store through `RoutinesPort`.
-3. **The intake tool registers via a router constructor flag** (or
-   feature) enabled only by the testserver binary. The product binary's
-   tool list is UNCHANGED, proven by the existing CI parity-manifest and
-   tool-budget tests (an accidental product exposure fails `verify`).
-4. `routines_run` returns the structured environmental refusal with fault
-   attribution and availability copy ("execution is out of scope in this
-   harness (not your call's fault); authoring, compiling, and saving
-   remain available"); a trace assertion watches for post-refusal
-   abandonment.
+1. **`RoutineAuthoringService`** (new module in `tuxlink-routines`): the
+   definition store (atomic writes), revision/name validation, parsing +
+   teaching text, shared consent-envelope normalization, validate and
+   save methods parameterized by `&dyn ValidationContext`, the
+   `SavePrecondition` enum, and a post-save callback (the monolith keeps
+   its LibraryChanged emission there). `MonolithValidationContext` STAYS
+   in the monolith; the harness gets its own context backed by the temp
+   store, the shared action metadata, fixture entities, and a declared
+   station profile. Journal taint and the arbiter are construction
+   baggage of the current call site, not save dependencies — they do not
+   move.
+2. **One catalog truth:** descriptor specifications AND validator role
+   tables move to shared Tauri-free metadata in `tuxlink-routines`; each
+   real `Action::descriptor()` delegates to it; the MCP catalog
+   projection (controls, triggers, definition template, sorting, DTO
+   shape) is shared, not reimplemented. Equality gates: the product
+   registry's descriptor set equals the shared set, and product/harness
+   `routines_actions_list` payloads serialize identically.
+3. **Typed router constructors, proven at runtime:** `TuxlinkMcp::product`
+   and `TuxlinkMcp::harness` — explicit constructors, not a Cargo feature
+   or boolean (the parity check is textual over router.rs attributes and
+   cannot see feature gates; runtime proof replaces it for this seam).
+   CI runtime tests: product `list_tools` equals the manifest-approved
+   95-tool set; harness minus product equals exactly
+   `{routine_template_compile}`; every shared schema byte-identical. The
+   product-only package graph is exercised separately. The parity
+   manifest and tool budget are UNCHANGED.
+4. **`routines_run` refusal, honest scope:** through the existing
+   port/router/frontend stack the achievable shape is an invalid-request
+   ERROR STRING carrying explicit fault attribution and availability copy
+   ("execution is out of scope in this harness (not your call's fault);
+   authoring, compiling, and saving remain available") — the exact
+   runner-visible text is pinned by test. A structured environmental
+   error class through the product stack would be a product contract
+   change and is out of scope.
 
 ## 4. The evaluation instrument
 
@@ -278,7 +295,7 @@ Five-round Codex adversarial review of this design with inline fixes
 (this log, below) → spec self-review → operator's written-spec review →
 writing-plans → sessions 1–2 build (no inference) → session 3 evaluation
 (on serving). Merges by steward on green CI; one Codex round on the
-compiler code before its PR merges; thin handoffs per ADR 0031.
+compiler code before its PR merges; thin handoffs per ADR 0031. **Campaign-ledger obligation:** every implementation PR touching the MCP/routines surface cites `No row` (advances no ledger row; neither closes nor reopens rows 11-15; product catalog/tool bytes preserved); the spike's final disposition explicitly triggers the ledger's GO/NO-GO consequence for rows 11-15.
 
 ## Adversarial review log
 
@@ -334,3 +351,23 @@ recorded per run + repeated-executions language (F8); harness-integrity
 assertions split from model bars, first-call grading + call budget,
 abandonment given a mechanical predicate via the required compiled result
 (F9).
+
+**Round 4 (Codex, harness isolation + compile/save boundary vs source —
+9 findings: 4 BLOCKER, 4 MAJOR, 1 MINOR; raw transcript local at
+`dev/adversarial/2026-08-19-tslots-design-r4-codex.md`).** All accepted;
+dispositions: `compiled` redefined as lowering-succeeded with its own
+draft validation axis — the missing compiled-but-blocked state (F1); the
+extraction is the named `RoutineAuthoringService` in `tuxlink-routines`
+with the monolith context staying put, and round 2's validate_draft-on-
+RoutinesPort is superseded by a harness-only `RoutineAuthoringPort` (F2);
+create-only via `SavePrecondition` under the authoring lock with a
+bytes+revision regression test (F3); typed product/harness constructors
+with runtime list_tools CI proofs replace feature-gating — the parity
+check is textual and cannot see features (F4); one catalog truth via
+shared descriptor+role metadata and a shared catalog projection with
+equality gates (F5); routines_run refusal honestly scoped to the
+achievable error-string shape with pinned text (F6); repeat-notice
+restated at the runner layer, Ok-only, errors reset, pinned by test (F7);
+crate topology chosen — extend tuxlink-routines, promote tempfile/tracing,
+audited lockfile diff, no new packages (F8); campaign-ledger No-row
+citation and rows-11-15 disposition obligation added (F9).
