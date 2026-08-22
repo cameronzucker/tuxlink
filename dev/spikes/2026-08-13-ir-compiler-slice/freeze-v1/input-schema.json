@@ -1,0 +1,31 @@
+{
+  "$comment": "Frozen input JSON Schema for routine_template_compile, v1. Envelope law only: template/slots/save keys, slots is an object, every slot leaf is string-or-null except bands (array of strings). Template validity, slot-name validity, and value grammar are COMPILER-stage refusals with named findings, not schema rejections (design SS1: enumerate-and-teach beats reject-at-the-gate for those classes). Schema violations are HARD tool errors naming the offending key or path.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["template", "slots"],
+  "properties": {
+    "template": {
+      "type": "string",
+      "description": "One of the template ids listed in the tool description."
+    },
+    "slots": {
+      "type": "object",
+      "description": "The template's slots. Every value is a string or null, except bands: an array of band-label strings.",
+      "properties": {
+        "bands": {
+          "type": "array",
+          "items": { "type": "string" },
+          "maxItems": 10
+        }
+      },
+      "additionalProperties": {
+        "type": ["string", "null"]
+      }
+    },
+    "save": {
+      "type": "boolean",
+      "default": false,
+      "description": "false/omitted: compile and validate a draft only. true: also save (create-only; never enables or runs)."
+    }
+  }
+}

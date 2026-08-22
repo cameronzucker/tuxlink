@@ -1,0 +1,23 @@
+{
+  "routine": "wa-gateway-check",
+  "schema_version": 1,
+  "transmit_mode": "attended",
+  "on_interrupted": "stay",
+  "inputs": [],
+  "triggers": [
+    { "type": "schedule", "every": "2h", "window": "08:00-18:00", "if_missed": "skip" }
+  ],
+  "tracks": [
+    {
+      "name": "t",
+      "steps": [
+        { "id": "s1", "action": "radio.connect", "params": { "stations": "wa-gateways", "bands": ["40m", "80m"] }, "on_radio_busy": "wait" },
+        { "id": "b1", "control": "branch", "on": "s1.connected", "then": ["s2", "e1"], "else": ["s3", "e2"] },
+        { "id": "s2", "action": "local.log", "params": { "message": "Connected to $s1.station on $s1.band" }, "on_radio_busy": "wait" },
+        { "id": "e1", "control": "end", "failed": false },
+        { "id": "s3", "action": "local.log", "params": { "message": "All WA gateways unreachable this cycle" }, "on_radio_busy": "wait" },
+        { "id": "e2", "control": "end", "failed": true, "reason": "no gateway reachable" }
+      ]
+    }
+  ]
+}

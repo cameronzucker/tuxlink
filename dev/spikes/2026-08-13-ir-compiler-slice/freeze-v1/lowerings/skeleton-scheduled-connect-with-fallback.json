@@ -1,0 +1,21 @@
+{
+  "routine": "{{name}}",
+  "schema_version": 1,
+  "transmit_mode": "attended",
+  "on_interrupted": "stay",
+  "inputs": [],
+  "triggers": "{{triggers}}",
+  "tracks": [
+    {
+      "name": "t",
+      "steps": [
+        { "id": "s1", "action": "radio.connect", "params": { "stations": "{{stations}}", "bands": "{{bands}}" }, "on_radio_busy": "wait" },
+        { "id": "b1", "control": "branch", "on": "s1.connected", "then": ["s2", "e1"], "else": ["s3", "e2"] },
+        { "id": "s2", "action": "local.log", "params": { "message": "{{success_log_rewritten}}" }, "on_radio_busy": "wait" },
+        { "id": "e1", "control": "end", "failed": false },
+        { "id": "s3", "action": "local.log", "params": { "message": "{{failure_log}}" }, "on_radio_busy": "wait" },
+        { "id": "e2", "control": "end", "failed": true, "reason": "{{fail_reason}}" }
+      ]
+    }
+  ]
+}

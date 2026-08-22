@@ -1,0 +1,19 @@
+{
+  "routine": "hourly-heartbeat",
+  "schema_version": 1,
+  "transmit_mode": "attended",
+  "on_interrupted": "stay",
+  "inputs": [],
+  "triggers": [
+    { "type": "schedule", "every": "1h", "if_missed": "skip" }
+  ],
+  "tracks": [
+    {
+      "name": "t",
+      "steps": [
+        { "id": "s1", "action": "local.log", "params": { "message": "station heartbeat" }, "on_radio_busy": "wait" },
+        { "id": "e1", "control": "end", "failed": false }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "routine": "{{name}}",
+  "schema_version": 1,
+  "transmit_mode": "attended",
+  "on_interrupted": "stay",
+  "inputs": [],
+  "triggers": "{{triggers}}",
+  "tracks": [
+    {
+      "name": "t",
+      "steps": [
+        { "id": "s1", "action": "radio.aprs_send", "params": { "text": "{{message}}" }, "on_radio_busy": "wait" },
+        { "id": "e1", "control": "end", "failed": false }
+      ]
+    }
+  ]
+}

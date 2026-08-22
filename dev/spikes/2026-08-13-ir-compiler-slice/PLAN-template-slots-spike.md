@@ -1,7 +1,11 @@
 # Template+slots IR spike — PLAN (tuxlink-3gaz7)
 
-**Companion to `SPEC-template-slots-spike.md` (the what); this is the how
-and the sequence. Both are the anchor pair per ADR 0031.**
+**SUPERSEDED (2026-08-22)** by
+`docs/superpowers/plans/2026-08-22-template-slots-spike.md` (the
+writing-plans plan produced after the operator approved the post-adrev
+design). The session structure below survives in spirit (harness ->
+compiler -> evaluation) but task content, gates, and the Task-0 freeze
+gate live in the plan of record. Kept as historical draft.
 
 ## Session 1 — harness
 

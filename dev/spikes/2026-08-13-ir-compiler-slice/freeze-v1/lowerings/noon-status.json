@@ -1,0 +1,19 @@
+{
+  "routine": "noon-status",
+  "schema_version": 1,
+  "transmit_mode": "attended",
+  "on_interrupted": "stay",
+  "inputs": [],
+  "triggers": [
+    { "type": "schedule", "every": "1h", "window": "11:00-13:00", "if_missed": "skip" }
+  ],
+  "tracks": [
+    {
+      "name": "t",
+      "steps": [
+        { "id": "s1", "action": "radio.aprs_send", "params": { "text": "K7ABC portable, monitoring 146.52" }, "on_radio_busy": "wait" },
+        { "id": "e1", "control": "end", "failed": false }
+      ]
+    }
+  ]
+}

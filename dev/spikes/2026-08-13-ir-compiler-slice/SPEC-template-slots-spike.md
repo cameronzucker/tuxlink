@@ -1,8 +1,18 @@
 # Template+slots IR spike — SPEC (tuxlink-3gaz7)
 
-**The anchor document for this build line (ADR 0031). Ratified by the
-operator before build steps start; the ratification is recorded in bd
-tuxlink-3gaz7. Handoffs point here; this document is the source of truth.**
+**SUPERSEDED AS SPEC-OF-RECORD (2026-08-22).** This draft predates the
+five-round adversarial review; the operator's written-spec approval landed
+on `docs/superpowers/specs/2026-08-19-template-slots-intake-design.md`,
+which absorbed and amended this document. Known overturned content here:
+the pooled ">=90%" acceptance bar (replaced by per-cell pre-registered
+dispositions + the mechanical GO/NO-GO formula), compiler-as-primary-grader
+(replaced by the independent gold-fixture grader with mutation tests and
+INSTRUMENT_INVALID quarantine), the 2-sample cell counts (superseded by the
+27-run matrix), and `{template, slots}` without `save` (the save path and
+result algebra are design SS1). Plan of record:
+`docs/superpowers/plans/2026-08-22-template-slots-spike.md`; byte-frozen
+fixtures: `freeze-v1/` beside this file. This document remains as the
+historical record of the ratified entry intent and evidence pointers.
 
 ## Objective and ruling
 
