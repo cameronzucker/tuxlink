@@ -72,7 +72,7 @@ importers:
         version: 4.0.2
       pmtiles:
         specifier: ^4
-        version: 4.4.1
+        version: 4.5.0
       potpack:
         specifier: ^2.1.0
         version: 2.1.0
@@ -2460,8 +2460,8 @@ packages:
     resolution: {integrity: sha512-RvwwcruNjI1ncT5xRakeyS9Lf8lcItv34KD+aif+VH9kduAyfYBipGh12274xtenIPZ119/R9BdTBa8gAwSh0A==}
     engines: {node: '>=12'}
 
-  pmtiles@4.4.1:
-    resolution: {integrity: sha512-5oTeQc/yX/ft1evbpIlnoCZugQuug/iYIAj/ZTqIqzdGek4uZEho99En890EE6NOSI3JTI3IG8R7r8+SltphxA==}
+  pmtiles@4.5.0:
+    resolution: {integrity: sha512-CBeD4SoUluFziGdy/8k7FOjQxQy486n+929W/tWophauvMICpkZ26vGBWhDt/6b1FZQWNaf4jFdT/5+q0Wii5w==}
 
   points-on-curve@0.2.0:
     resolution: {integrity: sha512-0mYKnYYe9ZcqMCWhUjItv/oHjvgEsfKvnUTg8sAtnHr3GVy7rGkXCb6d5cSyqrWqL4k81b9CPg3urd+T7aop3A==}
@@ -5041,7 +5041,7 @@ snapshots:
 
   picomatch@4.0.5: {}
 
-  pmtiles@4.4.1:
+  pmtiles@4.5.0:
     dependencies:
       fflate: 0.8.3
 
