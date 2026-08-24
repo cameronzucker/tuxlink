@@ -30,7 +30,7 @@ publish = false
 # deployment floor is a Pi / small x86 box, and the T1 spike showed 2-4
 # intra-op threads is the knee (RAYON_NUM_THREADS governs).
 candle-core = { version = "0.9", optional = true }
-candle-nn = { version = "0.9", optional = true }
+candle-nn = { version = "0.11", optional = true }
 candle-transformers = { version = "0.9", optional = true }
 # HF tokenizer.json loader (WordPiece for the BERT family).
 tokenizers = { version = "0.21", optional = true }
