@@ -225,7 +225,7 @@ tokio = { version = "1", features = ["test-util"] }
 tuxlink-mcp-core = { path = "tuxlink-mcp-core", features = ["test-support"] }
 filetime = "0.2"           # retention sweep clock-grace test fixtures (unit + integration)
 mockito = "1.5"
-serial_test = "3"          # NEW — gates env-var-mutating tests
+serial_test = "4"          # NEW — gates env-var-mutating tests
 proptest = "1.4"           # NEW (tuxlink-c79g T7) — state-space matrix tests for position arbiter invariants I1-I5
 static_assertions = "1.1"  # alpha-logging (tuxlink-qjgx) — credential-struct Debug audit test
 tracing-test = "0.2"       # alpha-logging (tuxlink-qjgx) — Task 9.1 emission-coverage tests
