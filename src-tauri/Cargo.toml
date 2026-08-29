@@ -23,7 +23,7 @@ rust-version = "1.95"
 
 [package]
 name = "tuxlink"
-version = "0.106.0"
+version = "0.107.0"
 description = "Linux-native full-capability Winlink client"
 authors = ["Cameron Zucker"]
 edition = "2021"

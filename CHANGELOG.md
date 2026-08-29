@@ -31,6 +31,18 @@ This project adheres to [Semantic Versioning](https://semver.org) with project-s
   to 365 days / 10 GB. Logs live at `$XDG_STATE_HOME/tuxlink/logs/`.
   Spec: `docs/superpowers/specs/2026-06-04-alpha-logging-design.md`.
 
+## [0.107.0](https://github.com/cameronzucker/tuxlink/compare/v0.106.0...v0.107.0) (2026-08-10)
+
+
+### Features
+
+* **skills:** inkling-dispatch — durable routing rule for the free local subagent lane ([c8f2c46](https://github.com/cameronzucker/tuxlink/commit/c8f2c46f8d5e1cbae9193d7b6d030aadc19f27cc))
+
+
+### Bug Fixes
+
+* **mcp:** agent-docs truth reconciliation + CI drift gate (tuxlink-9n4cr lane 1) ([20c6e25](https://github.com/cameronzucker/tuxlink/commit/20c6e2502d1745ae94462ee5666cd93f09a57ec9))
+
 ## [0.106.0](https://github.com/cameronzucker/tuxlink/compare/v0.105.0...v0.106.0) (2026-08-10)
 
 
